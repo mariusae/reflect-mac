@@ -149,7 +149,7 @@ final class OutlineLayoutManager: NSLayoutManager {
         let glyph = glyphIndexForCharacter(at: paragraph.location)
         guard glyph < numberOfGlyphs else { return }
         let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-        let baseline = origin.y + line.minY + location(forGlyphAt: glyph).y
+        let baseline = origin.y + self.baseline(ofLineAt: glyph, font: view.metrics.font(for: row))
         let font = view.metrics.font(for: row)
         let center = NSPoint(x: indent - view.metrics.indent / 2, y: baseline - font.xHeight / 2)
 
@@ -191,6 +191,42 @@ final class OutlineLayoutManager: NSLayoutManager {
             let ascent = (attributes[.font] as! NSFont).ascender
             text.draw(at: NSPoint(x: indent - 6 - size.width, y: baseline - ascent))
         }
+    }
+
+    /// The baseline of the line a glyph is on, in the text container.
+    ///
+    /// From a glyph shown on the line when there is one. A line with none —
+    /// a row with nothing typed yet, or only hidden markup and pictures —
+    /// has its baseline worked out from the type: as far above the foot of
+    /// its text as the font descends, where the line's height multiple puts
+    /// its extra space above.
+    func baseline(ofLineAt glyph: Int, font: NSFont) -> CGFloat {
+        guard numberOfGlyphs > 0 else { return font.ascender }
+        let glyph = min(glyph, numberOfGlyphs - 1)
+        var lineGlyphs = NSRange()
+        let fragment = lineFragmentRect(forGlyphAt: glyph, effectiveRange: &lineGlyphs)
+        let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
+        if let storage = textStorage {
+            let text = storage.string as NSString
+            for index in lineGlyphs.location..<NSMaxRange(lineGlyphs) where propertyForGlyph(at: index).isEmpty {
+                let character = characterIndexForGlyph(at: index)
+                guard character < text.length else { continue }
+                let unit = text.character(at: character)
+                if unit == 0x0a || unit == 0x2028 { continue }
+                return fragment.minY + location(forGlyphAt: index).y
+            }
+        }
+        let descent = defaultLineHeight(for: font) - defaultBaselineOffset(for: font)
+        let character = characterIndexForGlyph(at: glyph)
+        if let storage = textStorage, let container = textContainers.first,
+           !ImageLine.pictures(in: storage, characters: characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil),
+                               container: container).isEmpty {
+            // Pictures hang below the line's text, which is at its top.
+            let multiple = (storage.attribute(.paragraphStyle, at: min(character, storage.length - 1), effectiveRange: nil)
+                as? NSParagraphStyle)?.lineHeightMultiple ?? 1
+            return used.minY + defaultLineHeight(for: font) * max(multiple, 1) - descent
+        }
+        return used.maxY - descent
     }
 
     /// The picture at a point in the text view, if any.

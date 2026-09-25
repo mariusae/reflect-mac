@@ -54,7 +54,7 @@ final class OutlineTextView: NSTextView {
     /// look like rows instead.
     private var textSelectionAttributes: [NSAttributedString.Key: Any] = [:]
     private let hiddenGlyphs = HiddenMarkupGlyphs()
-    private let caretTail = CaretTail()
+    private let caret = CaretView()
 
     init(metrics: OutlineMetrics) {
         self.metrics = metrics
@@ -72,7 +72,9 @@ final class OutlineTextView: NSTextView {
         storage.delegate = styler
         styler.onCharactersEdited = { [weak self] in self?.paragraphCache = nil }
         NotificationCenter.default.addObserver(self, selector: #selector(pictureArrived(_:)), name: ImageStore.didLoad, object: nil)
-        addSubview(caretTail)
+        addSubview(caret)
+        // The caret is drawn here, not by the text system.
+        insertionPointColor = .clear
 
         isRichText = false
         importsGraphics = false
@@ -148,7 +150,7 @@ final class OutlineTextView: NSTextView {
         paragraphCache = nil
         if !adjusting { tidy() }
         super.didChangeText()
-        updateCaretTail()
+        updateCaret()
     }
 
     /// An edit that would take some of a span's markup, but not all of it,
@@ -352,7 +354,7 @@ final class OutlineTextView: NSTextView {
         super.setSelectedRanges([NSValue(range: range)], affinity: affinity, stillSelecting: stillSelecting)
         typingAttributes = storage.attributes(at: min(paragraphRanges[top].location, storage.length - 1), effectiveRange: nil)
             .filter { $0.key != .link && $0.key != .outlineHidden }
-        updateCaretTail()
+        updateCaret()
     }
 
     @objc private func pictureArrived(_ notification: Notification) {
@@ -385,13 +387,14 @@ final class OutlineTextView: NSTextView {
         return InlineEditing.snap(location, runs: spans(atRowOf: location).flatMap(\.markup), forward: forward)
     }
 
-    /// Shows, beside the caret, which side of hidden markup it is on.
-    func updateCaretTail() {
+    /// Puts the caret where the selection is: a bar from the ascender to
+    /// the descender of the type it stands in, not the height of the line,
+    /// and beside hidden markup, a tail to say which side of it it is on.
+    func updateCaret() {
         guard let layout = layoutManager, let container = textContainer, let storage = textStorage,
-              selectedRows == nil, selectedRange().length == 0, window?.firstResponder === self, storage.length > 0,
-              let tail = InlineEditing.tail(at: selectedRange().location, spans: spans(atRowOf: selectedRange().location))
-        else {
-            caretTail.isHidden = true
+              selectedRows == nil, selectedRange().length == 0, window?.firstResponder === self,
+              window?.isKeyWindow == true || Self.scripted, storage.length > 0 else {
+            caret.hide()
             return
         }
         let location = selectedRange().location
@@ -399,21 +402,56 @@ final class OutlineTextView: NSTextView {
         guard let rects = layout.rectArray(forCharacterRange: NSRange(location: location, length: 0),
                                            withinSelectedCharacterRange: NSRange(location: location, length: 0),
                                            in: container, rectCount: &count), count > 0 else {
-            caretTail.isHidden = true
+            caret.hide()
             return
         }
-        let caret = rects[0].offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
-        let font = storage.attribute(.font, at: min(location, storage.length - 1), effectiveRange: nil) as? NSFont ?? metrics.body
-        let length = max(4, (font.pointSize * 0.3).rounded())
-        // On the baseline, pointing along it.
-        let fragment = layout.lineFragmentRect(forGlyphAt: min(layout.glyphIndexForCharacter(at: location), max(0, layout.numberOfGlyphs - 1)),
-                                               effectiveRange: nil)
-        let glyph = layout.glyphIndexForCharacter(at: min(location, storage.length - 1))
-        let baseline = textContainerOrigin.y + fragment.minY + (glyph < layout.numberOfGlyphs ? layout.location(forGlyphAt: glyph).y : fragment.height * 0.8)
-        let y = min(caret.maxY - 2, baseline + 1).rounded()
-        caretTail.frame = NSRect(x: tail == .right ? caret.minX : caret.minX - length + 1.5, y: y, width: length, height: 1.5)
-        caretTail.isHidden = false
+        let x = rects[0].minX + textContainerOrigin.x
+        let fragmentRect = rects[0].offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        // The caret's line is the one its rectangle is on: at the end of a
+        // line that wraps, that is the line it ends, not the next.
+        let inContainer = NSPoint(x: fragmentRect.midX - textContainerOrigin.x, y: fragmentRect.midY - textContainerOrigin.y)
+        let glyph = layout.glyphIndex(for: inContainer, in: container)
+        let font = caretFont(at: location)
+        let baseline = textContainerOrigin.y + outlineLayout.baseline(ofLineAt: glyph, font: font)
+        let bar = NSRect(x: (x - 1).rounded(), y: (baseline - font.ascender).rounded(),
+                         width: 2, height: ceil(font.ascender - font.descender))
+        var tail: NSRect?
+        if let side = InlineEditing.tail(at: location, spans: spans(atRowOf: location)) {
+            let length = max(4, (font.pointSize * 0.3).rounded())
+            tail = NSRect(x: side == .right ? bar.maxX : bar.minX - length, y: bar.maxY - 2, width: length, height: 2)
+        }
+        caret.show(bar: bar, tail: tail)
     }
+
+    /// A script drives an app that is not in front; its caret is shown all
+    /// the same, to be looked at.
+    private static let scripted = ProcessInfo.processInfo.environment["REFLECT_SCRIPT"] != nil
+
+    /// The type the caret stands in: that of the character before it in its
+    /// row, else the one after.
+    private func caretFont(at location: Int) -> NSFont {
+        let storage = textStorage!
+        let paragraph = paragraphRanges[rowIndex(at: location)]
+        var index = location - 1
+        while index >= paragraph.location {
+            if storage.attribute(.outlineHidden, at: index, effectiveRange: nil) == nil,
+               let font = storage.attribute(.font, at: index, effectiveRange: nil) as? NSFont { return font }
+            index -= 1
+        }
+        return storage.attribute(.font, at: min(location, storage.length - 1), effectiveRange: nil) as? NSFont ?? metrics.body
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
+        guard let window else { return }
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(keyChanged(_:)), name: name, object: window)
+        }
+    }
+
+    @objc private func keyChanged(_ notification: Notification) { updateCaret() }
 
     private var resizing = false
 
@@ -424,7 +462,7 @@ final class OutlineTextView: NSTextView {
         resizing = true
         super.setFrameSize(newSize)
         resizing = false
-        updateCaretTail()
+        updateCaret()
     }
 
     override func scrollToVisible(_ rect: NSRect) -> Bool {
@@ -442,8 +480,7 @@ final class OutlineTextView: NSTextView {
         selectedRows = rows
         if entering {
             selectedTextAttributes = [:]
-            insertionPointColor = .clear
-            caretTail.isHidden = true
+            caret.hide()
         }
         let ranges = paragraphRanges
         let start = ranges[rows.lowerBound].location
@@ -459,7 +496,6 @@ final class OutlineTextView: NSTextView {
     private func leaveRowSelection() {
         selectedRows = nil
         selectedTextAttributes = textSelectionAttributes
-        insertionPointColor = .textInsertionPointColor
         needsDisplay = true
     }
 
@@ -472,21 +508,20 @@ final class OutlineTextView: NSTextView {
     }
 
     override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
-        guard selectedRows == nil else { return }
-        super.drawInsertionPoint(in: rect, color: color, turnedOn: flag)
+        // The caret is `CaretView`'s to draw.
     }
 
     override func becomeFirstResponder() -> Bool {
         needsDisplay = true
         let became = super.becomeFirstResponder()
-        DispatchQueue.main.async { [weak self] in self?.updateCaretTail() }
+        DispatchQueue.main.async { [weak self] in self?.updateCaret() }
         return became
     }
 
     override func resignFirstResponder() -> Bool {
         needsDisplay = true
         let resigned = super.resignFirstResponder()
-        if resigned { caretTail.isHidden = true }
+        if resigned { caret.hide() }
         return resigned
     }
 
@@ -731,7 +766,7 @@ final class OutlineTextView: NSTextView {
         setSelectedRange(NSRange(location: next, length: 0))
         adjusting = wasAdjusting
         typingAttributes = typingAttributes.filter { $0.key != .outlineHidden }
-        updateCaretTail()
+        updateCaret()
         scrollRangeToVisible(selectedRange())
         return true
     }
@@ -934,21 +969,75 @@ final class OutlineTextView: NSTextView {
     }
 }
 
-/// The little tail at the foot of the caret, pointing at the side it
-/// belongs to where hidden markup is beside it.
-final class CaretTail: NSView {
+/// The caret: a bar two points wide with rounded ends in the accent
+/// colour, that holds steady while the caret moves and fades in and out as
+/// it rests, as on iOS. Beside hidden markup it has a tail along the
+/// baseline, pointing to the side it belongs to.
+final class CaretView: NSView {
+    private let bar = CALayer()
+    private let tail = CALayer()
+
+    override var isFlipped: Bool { true }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
+        wantsLayer = true
+        layer?.addSublayer(bar)
+        layer?.addSublayer(tail)
+        bar.cornerRadius = 1
+        tail.cornerRadius = 1
         isHidden = true
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.textInsertionPointColor.setFill()
-        bounds.fill()
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func hide() {
+        isHidden = true
+        layer?.removeAnimation(forKey: "blink")
     }
 
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    /// Shows the caret at `bar`, with a tail at `tail`, both in the text
+    /// view's coordinates, and starts its blink over.
+    func show(bar barRect: NSRect, tail tailRect: NSRect?) {
+        let frame = tailRect.map { barRect.union($0) } ?? barRect
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        self.frame = frame
+        bar.frame = barRect.offsetBy(dx: -frame.minX, dy: -frame.minY)
+        tail.frame = tailRect?.offsetBy(dx: -frame.minX, dy: -frame.minY) ?? .zero
+        tail.isHidden = tailRect == nil
+        let color = NSColor.controlAccentColor.usingColorSpace(.deviceRGB)?.cgColor ?? NSColor.controlAccentColor.cgColor
+        bar.backgroundColor = color
+        tail.backgroundColor = color
+        isHidden = false
+        CATransaction.commit()
+        blink()
+    }
+
+    /// Solid for a moment after moving; then fading out and in again.
+    private func blink() {
+        guard let layer else { return }
+        layer.removeAnimation(forKey: "blink")
+        layer.opacity = 1
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let animation = CAKeyframeAnimation(keyPath: "opacity")
+        animation.values = [1, 1, 0, 0, 1]
+        animation.keyTimes = [0, 0.45, 0.6, 0.85, 1]
+        animation.duration = 1.1
+        animation.repeatCount = .infinity
+        animation.beginTime = CACurrentMediaTime() + 0.5
+        animation.fillMode = .backwards
+        layer.add(animation, forKey: "blink")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            bar.backgroundColor = NSColor.controlAccentColor.cgColor
+            tail.backgroundColor = NSColor.controlAccentColor.cgColor
+        }
+    }
 }

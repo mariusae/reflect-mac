@@ -154,6 +154,18 @@ enum Script {
                 if let editor = controller.window?.firstResponder as? OutlineTextView {
                     editor.add(editor.incoming(from: board))
                 }
+            case "metrics":
+                // metrics: how each row's first line is laid out.
+                if let editor = controller.window?.firstResponder as? OutlineTextView, let layout = editor.layoutManager {
+                    for (index, paragraph) in editor.paragraphRanges.enumerated() {
+                        let glyph = layout.glyphIndexForCharacter(at: paragraph.location)
+                        let fragment = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+                        let used = layout.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
+                        let font = editor.textStorage!.attribute(.font, at: paragraph.location, effectiveRange: nil) as! NSFont
+                        print("row \(index) len \(paragraph.length) fragment \(fragment) used \(used) glyphY \(layout.location(forGlyphAt: glyph).y) ts \(layout.typesetter.baselineOffset(in: layout, glyphIndex: glyph)) defBase \(layout.defaultBaselineOffset(for: font)) defLine \(layout.defaultLineHeight(for: font)) asc \(font.ascender) desc \(font.descender)")
+                    }
+                }
+                fflush(stdout)
             case "views":
                 print(controller.timeline.describeViews())
                 fflush(stdout)
