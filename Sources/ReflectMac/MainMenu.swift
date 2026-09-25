@@ -30,11 +30,14 @@ enum MainMenu {
             item("Sync Now", #selector(MainWindowController.syncNow(_:)), "r"),
             .separator(),
             item("Show in Finder", #selector(MainWindowController.revealInFinder(_:)), "r", [.command, .shift]),
+            item("Pin Note", #selector(MainWindowController.togglePinned(_:)), "p", [.command, .shift]),
             .separator(),
             item("Close Window", #selector(NSWindow.performClose(_:)), "w"),
         ]))
 
         let find = submenu("Find", [
+            item("Search All Notes…", #selector(MainWindowController.searchAllNotes(_:)), "f", [.command, .shift]),
+            .separator(),
             findItem("Find…", .showFindInterface, "f"),
             findItem("Find Next", .nextMatch, "g"),
             findItem("Find Previous", .previousMatch, "g", [.command, .shift]),
@@ -137,6 +140,11 @@ enum MainMenu {
             item("Bigger", #selector(MainWindowController.makeTextBigger(_:)), "+"),
             item("Smaller", #selector(MainWindowController.makeTextSmaller(_:)), "-"),
             item("Actual Size", #selector(MainWindowController.makeTextStandardSize(_:))),
+            .separator(),
+            item("Show Sidebar", #selector(MainWindowController.toggleSidebar(_:)), "s", [.command, .control]),
+            tagged(item("Pinned", #selector(MainWindowController.showSidebarMode(_:)), "1"), 0),
+            tagged(item("Search", #selector(MainWindowController.showSidebarMode(_:)), "2"), 1),
+            tagged(item("Tags", #selector(MainWindowController.showSidebarMode(_:)), "3"), 2),
             .separator(),
             item("Close Split View", #selector(MainWindowController.closeSplitView(_:))),
             .separator(),

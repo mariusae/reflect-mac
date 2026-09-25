@@ -21,10 +21,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     let pictureText: ImageTextReader
     private lazy var chooser: OpenQuickly = {
         let chooser = OpenQuickly(index: index, search: searchIndex, pictures: pictureText.index)
-        chooser.onOpen = { [weak self] target, inSplit in self?.workspace.open(target, inSplit: inSplit) }
+        chooser.onOpen = { [weak self] target, inSplit, found in self?.workspace.open(target, inSplit: inSplit, found: found) }
         return chooser
     }()
     private var statusTimer: Timer?
+    /// The left column, and the split view that holds it beside the workspace.
+    private(set) var sidebar: SidebarViewController!
+    private let split = NSSplitViewController()
+    private var sidebarItem: NSSplitViewItem!
 
     static let fontSizeKey = "FontSize"
     static let defaultFontSize: CGFloat = 15
@@ -50,10 +54,22 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.titlebarSeparatorStyle = .automatic
         window.toolbarStyle = .unified
         window.tabbingMode = .disallowed
-        window.contentViewController = workspace
+        sidebar = SidebarViewController(index: index, search: ReflectSearchIndex(root: graph.root),
+                                        pictures: pictureText.index, root: graph.root)
+        sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
+        sidebarItem.minimumThickness = 200
+        sidebarItem.maximumThickness = 420
+        sidebarItem.canCollapse = true
+        sidebarItem.allowsFullHeightLayout = true
+        split.addSplitViewItem(sidebarItem)
+        let content = NSSplitViewItem(viewController: workspace)
+        content.minimumThickness = 360
+        split.addSplitViewItem(content)
+        split.splitView.autosaveName = "MainSplit"
+        window.contentViewController = split
         // A view controller's view sizes its window; the workspace has no
         // size of its own to give.
-        window.setContentSize(NSSize(width: 900, height: 820))
+        window.setContentSize(NSSize(width: 1140, height: 820))
         super.init(window: window)
         window.delegate = self
 
@@ -71,7 +87,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             refreshReview()
             index.refresh(ref.path)
             pictureText.update()
+            sidebarNeedsReload()
         }
+        sidebar.onOpen = { [weak self] target, inSplit, found in self?.workspace.open(target, inSplit: inSplit, found: found) }
+        sidebar.onPin = { [weak self] path, pinned in self?.setPinned(path, pinned) }
         timeline.onSave = saved
         workspace.onSave = saved
         workspace.onChange = { [weak self] in
@@ -117,7 +136,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// Reads every note's name again, off the main thread.
     private func rescan() {
         let index = index
-        Task.detached(priority: .utility) { index.scan() }
+        Task.detached(priority: .utility) { [weak self] in
+            index.scan()
+            await self?.sidebarNeedsReload()
+        }
         pictureText.update()
     }
 
@@ -125,6 +147,73 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     func reloadFromDisk() {
         workspace.reloadFromDisk()
         rescan()
+    }
+
+    // MARK: The sidebar
+
+    private var sidebarReload: DispatchWorkItem?
+
+    /// Reads the sidebar again, once things settle.
+    private func sidebarNeedsReload() {
+        sidebarReload?.cancel()
+        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.sidebar.reload() } }
+        sidebarReload = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    @objc func toggleSidebar(_ sender: Any?) {
+        split.toggleSidebar(sender)
+    }
+
+    /// View ▸ Pinned, Search, Tags: the sidebar in that mode, shown if it was not.
+    @objc func showSidebarMode(_ sender: NSMenuItem) {
+        if sidebarItem.isCollapsed { sidebarItem.animator().isCollapsed = false }
+        sidebar.show(SidebarViewController.Mode(rawValue: sender.tag) ?? .pinned)
+    }
+
+    /// Find ▸ Search All Notes: the sidebar's search, shown if it was not.
+    @objc func searchAllNotes(_ sender: Any?) {
+        if sidebarItem.isCollapsed {
+            sidebarItem.animator().isCollapsed = false
+        }
+        sidebar.focusSearch()
+    }
+
+    /// The note the keyboard is in: its path.
+    private var focusedNotePath: String? {
+        var view = window?.firstResponder as? NSView
+        while let current = view {
+            if let day = current as? DayView { return day.ref.path }
+            view = current.superview
+        }
+        return workspace.current?.path
+    }
+
+    /// File ▸ Pin Note: pins the note the keyboard is in, or unpins it.
+    @objc func togglePinned(_ sender: Any?) {
+        guard let path = focusedNotePath else { NSSound.beep(); return }
+        setPinned(path, index.entry(path)?.pin == nil)
+    }
+
+    /// Pins a note, after every other, as Reflect does — `pinned:` in its
+    /// frontmatter — or takes its pin away.
+    func setPinned(_ path: String, _ pinned: Bool) {
+        workspace.saveAll()
+        guard let source = graph.read(path: path) else { NSSound.beep(); return }
+        let updated = Frontmatter.setting("pinned", to: pinned ? String(index.nextPinOrder) : nil, in: source)
+        guard updated != source else { return }
+        do {
+            try graph.write(updated, path: path)
+        } catch {
+            Log.shared.error("files", "Could not \(pinned ? "pin" : "unpin") \(path)", detail: error.localizedDescription)
+            presentError(error)
+            return
+        }
+        Log.shared.info("files", "\(pinned ? "Pinned" : "Unpinned") \(path)")
+        index.refresh(path)
+        workspace.reloadFromDisk()
+        sync.noteChanged()
+        sidebar.reload()
     }
 
     private func showTitle() {
@@ -309,6 +398,19 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         if item.action == #selector(goBack(_:)) { return workspace.canGoBack }
         if item.action == #selector(goForward(_:)) { return workspace.canGoForward }
         if item.action == #selector(closeSplitView(_:)) { return workspace.split != nil }
+        if item.action == #selector(showSidebarMode(_:)) {
+            item.state = !sidebarItem.isCollapsed && sidebar.mode.rawValue == item.tag ? .on : .off
+        }
+        if item.action == #selector(toggleSidebar(_:)) {
+            item.title = sidebarItem.isCollapsed ? "Show Sidebar" : "Hide Sidebar"
+        }
+        if item.action == #selector(togglePinned(_:)) {
+            guard let path = focusedNotePath, graph.read(path: path) != nil else {
+                item.title = "Pin Note"
+                return false
+            }
+            item.title = index.entry(path)?.pin == nil ? "Pin Note" : "Unpin Note"
+        }
         return true
     }
     @objc func goToPreviousDay(_ sender: Any?) {
@@ -366,11 +468,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private static let openItem = NSToolbarItem.Identifier("Open")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.backItem, Self.forwardItem, .flexibleSpace, Self.openItem, Self.todayItem, Self.syncItemIdentifier]
+        [.toggleSidebar, .sidebarTrackingSeparator, Self.backItem, Self.forwardItem, .flexibleSpace, Self.openItem,
+         Self.todayItem, Self.syncItemIdentifier]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.backItem, Self.forwardItem, .flexibleSpace, .space, Self.openItem, Self.todayItem, Self.syncItemIdentifier]
+        [.toggleSidebar, .sidebarTrackingSeparator, Self.backItem, Self.forwardItem, .flexibleSpace, .space, Self.openItem,
+         Self.todayItem, Self.syncItemIdentifier]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,

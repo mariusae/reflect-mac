@@ -37,6 +37,8 @@ final class SessionState {
         var mainNote: String?
         /// The note in the split view.
         var splitNote: String?
+        /// What the sidebar searches for.
+        var search: String?
     }
 
     private var graphs: [String: Graph] = [:]

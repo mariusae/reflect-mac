@@ -14,6 +14,17 @@ public struct NoteEntry: Equatable, Sendable {
     /// Whether the title is the note's own first heading, rather than its
     /// frontmatter's or its file's name.
     public var titleIsHeading: Bool
+    /// Where it is pinned, by Reflect's frontmatter `pinned:` — a number
+    /// orders the pinned notes, `true` pins it after the numbered ones; nil
+    /// when it is not pinned.
+    public var pin: Pin? = nil
+    /// The `#tags` in its text, each once, as first written.
+    public var tags: [String] = []
+
+    public enum Pin: Equatable, Sendable, Comparable {
+        case order(Double)
+        case unordered
+    }
 }
 
 /// The graph's notes by name, as Reflect names them, for finding and
@@ -104,7 +115,81 @@ public final class NoteIndex: @unchecked Sendable {
         }
         let privacy = frontmatter.scalar("private").map { ["true", "yes", "on", "1"].contains($0.lowercased()) } ?? false
         return NoteEntry(path: path, title: title, aliases: aliases, day: day, modified: modified,
-                         isPrivate: privacy, titleIsHeading: titleIsHeading)
+                         isPrivate: privacy, titleIsHeading: titleIsHeading,
+                         pin: pin(frontmatter.scalar("pinned")), tags: tags(in: body))
+    }
+
+    /// Reflect's reading of `pinned:`: `true` (or yes, on, 1) pins, a
+    /// number pins in that place, anything else does not.
+    static func pin(_ value: String?) -> NoteEntry.Pin? {
+        guard let value = value?.trimmingCharacters(in: .whitespaces).lowercased(), !value.isEmpty else { return nil }
+        if ["true", "yes", "on"].contains(value) { return .unordered }
+        if let number = Double(value), number.isFinite { return .order(number) }
+        return nil
+    }
+
+    /// The `#tags` in a note's text, outside code and links: each once,
+    /// regardless of case, as first written.
+    public static func tags(in body: String) -> [String] {
+        guard body.contains("#") else { return [] }
+        var tags: [String] = []
+        var seen = Set<String>()
+        var fence: Substring?
+        for line in body.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
+            if let open = fence {
+                if trimmed.hasPrefix(open) { fence = nil }
+                continue
+            }
+            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+                fence = trimmed.prefix(3)
+                continue
+            }
+            guard line.contains("#") else { continue }
+            let text = String(line) as NSString
+            for span in InlineMarkup.spans(in: text, range: NSRange(location: 0, length: text.length)) {
+                guard case .tag = span.kind else { continue }
+                let tag = String(text.substring(with: span.range).dropFirst())
+                if seen.insert(tag.lowercased()).inserted { tags.append(tag) }
+            }
+        }
+        return tags
+    }
+
+    /// The pinned notes, in the order Reflect's sidebar has them: numbered
+    /// ones by number, then the rest by title.
+    public var pinned: [NoteEntry] {
+        all.filter { $0.pin != nil }.sorted { a, b in
+            if a.pin != b.pin { return a.pin! < b.pin! }
+            return a.title.localizedStandardCompare(b.title) == .orderedAscending
+        }
+    }
+
+    /// Every tag in the graph, and how many notes have it, by name.
+    public var tags: [(name: String, count: Int)] {
+        var counts: [String: (name: String, count: Int)] = [:]
+        for entry in all {
+            for tag in entry.tags {
+                counts[tag.lowercased(), default: (tag, 0)].count += 1
+            }
+        }
+        return counts.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// The notes with a tag, newest first.
+    public func notes(tagged tag: String) -> [NoteEntry] {
+        let key = tag.lowercased()
+        return all.filter { $0.tags.contains { $0.lowercased() == key } }.sorted { $0.modified > $1.modified }
+    }
+
+    /// The order a note pinned now takes: after every other, as Reflect
+    /// numbers its shelf.
+    public var nextPinOrder: Int {
+        let highest = all.compactMap { entry -> Double? in
+            if case .order(let order) = entry.pin { return order }
+            return nil
+        }.max()
+        return highest.map { min(Int($0) + 1024, Int(Int32.max)) } ?? 1024
     }
 
     public var all: [NoteEntry] {
@@ -283,6 +368,34 @@ public struct Frontmatter {
             return items
         }
         return []
+    }
+
+    /// A note's text with a frontmatter key set to a value — or taken out,
+    /// for nil — leaving everything else as it was written. A note with no
+    /// frontmatter gets some; frontmatter left with nothing in it goes.
+    public static func setting(_ key: String, to value: String?, in source: String) -> String {
+        let (raw, body) = CommitMessage.splitFrontmatter(source)
+        var lines = raw.map { $0.isEmpty ? [] : $0.components(separatedBy: "\n") } ?? []
+        let isKey = { (line: String) -> Bool in
+            guard !line.hasPrefix(" "), let colon = line.firstIndex(of: ":") else { return false }
+            return line[..<colon].trimmingCharacters(in: .whitespaces) == key
+        }
+        if let index = lines.firstIndex(where: isKey) {
+            // A list under the key goes with it.
+            var end = index + 1
+            while end < lines.count, lines[end].hasPrefix(" ") || lines[end].hasPrefix("-") { end += 1 }
+            if let value {
+                lines.replaceSubrange(index..<end, with: ["\(key): \(value)"])
+            } else {
+                lines.removeSubrange(index..<end)
+            }
+        } else if let value {
+            lines.append("\(key): \(value)")
+        } else {
+            return source
+        }
+        if lines.isEmpty { return body }
+        return "---\n" + lines.joined(separator: "\n") + "\n---\n" + body
     }
 
     static func unquote(_ value: String) -> String {

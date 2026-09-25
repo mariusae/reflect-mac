@@ -23,13 +23,15 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
         var symbol: String
         /// What a `[[link]]` to it says.
         var name: String = ""
+        /// What the search found in it, to show once it is open.
+        var found: OutlineTextView.Found?
     }
 
     let index: NoteIndex
     private let search: ReflectSearchIndex?
     private let pictures: ImageTextIndex?
     /// Told what to open, and whether in the split view.
-    var onOpen: ((Target, _ inSplit: Bool) -> Void)?
+    var onOpen: ((Target, _ inSplit: Bool, _ found: OutlineTextView.Found?) -> Void)?
 
     private let panel: ChooserPanel
     private let field = NSTextField()
@@ -212,14 +214,15 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
                 let entry = index.entry(hit.path)
                 let title = entry?.day.map(dayTitle) ?? entry?.title ?? hit.title
                 add(Item(target: target(for: hit.path), title: title, detail: highlighted(hit.snippet),
-                         symbol: entry?.day == nil ? "text.magnifyingglass" : "calendar"), path: hit.path)
+                         symbol: entry?.day == nil ? "text.magnifyingglass" : "calendar",
+                         found: .words(marked(hit.snippet) + words(query))), path: hit.path)
             }
         } else {
             for hit in index.containing(query, limit: 25) {
                 let entry = index.entry(hit.path)
                 let title = entry?.day.map(dayTitle) ?? entry?.title ?? hit.path
                 add(Item(target: target(for: hit.path), title: title, detail: plain(hit.snippet),
-                         symbol: entry?.day == nil ? "text.magnifyingglass" : "calendar"), path: hit.path)
+                         symbol: entry?.day == nil ? "text.magnifyingglass" : "calendar", found: .words(words(query))), path: hit.path)
             }
         }
         // Then words in pictures, as the notes that show them.
@@ -227,7 +230,8 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
             for path in index.notes(showing: hit.path).prefix(3) {
                 let entry = index.entry(path)
                 let title = entry?.day.map(dayTitle) ?? entry?.title ?? path
-                add(Item(target: target(for: path), title: title, detail: highlighted(hit.snippet), symbol: "photo"), path: path)
+                add(Item(target: target(for: path), title: title, detail: highlighted(hit.snippet), symbol: "photo",
+                         found: .picture(hit.path, words: marked(hit.snippet))), path: path)
             }
         }
         // Last, so Return never makes a note by chance; ⌘Return makes one
@@ -280,6 +284,23 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
     }
 
     /// A snippet with the words found in it set in bold.
+    /// The words a snippet marks as found, in order, each once.
+    static func marked(_ snippet: String) -> [String] {
+        var words: [String] = []
+        var rest = Substring(snippet)
+        while let open = rest.firstIndex(of: "\u{1}"), let close = rest[open...].firstIndex(of: "\u{2}") {
+            let word = String(rest[rest.index(after: open)..<close])
+            if !word.isEmpty, !words.contains(word) { words.append(word) }
+            rest = rest[rest.index(after: close)...]
+        }
+        return words
+    }
+
+    /// A query's words.
+    static func words(_ query: String) -> [String] {
+        query.split(whereSeparator: \.isWhitespace).map(String.init)
+    }
+
     private static func highlighted(_ snippet: String) -> NSAttributedString {
         let text = NSMutableAttributedString()
         var bold = false
@@ -318,7 +339,7 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
                 let target = index.matches(query, limit: 1).first
                     .flatMap { NoteIndex.foldKey($0.entry.title) == key ? Target.note($0.entry.path) : nil } ?? .create(query)
                 close()
-                onOpen?(target, flags.contains(.option))
+                onOpen?(target, flags.contains(.option), nil)
             } else {
                 openSelected(inSplit: flags.contains(.option))
             }
@@ -345,9 +366,9 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
 
     private func openSelected(inSplit: Bool) {
         guard table.selectedRow >= 0, table.selectedRow < items.count else { return }
-        let target = items[table.selectedRow].target
+        let item = items[table.selectedRow]
         close()
-        onOpen?(target, inSplit)
+        onOpen?(item.target, inSplit, item.found)
     }
 
     // MARK: Table

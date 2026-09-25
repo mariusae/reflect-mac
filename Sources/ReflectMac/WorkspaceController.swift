@@ -223,12 +223,30 @@ final class WorkspaceController: NSViewController {
         }
     }
 
-    func open(_ target: OpenQuickly.Target, inSplit: Bool) {
+    /// Opens what the chooser chose, and shows what its search found there.
+    func open(_ target: OpenQuickly.Target, inSplit: Bool, found: OutlineTextView.Found? = nil) {
+        let ref: NoteRef
         switch target {
-        case .note(let path): show(NoteRef(path: path), inSplit: inSplit)
-        case .day(let day): show(.day(day), inSplit: inSplit)
-        case .create(let title): if let path = create(title) { show(NoteRef(path: path), inSplit: inSplit) }
+        case .note(let path): ref = NoteRef(path: path)
+        case .day(let day): ref = .day(day)
+        case .create(let title):
+            guard let path = create(title) else { return }
+            ref = NoteRef(path: path)
         }
+        show(ref, inSplit: inSplit)
+        guard let found, let editor = editor(showing: ref, inSplit: inSplit) else { return }
+        // Once the note is laid out where it is shown.
+        DispatchQueue.main.async {
+            editor.window?.makeFirstResponder(editor)
+            editor.reveal(found)
+        }
+    }
+
+    /// The editor a note is shown in, just after showing it.
+    private func editor(showing ref: NoteRef, inSplit: Bool) -> OutlineTextView? {
+        if inSplit { return split?.noteView.editor }
+        if let day = ref.day { return timeline.view(for: day).editor }
+        return main?.noteView.editor
     }
 
     // MARK: Disk

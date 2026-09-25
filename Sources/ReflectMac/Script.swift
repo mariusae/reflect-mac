@@ -183,6 +183,16 @@ enum Script {
                 let items = OpenQuickly.items(for: argument, index: controller.index, search: ReflectSearchIndex(root: controller.graph.root), pictures: controller.pictureText.index)
                 print("choose “\(argument)”: " + items.prefix(8).map { "\($0.title) [\($0.detail?.string.prefix(50) ?? "")]" }.joined(separator: " · "))
                 fflush(stdout)
+            case "sidebar-search":
+                controller.sidebar.search(for: argument)
+            case "sidebar-open":
+                controller.sidebar.openRow(containing: argument)
+            case "sidebar":
+                // sidebar [section]: what the sidebar shows.
+                print("sidebar: " + controller.sidebar.shownRows.prefix(40).joined(separator: " | "))
+                fflush(stdout)
+            case "pin":
+                controller.togglePinned(nil)
             case "picture-text":
                 // picture-text <query>: the pictures whose text has the words.
                 let pictures = controller.pictureText.index
