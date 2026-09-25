@@ -101,6 +101,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         workspace.onChange = { [weak self] in
             self?.showTitle()
             self?.showSideItems()
+            self?.followFocus()
             self?.noteState()
         }
         sync.flush = { [weak workspace] in workspace?.saveAll() }
@@ -163,6 +164,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             MainActor.assumeIsolated {
                 self?.sidebar.reload()
                 self?.sidebar.refreshSearch()
+                // Links may have come or gone.
+                self?.sidebar.follow(self?.sidebar.linked, force: true)
             }
         }
         sidebarReload = work
@@ -185,6 +188,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             sidebarItem.animator().isCollapsed = false
         }
         sidebar.focusSearch()
+    }
+
+    /// The sidebar's backlinks follow the note the keyboard is in.
+    private func followFocus() {
+        sidebar.follow(focusedNotePath)
     }
 
     /// The note the keyboard is in: its path.
@@ -327,6 +335,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     @objc private func selectionChanged(_ notification: Notification) {
         guard (notification.object as? NSView)?.window === window else { return }
         noteState()
+        followFocus()
     }
 
     private var stateTimer: Timer?
@@ -571,6 +580,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private static let forwardItem = NSToolbarItem.Identifier("Forward")
     private static let openItem = NSToolbarItem.Identifier("Open")
     private static let noteItem = NSToolbarItem.Identifier("Note")
+    /// Where the toolbar parts, over the split view's dividers — the
+    /// sidebar's and the pane's — tied to them, so they move together.
+    private static let sidebarSeparator = NSToolbarItem.Identifier("SidebarSeparator")
+    private static let sideSeparator = NSToolbarItem.Identifier("SideSeparator")
     /// Over the pane on the right: its way back and forward, title, and close.
     private static let sideBackItem = NSToolbarItem.Identifier("SideBack")
     private static let sideForwardItem = NSToolbarItem.Identifier("SideForward")
@@ -580,17 +593,22 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private let sideTitle = NSTextField(labelWithString: "")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, Self.backItem, Self.forwardItem, .flexibleSpace, Self.noteItem, Self.openItem,
-         Self.todayItem, Self.syncItemIdentifier, .inspectorTrackingSeparator] + Self.sideItems
+        [.toggleSidebar, Self.sidebarSeparator, Self.backItem, Self.forwardItem, .flexibleSpace, Self.noteItem, Self.openItem,
+         Self.todayItem, Self.syncItemIdentifier, Self.sideSeparator,
+         Self.sideBackItem, Self.sideForwardItem, Self.sideTitleItem, .flexibleSpace, Self.sideCloseItem]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, Self.backItem, Self.forwardItem, .flexibleSpace, .space, Self.noteItem, Self.openItem,
-         Self.todayItem, Self.syncItemIdentifier, .inspectorTrackingSeparator] + Self.sideItems
+        [.toggleSidebar, Self.sidebarSeparator, Self.backItem, Self.forwardItem, .flexibleSpace, .space, Self.noteItem, Self.openItem,
+         Self.todayItem, Self.syncItemIdentifier, Self.sideSeparator] + Self.sideItems
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        if identifier == Self.sidebarSeparator || identifier == Self.sideSeparator {
+            return NSTrackingSeparatorToolbarItem(identifier: identifier, splitView: split.splitView,
+                                                  dividerIndex: identifier == Self.sidebarSeparator ? 0 : 1)
+        }
         if identifier == Self.noteItem {
             // What can be done to the note the keyboard is in.
             let item = NSMenuToolbarItem(itemIdentifier: identifier)

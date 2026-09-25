@@ -16,6 +16,10 @@ import Testing
             let count = work()
             print(String(format: "%@: %.1f ms (%d)", name, Date().timeIntervalSince(start) * 1000, count))
         }
+        // The notes linked to most, and a day.
+        for path in ["notes/links.md", "notes/zachary-devito.md", "daily/2026-09-24.md"] {
+            time("backlinks \(path)") { index.backlinks(to: path).reduce(0) { $0 + $1.contexts.count } }
+        }
         for query in ["k", "ko", "kod", "the", "a b"] {
             print("— \(query)")
             time("date detector") {

@@ -10,9 +10,11 @@ import ReflectCore
 final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate,
     NSMenuDelegate {
     enum Mode: Int, CaseIterable {
-        case notes, search, tags
+        case notes, search, tags, backlinks
 
-        var title: String { ["Notes", "Search", "Tags"][rawValue] }
+        var title: String { ["Notes", "Search", "Tags", "Backlinks"][rawValue] }
+        /// What its segment says: short, so four fit the narrowest sidebar.
+        var label: String { ["Notes", "Search", "Tags", "Links"][rawValue] }
     }
 
     /// A row: something to open, a section's heading, or words in place of rows.
@@ -23,6 +25,9 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         case recent(NoteEntry)
         case result(OpenQuickly.Item)
         case tag(name: String, count: Int)
+        /// A note linking to the one shown, and a link's context in it.
+        case source(NoteEntry)
+        case backlink(path: String, BacklinkContext)
         case hint(String)
     }
 
@@ -52,7 +57,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     private static let recentCount = 60
     private(set) var tagOrder: TagOrder = TagOrder(rawValue: UserDefaults.standard.integer(forKey: SidebarViewController.tagOrderKey)) ?? .name
     private let tagSort = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let modes = NSSegmentedControl(labels: Mode.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
+    private let modes = NSSegmentedControl(labels: Mode.allCases.map(\.label), trackingMode: .selectOne, target: nil, action: nil)
     private let field = NSSearchField()
     private let table = SidebarTableView()
     private let scroll = NSScrollView()
@@ -65,6 +70,10 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     private var underModes: NSLayoutConstraint!
 
     private static let modeKey = "SidebarMode"
+    /// The note whose backlinks are shown, and what was found for it.
+    private(set) var linked: String?
+    private var backlinks: [Row] = []
+    private var backlinkGeneration = 0
     fileprivate static let tagOrderKey = "SidebarTagOrder"
     /// The table's top in Tags: under the sort.
     private var underSort: NSLayoutConstraint!
@@ -90,6 +99,9 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         modes.controlSize = .large
         for mode in Mode.allCases { modes.setToolTip("\(mode.title) (⌘\(mode.rawValue + 1))", forSegment: mode.rawValue) }
         modes.translatesAutoresizingMaskIntoConstraints = false
+        // It fits the sidebar, and never widens it past its divider.
+        modes.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         container.addSubview(modes)
 
         field.placeholderString = "Search All Notes"
@@ -200,6 +212,8 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
                 + [.header("Recent")] + recent.map(Row.recent)
         case .search:
             rows = found
+        case .backlinks:
+            rows = backlinks
         case .tags:
             var tags = index.tags
             if tagOrder == .count {
@@ -216,6 +230,42 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     private var query: String { field.stringValue.trimmingCharacters(in: .whitespaces) }
+
+    // MARK: Backlinks
+
+    /// Shows the backlinks of a note — the one the keyboard is in — found in
+    /// the background; the last found stay until the new ones come.
+    func follow(_ path: String?, force: Bool = false) {
+        guard force || path != linked else { return }
+        linked = path
+        backlinkGeneration += 1
+        let generation = backlinkGeneration
+        guard let path else {
+            backlinks = [.hint("Backlinks of the note you are in show here")]
+            if mode == .backlinks { reload() }
+            return
+        }
+        let index = index
+        DispatchQueue.global(qos: .userInitiated).async {
+            let sources = index.backlinks(to: path)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { [weak self] in
+                    guard let self, generation == backlinkGeneration else { return }
+                    let title = index.entry(path).map { $0.day.map(OpenQuickly.dayTitle) ?? $0.title }
+                        ?? GraphPaths.day(fromDailyPath: path).map(OpenQuickly.dayTitle) ?? path
+                    var rows: [Row] = [.header("Linked to \(title)")]
+                    if sources.isEmpty { rows.append(.hint("No notes link here")) }
+                    for source in sources {
+                        let entry = index.entry(source.path) ?? NoteIndex.entry(path: source.path, source: "")
+                        rows.append(.source(entry))
+                        rows += source.contexts.map { .backlink(path: source.path, $0) }
+                    }
+                    backlinks = rows
+                    if mode == .backlinks { reload() }
+                }
+            }
+        }
+    }
 
     /// Looks again for what the field holds: a `#tag`'s notes at once,
     /// anything else in the background, shown as it comes.
@@ -302,6 +352,8 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
             switch row {
             case .header(let title): "[\(title)]"
             case .pinned(let entry): "pin " + entry.title
+            case .source(let entry): "source " + entry.title
+            case .backlink(_, let context): "  " + context.rows.map(\.text).joined(separator: " / ")
             case .recent(let entry): "recent " + entry.title
             case .result(let item): "result " + item.title + (item.detail.map { " — " + $0.string.prefix(40) } ?? "")
             case .tag(let name, let count): "#\(name) \(count)"
@@ -315,7 +367,8 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         for (index, row) in rows.enumerated() {
             let title: String
             switch row {
-            case .pinned(let entry), .recent(let entry): title = entry.title
+            case .pinned(let entry), .recent(let entry), .source(let entry): title = entry.title
+            case .backlink(_, let context): title = context.rows.map(\.text).joined(separator: " ")
             case .result(let item): title = item.title
             case .tag(let name, _): title = "#" + name
             case .hint, .header: continue
@@ -343,8 +396,11 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
 
     private func open(_ row: Row, inSplit: Bool) {
         switch row {
-        case .pinned(let entry), .recent(let entry):
+        case .pinned(let entry), .recent(let entry), .source(let entry):
             onOpen?(entry.day.map { .day($0) } ?? .note(entry.path), inSplit, nil)
+        case .backlink(let path, let context):
+            // To the note, at the link.
+            onOpen?(OpenQuickly.target(for: path), inSplit, .words([context.link]))
         case .result(let item):
             onOpen?(item.target, inSplit, item.found)
         case .tag(let name, _):
@@ -370,7 +426,8 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         let row = rows[table.clickedRow]
         let path: String?
         switch row {
-        case .pinned(let entry), .recent(let entry): path = entry.path
+        case .pinned(let entry), .recent(let entry), .source(let entry): path = entry.path
+        case .backlink(let source, _): path = source
         case .result(let item):
             switch item.target {
             case .note(let note): path = note
@@ -417,6 +474,15 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
             let cell = tableView.makeView(withIdentifier: RowCell.identifier, owner: nil) as? RowCell ?? RowCell()
             cell.show(title: entry.day.map(OpenQuickly.dayTitle) ?? entry.title, detail: nil,
                       symbol: entry.day == nil ? "pin" : "calendar", badge: nil)
+            return cell
+        case .source(let entry):
+            let cell = tableView.makeView(withIdentifier: RowCell.identifier, owner: nil) as? RowCell ?? RowCell()
+            cell.show(title: entry.day.map(OpenQuickly.dayTitle) ?? entry.title, detail: nil,
+                      symbol: entry.day == nil ? "doc.text" : "calendar", badge: nil)
+            return cell
+        case .backlink(_, let context):
+            let cell = tableView.makeView(withIdentifier: ContextCell.identifier, owner: nil) as? ContextCell ?? ContextCell()
+            cell.show(BacklinkText.attributed(context))
             return cell
         case .recent(let entry):
             let cell = tableView.makeView(withIdentifier: RowCell.identifier, owner: nil) as? RowCell ?? RowCell()
@@ -504,6 +570,8 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         switch row {
         case .pinned(let entry): "pin:" + entry.path
         case .recent(let entry): "recent:" + entry.path
+        case .source(let entry): "source:" + entry.path
+        case .backlink(let path, let context): "backlink:" + path + ":" + context.link + ":\(context.rows.first?.text ?? "")"
         case .result(let item): "result:\(item.target)"
         case .tag(let name, _): "tag:" + name
         case .hint, .header: nil
@@ -521,6 +589,42 @@ final class SidebarTableView: NSTableView {
         } else {
             super.keyDown(with: event)
         }
+    }
+}
+
+/// A link's context: a little outline, read-only, under its note.
+private final class ContextCell: NSTableCellView {
+    static let identifier = NSUserInterfaceItemIdentifier("context")
+    private let label = NSTextField(wrappingLabelWithString: "")
+
+    init() {
+        super.init(frame: .zero)
+        identifier = Self.identifier
+        label.isSelectable = false
+        label.maximumNumberOfLines = 14
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 26),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    func show(_ text: NSAttributedString) {
+        label.attributedStringValue = text
+    }
+
+    override func layout() {
+        super.layout()
+        // Wraps to the column as it is now.
+        label.preferredMaxLayoutWidth = max(0, bounds.width - 34)
     }
 }
 

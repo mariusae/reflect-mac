@@ -200,6 +200,9 @@ enum Script {
                 // sidebar [section]: what the sidebar shows.
                 print("sidebar: " + controller.sidebar.shownRows.prefix(40).joined(separator: " | "))
                 fflush(stdout)
+            case "backlinks-of":
+                // backlinks-of <path>: the sidebar's backlinks, as if the keyboard were there.
+                controller.sidebar.follow(argument)
             case "sort-tags":
                 controller.sidebar.sort(tagsBy: argument == "count" ? .count : .name)
             case "move-pinned":

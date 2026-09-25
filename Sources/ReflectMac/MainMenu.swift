@@ -146,6 +146,7 @@ enum MainMenu {
             tagged(item("Notes", #selector(MainWindowController.showSidebarMode(_:)), "1"), 0),
             tagged(item("Search", #selector(MainWindowController.showSidebarMode(_:)), "2"), 1),
             tagged(item("Tags", #selector(MainWindowController.showSidebarMode(_:)), "3"), 2),
+            tagged(item("Backlinks", #selector(MainWindowController.showSidebarMode(_:)), "4"), 3),
             .separator(),
             item("Close Split View", #selector(MainWindowController.closeSplitView(_:))),
             .separator(),

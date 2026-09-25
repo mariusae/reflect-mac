@@ -42,6 +42,9 @@ public final class NoteIndex: @unchecked Sendable {
     /// showing each: for finding a picture's notes without reading them all.
     private var assetsOf: [String: Set<String>] = [:]
     private var showing: [String: Set<String>] = [:]
+    /// The keys of the `[[links]]` each note has, and the notes with each.
+    private var linksOf: [String: Set<String>] = [:]
+    private var linking: [String: Set<String>] = [:]
 
     public init(root: URL) {
         self.root = root
@@ -82,11 +85,21 @@ public final class NoteIndex: @unchecked Sendable {
             assets[path] = referenced
             for asset in referenced { notes[asset, default: []].insert(path) }
         }
+        var links: [String: Set<String>] = [:]
+        var linkers: [String: Set<String>] = [:]
+        for (path, text) in texts {
+            let keys = Backlinks.linkKeys(in: text.text)
+            guard !keys.isEmpty else { continue }
+            links[path] = keys
+            for key in keys { linkers[key, default: []].insert(path) }
+        }
         lock.lock()
         entries = found
         bodies = texts
         assetsOf = assets
         showing = notes
+        linksOf = links
+        linking = linkers
         lock.unlock()
     }
 
@@ -95,7 +108,14 @@ public final class NoteIndex: @unchecked Sendable {
     public func refresh(_ path: String) {
         let entry = read(path, at: root.appendingPathComponent(path))
         let referenced = entry.map { Self.assets(in: $0.text.text) } ?? []
+        let links = entry.map { Backlinks.linkKeys(in: $0.text.text) } ?? []
         lock.lock()
+        for key in linksOf[path] ?? [] where !links.contains(key) {
+            linking[key]?.remove(path)
+            if linking[key]?.isEmpty == true { linking[key] = nil }
+        }
+        for key in links { linking[key, default: []].insert(path) }
+        linksOf[path] = links.isEmpty ? nil : links
         entries[path] = entry?.entry
         bodies[path] = entry?.text
         for asset in assetsOf[path] ?? [] where !referenced.contains(asset) {
@@ -214,6 +234,13 @@ public final class NoteIndex: @unchecked Sendable {
     }
 
     private static let assetReference = try! NSRegularExpression(pattern: #"assets/[^\s)\]>"'|]+"#)
+
+    /// The notes with a `[[link]]` by any of some keys.
+    func linkingPaths(to keys: Set<String>) -> Set<String> {
+        lock.lock()
+        defer { lock.unlock() }
+        return keys.reduce(into: Set<String>()) { $0.formUnion(linking[$1] ?? []) }
+    }
 
     /// The notes whose text names a file under `assets/`.
     func notePaths(showing asset: String) -> Set<String> {
