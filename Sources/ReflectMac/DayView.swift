@@ -249,6 +249,7 @@ final class DayView: NSView, NSTextViewDelegate {
             shell = outline
             editor.load(rows.isEmpty ? [.blank] : rows)
             editor.isEditable = !isReadOnly
+            editor.isPrivateNote = NoteIndex.entry(path: ref.path, source: text).isPrivate
         }
         updateTitle()
         needsLayout = true

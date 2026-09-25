@@ -6,7 +6,7 @@ import ReflectCore
 @MainActor
 protocol OutlineTextViewNavigator: AnyObject {
     func outlineView(_ view: OutlineTextView, leaveThrough edge: OutlineTextView.Edge, x: CGFloat)
-    func outlineView(_ view: OutlineTextView, open url: URL)
+    func outlineView(_ view: OutlineTextView, open url: URL, inSplit: Bool)
 }
 
 /// An outline editor in the manner of Bike.
@@ -28,6 +28,13 @@ final class OutlineTextView: NSTextView {
             styler.styleAll(textStorage!)
         }
     }
+
+    /// Whether the note is marked `private: true`: its links are then never
+    /// looked up on the web.
+    var isPrivateNote = false
+
+    /// A `[[link` being typed, and the list that finishes it.
+    private var linkCompletion: LinkCompletion?
 
     /// Where the note's pictures come from.
     var images: ImageStore? {
@@ -355,6 +362,7 @@ final class OutlineTextView: NSTextView {
         typingAttributes = storage.attributes(at: min(paragraphRanges[top].location, storage.length - 1), effectiveRange: nil)
             .filter { $0.key != .link && $0.key != .outlineHidden }
         updateCaret()
+        updateLinkCompletion()
     }
 
     @objc private func pictureArrived(_ notification: Notification) {
@@ -521,7 +529,10 @@ final class OutlineTextView: NSTextView {
     override func resignFirstResponder() -> Bool {
         needsDisplay = true
         let resigned = super.resignFirstResponder()
-        if resigned { caret.hide() }
+        if resigned {
+            caret.hide()
+            endLinkCompletion()
+        }
         return resigned
     }
 
@@ -543,6 +554,7 @@ final class OutlineTextView: NSTextView {
         super.mouseMoved(with: event)
         let point = convert(event.locationInWindow, from: nil)
         hover(at: point)
+        showLinkCard(at: point)
         // Bullets, checkboxes and pictures are things to click, not text:
         // over them the pointer is the arrow.
         if outlineLayout.handleHit(at: point, origin: textContainerOrigin) != nil
@@ -564,6 +576,67 @@ final class OutlineTextView: NSTextView {
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
         hover(at: nil)
+        LinkCard.shared.scheduleHide()
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        LinkCard.shared.hide()
+        super.scrollWheel(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        LinkCard.shared.hide()
+        super.keyDown(with: event)
+    }
+
+    /// Shows the card of the link under the pointer, or lets it go.
+    private func showLinkCard(at point: NSPoint) {
+        guard let hover = linkHover(at: point) else {
+            LinkCard.shared.scheduleHide()
+            return
+        }
+        let screen = firstRect(forCharacterRange: hover.range, actualRange: nil)
+        LinkCard.shared.hover(hover, in: self, anchor: screen)
+    }
+
+    /// The link under a point: where it goes, where it is, and whether it is
+    /// an address written out, which could take its page's title instead.
+    func linkHover(at point: NSPoint) -> LinkCard.Hover? {
+        guard let url = link(at: point), let layout = layoutManager, let container = textContainer, let storage = textStorage else { return nil }
+        let inContainer = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        let character = layout.characterIndexForGlyph(at: layout.glyphIndex(for: inContainer, in: container))
+        let span = spans(atRowOf: character).first { span in
+            guard NSLocationInRange(character, span.range) else { return false }
+            switch span.kind {
+            case .url, .link, .wikiLink: return true
+            default: return false
+            }
+        }
+        guard let span else {
+            var range = NSRange()
+            _ = storage.attribute(.link, at: character, effectiveRange: &range)
+            return LinkCard.Hover(url: url, range: range, isBare: false)
+        }
+        switch span.kind {
+        case .url:
+            return LinkCard.Hover(url: url, range: span.range, isBare: true)
+        case .link(let target):
+            // `<https://…>` is an address written out too; `[text](…)` is not.
+            let text = (storage.string as NSString).substring(with: span.content)
+            return LinkCard.Hover(url: url, range: span.range, isBare: text == target)
+        default:
+            return LinkCard.Hover(url: url, range: span.range, isBare: false)
+        }
+    }
+
+    /// Puts `[Title](address)` in place of a link's text.
+    func replaceLink(_ range: NSRange, with title: String, url: URL) {
+        let escaped = title.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "[", with: "\\[").replacingOccurrences(of: "]", with: "\\]")
+        guard NSMaxRange(range) <= textStorage!.length else { return }
+        window?.makeFirstResponder(self)
+        insertText("[\(escaped)](\(url.absoluteString))", replacementRange: range)
+        undoManager?.setActionName("Use Title")
     }
 
     /// Notes the row a point is over, in its text or in the space before it.
@@ -593,7 +666,7 @@ final class OutlineTextView: NSTextView {
             window?.makeFirstResponder(self)
             if event.clickCount >= 2 {
                 // Double-clicked, a picture opens in the app that opens it.
-                if let url = URL(string: picture.source) { navigator?.outlineView(self, open: url) }
+                if let url = URL(string: picture.source) { navigator?.outlineView(self, open: url, inSplit: false) }
             } else if let location = rangeOfPicture(picture)?.location {
                 // Once, it takes the caret beside it.
                 if selectedRows != nil { leaveRowSelection() }
@@ -601,8 +674,39 @@ final class OutlineTextView: NSTextView {
             }
             return
         }
+        LinkCard.shared.hide()
+        if event.clickCount == 1, let url = link(at: point) {
+            // A click on a link follows it — once the button comes up
+            // without the pointer having moved off to drag.
+            window?.makeFirstResponder(self)
+            let start = event.locationInWindow
+            while let next = window?.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) {
+                let moved = hypot(next.locationInWindow.x - start.x, next.locationInWindow.y - start.y)
+                if next.type == .leftMouseUp {
+                    if moved < 4 { navigator?.outlineView(self, open: url, inSplit: event.modifierFlags.contains(.option)) }
+                    return
+                }
+            }
+            return
+        }
         if selectedRows != nil { leaveRowSelection() }
         super.mouseDown(with: event)
+    }
+
+    /// The link under a point, when the point is on its text.
+    private func link(at point: NSPoint) -> URL? {
+        guard let layout = layoutManager, let container = textContainer, let storage = textStorage, storage.length > 0 else { return nil }
+        let inContainer = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        var fraction: CGFloat = 0
+        let glyph = layout.glyphIndex(for: inContainer, in: container, fractionOfDistanceThroughGlyph: &fraction)
+        guard glyph < layout.numberOfGlyphs else { return nil }
+        // Only on the glyph itself, not in the space beyond a line's end.
+        let bounds = layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container)
+        guard bounds.insetBy(dx: -1, dy: -2).contains(inContainer) else { return nil }
+        let character = layout.characterIndexForGlyph(at: glyph)
+        guard character < storage.length else { return nil }
+        let value = storage.attribute(.link, at: character, effectiveRange: nil)
+        return value as? URL ?? (value as? String).flatMap(URL.init(string:))
     }
 
     /// Where a picture's Markdown is in the text.
@@ -615,6 +719,86 @@ final class OutlineTextView: NSTextView {
             }
         }
         return found
+    }
+
+    // MARK: A picture's menu
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let picture = outlineLayout.pictureHit(at: point, origin: textContainerOrigin),
+              let location = rangeOfPicture(picture)?.location else { return super.menu(for: event) }
+        LinkCard.shared.hide()
+        window?.makeFirstResponder(self)
+        if selectedRows != nil { leaveRowSelection() }
+        setSelectedRange(NSRange(location: location, length: 0))
+        return pictureMenu(picture, at: location)
+    }
+
+    /// What can be done with a picture: as Safari and TextEdit offer it.
+    private func pictureMenu(_ picture: ImageBox, at location: Int) -> NSMenu {
+        let menu = NSMenu(title: "Picture")
+        let source = picture.source
+        let file = images?.graphFile(source)
+        let address = URL(string: source)
+        func item(_ title: String, _ run: @escaping () -> Void) -> NSMenuItem {
+            let item = ClosureMenuItem(title: title, run: run)
+            return item
+        }
+        if images?.tweet(source) != nil {
+            menu.addItem(item("Open Post") { [weak self] in
+                guard let self, let address else { return }
+                navigator?.outlineView(self, open: address, inSplit: false)
+            })
+            menu.addItem(item("Copy Link") { Self.copy(string: source) })
+        } else {
+            menu.addItem(item("Open Image") { [weak self] in
+                guard let self else { return }
+                if let file { NSWorkspace.shared.open(file) }
+                else if let address { navigator?.outlineView(self, open: address, inSplit: false) }
+            })
+            if let file {
+                menu.addItem(item("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) })
+            }
+            menu.addItem(.separator())
+            menu.addItem(item("Copy Image") { [weak self] in self?.copyPicture(source, file: file) })
+            menu.addItem(item("Copy Image Address") { Self.copy(string: source) })
+        }
+        if isEditable {
+            menu.addItem(.separator())
+            menu.addItem(item(images?.tweet(source) != nil ? "Delete Post" : "Delete Image") { [weak self] in
+                self?.deletePicture(at: location)
+            })
+        }
+        return menu
+    }
+
+    /// The picture on the clipboard, as PNG and TIFF both, so it pastes
+    /// into any app; and, for one in the graph, its file too.
+    private func copyPicture(_ source: String, file: URL?) {
+        guard let image = images?.image(source) else { NSSound.beep(); return }
+        let item = NSPasteboardItem()
+        if let tiff = image.tiffRepresentation {
+            item.setData(tiff, forType: .tiff)
+            if let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                item.setData(png, forType: .png)
+            }
+        }
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.writeObjects([item])
+        Log.shared.info("files", "Copied \(source)")
+    }
+
+    private static func copy(string: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(string, forType: .string)
+    }
+
+    /// Takes a picture out of the note, its size and all.
+    private func deletePicture(at location: Int) {
+        guard let span = spans(atRowOf: location).first(where: { $0.isImage && $0.range.location == location }) else { return }
+        insertText("", replacementRange: span.range)
+        undoManager?.setActionName("Delete Image")
     }
 
     /// A checkbox checks; a bullet with children folds or unfolds them.
@@ -644,7 +828,7 @@ final class OutlineTextView: NSTextView {
 
     override func clicked(onLink link: Any, at charIndex: Int) {
         guard let url = link as? URL ?? (link as? String).flatMap(URL.init(string:)) else { return }
-        navigator?.outlineView(self, open: url)
+        navigator?.outlineView(self, open: url, inSplit: NSApp.currentEvent?.modifierFlags.contains(.option) == true)
     }
 
     // MARK: Moving across edges
@@ -682,6 +866,10 @@ final class OutlineTextView: NSTextView {
     }
 
     override func moveUp(_ sender: Any?) {
+        if let linkCompletion {
+            linkCompletion.move(-1)
+            return
+        }
         if let selectedRows {
             let head = rowHead > 0 ? rowHead - 1 : 0
             if selectedRows.lowerBound == 0 && rowHead == 0 { NSSound.beep(); return }
@@ -697,6 +885,10 @@ final class OutlineTextView: NSTextView {
     }
 
     override func moveDown(_ sender: Any?) {
+        if let linkCompletion {
+            linkCompletion.move(1)
+            return
+        }
         if let selectedRows {
             let last = paragraphRanges.count - 1
             if selectedRows.upperBound - 1 == last && rowHead == last { NSSound.beep(); return }
@@ -780,6 +972,10 @@ final class OutlineTextView: NSTextView {
 
     /// Escape selects the caret's row as a row, and goes back to its text.
     override func cancelOperation(_ sender: Any?) {
+        if linkCompletion != nil {
+            endLinkCompletion()
+            return
+        }
         if let selectedRows {
             editText(inRow: rowHead == selectedRows.lowerBound ? rowHead : rowHead)
         } else {
@@ -808,12 +1004,55 @@ final class OutlineTextView: NSTextView {
         }
         if text == " ", replacementRange.location == NSNotFound, selectedRange().length == 0, applySmartRowType() { return }
         super.insertText(string, replacementRange: replacementRange)
+        if text == "[" { beginLinkCompletion() }
     }
 
-    override func insertTab(_ sender: Any?) { indentRows(sender) }
+    // MARK: Finishing links
+
+    /// `[[` just typed, outside code, starts a link to finish.
+    private func beginLinkCompletion() {
+        guard LinkCompletion.source != nil, linkCompletion == nil, let storage = textStorage else { return }
+        let caret = selectedRange().location
+        let text = storage.string as NSString
+        guard caret >= 2, text.substring(with: NSRange(location: caret - 2, length: 2)) == "[[",
+              caret < 3 || text.character(at: caret - 3) != 0x5b else { return }
+        if case .code = row(at: rowIndex(at: caret)).kind { return }
+        if spans(atRowOf: caret).contains(where: { $0.kind == .code && NSLocationInRange(caret - 1, $0.range) }) { return }
+        let completion = LinkCompletion(textView: self, start: caret)
+        linkCompletion = completion
+        if !completion.refresh() { endLinkCompletion() }
+    }
+
+    /// Keeps the list with what is typed, or puts it away when the caret
+    /// has left the link.
+    private func updateLinkCompletion() {
+        guard let completion = linkCompletion else { return }
+        if !completion.refresh() { endLinkCompletion() }
+    }
+
+    func endLinkCompletion() {
+        linkCompletion?.close()
+        linkCompletion = nil
+    }
+
+    func acceptLinkCompletion() {
+        guard let completion = linkCompletion else { return }
+        linkCompletion = nil
+        completion.close()
+        completion.accept()
+    }
+
+    override func insertTab(_ sender: Any?) {
+        if linkCompletion != nil { acceptLinkCompletion(); return }
+        indentRows(sender)
+    }
     override func insertBacktab(_ sender: Any?) { outdentRows(sender) }
 
     override func insertNewline(_ sender: Any?) {
+        if linkCompletion != nil {
+            acceptLinkCompletion()
+            return
+        }
         if let selectedRows {
             // Return from rows makes a new row after them, to write in.
             let index = selectedRows.upperBound - 1
@@ -1040,4 +1279,20 @@ final class CaretView: NSView {
             tail.backgroundColor = NSColor.controlAccentColor.cgColor
         }
     }
+}
+
+/// A menu item that runs a closure.
+final class ClosureMenuItem: NSMenuItem {
+    private let run: () -> Void
+
+    init(title: String, run: @escaping () -> Void) {
+        self.run = run
+        super.init(title: title, action: #selector(fire(_:)), keyEquivalent: "")
+        target = self
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) { fatalError() }
+
+    @objc private func fire(_ sender: Any?) { run() }
 }

@@ -383,6 +383,10 @@ extension OutlineTextView {
 
     override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
+        case #selector(paste(_:)) where isEditable && carriesFiles(.general):
+            // A picture alone on the clipboard can be pasted, though it is
+            // not text.
+            return true
         case #selector(toggleBold(_:)), #selector(toggleItalic(_:)), #selector(toggleCode(_:)),
              #selector(toggleStrikethrough(_:)), #selector(addLink(_:)):
             return isEditable && !isSelectingRows
@@ -499,7 +503,17 @@ extension OutlineTextView {
     /// The files and pictures on a pasteboard: files copied or dragged from
     /// the Finder, or a picture on its own — a screenshot, an image copied
     /// from a page. Text wins over a picture that comes with it.
-    func incoming(from pasteboard: NSPasteboard) -> [Incoming] {
+    /// Picture types a pasteboard can carry a picture's bytes as.
+    static let pictureTypes: [NSPasteboard.PasteboardType] = [.png, .tiff, NSPasteboard.PasteboardType(UTType.jpeg.identifier)]
+
+    /// Whether a pasteboard carries files or a picture, without reading them.
+    func carriesFiles(_ pasteboard: NSPasteboard) -> Bool {
+        let types = pasteboard.types ?? []
+        return types.contains(.fileURL) || types.contains(where: Self.pictureTypes.contains)
+            || types.contains(where: { NSFilePromiseReceiver.readableDraggedTypes.contains($0.rawValue) })
+    }
+
+    func incoming(from pasteboard: NSPasteboard, textFirst: Bool = true) -> [Incoming] {
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
            !urls.isEmpty {
             return urls.compactMap { url in
@@ -513,7 +527,9 @@ extension OutlineTextView {
                 return Incoming(data: data, name: Assets.fileName(for: url.lastPathComponent), title: url.lastPathComponent, isImage: false)
             }
         }
-        if let text = pasteboard.string(forType: .string), !text.isEmpty { return [] }
+        // Pasting, text that comes with a picture is what was meant; a drop
+        // of a picture that carries its address along is the picture.
+        if textFirst, let text = pasteboard.string(forType: .string), !text.isEmpty { return [] }
         if let png = pasteboard.data(forType: .png) {
             return [Incoming(data: png, name: Assets.pastedName(extension: "png"), title: "", isImage: true)]
         }
@@ -555,17 +571,76 @@ extension OutlineTextView {
         insertText(markdown.joined(separator: " "), replacementRange: selectedRange())
     }
 
+    // A text view that takes only text refuses anything else before it is
+    // asked: pictures and files are named here, on the pasteboard and in
+    // drags, so that pasting and dropping them reach `add`.
+
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        super.readablePasteboardTypes + [.fileURL] + Self.pictureTypes
+    }
+
     override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
-        super.acceptableDragTypes + [.fileURL, .png, .tiff]
+        super.acceptableDragTypes + [.fileURL] + Self.pictureTypes
+            + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let operation = super.draggingEntered(sender)
+        return isEditable && carriesFiles(sender.draggingPasteboard) ? .copy : operation
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        // The text view moves its drop caret along; the answer is ours.
+        let operation = super.draggingUpdated(sender)
+        return isEditable && carriesFiles(sender.draggingPasteboard) ? .copy : operation
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        isEditable && carriesFiles(sender.draggingPasteboard) ? true : super.prepareForDragOperation(sender)
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let files = incoming(from: sender.draggingPasteboard)
-        guard !files.isEmpty else { return super.performDragOperation(sender) }
+        let pasteboard = sender.draggingPasteboard
+        guard isEditable, carriesFiles(pasteboard) else { return super.performDragOperation(sender) }
         window?.makeFirstResponder(self)
         let point = convert(sender.draggingLocation, from: nil)
         setSelectedRange(NSRange(location: characterIndexForInsertion(at: point), length: 0))
-        add(files)
+        let files = incoming(from: pasteboard, textFirst: false)
+        if !files.isEmpty {
+            add(files)
+            return true
+        }
+        // Photos, Safari and Mail promise files and write them when asked.
+        guard let promises = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver],
+              !promises.isEmpty else { return false }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("reflect-drop-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let location = selectedRange()
+        var received: [URL] = []
+        let group = DispatchGroup()
+        for promise in promises {
+            group.enter()
+            promise.receivePromisedFiles(atDestination: folder, options: [:], operationQueue: .main) { url, error in
+                if let error {
+                    Log.shared.warning("files", "A dropped file did not arrive", detail: error.localizedDescription)
+                } else {
+                    received.append(url)
+                }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { [weak self] in
+            guard let self else { return }
+            let board = NSPasteboard(name: NSPasteboard.Name("ReflectDrop-\(UUID().uuidString)"))
+            board.clearContents()
+            board.writeObjects(received as [NSURL])
+            let files = self.incoming(from: board, textFirst: false)
+            board.releaseGlobally()
+            try? FileManager.default.removeItem(at: folder)
+            guard !files.isEmpty else { return }
+            self.setSelectedRange(NSRange(location: min(location.location, self.textStorage!.length - 1), length: 0))
+            self.add(files)
+        }
         return true
     }
 }

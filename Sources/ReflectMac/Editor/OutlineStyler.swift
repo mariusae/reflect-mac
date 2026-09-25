@@ -193,10 +193,7 @@ enum InlineMarkdown {
             case .link(let target), .url(let target):
                 if let url = URL(string: target) { storage.addAttribute(.link, value: url, range: content) }
             case .wikiLink(let title):
-                var components = URLComponents()
-                components.scheme = "reflect-note"
-                components.path = title
-                if let url = components.url { storage.addAttribute(.link, value: url, range: content) }
+                if let url = URL.wiki(title) { storage.addAttribute(.link, value: url, range: content) }
             case .image(let reference):
                 if let size = images?.size(of: reference) {
                     storage.addAttribute(.outlineImage, value: ImageBox(source: reference.source, size: size),

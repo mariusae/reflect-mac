@@ -148,7 +148,6 @@ final class OutlineLayoutManager: NSLayoutManager {
         guard let view = outlineView else { return }
         let glyph = glyphIndexForCharacter(at: paragraph.location)
         guard glyph < numberOfGlyphs else { return }
-        let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
         let baseline = origin.y + self.baseline(ofLineAt: glyph, font: view.metrics.font(for: row))
         let font = view.metrics.font(for: row)
         let center = NSPoint(x: indent - view.metrics.indent / 2, y: baseline - font.xHeight / 2)

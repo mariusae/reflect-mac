@@ -15,8 +15,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     let index: NoteIndex
     private var watcher: DirectoryWatcher?
     private var notesWatcher: DirectoryWatcher?
+    /// Reflect's own search index for the graph, when it keeps one.
+    private lazy var searchIndex = ReflectSearchIndex(root: graph.root)
     private lazy var chooser: OpenQuickly = {
-        let chooser = OpenQuickly(index: index, search: ReflectSearchIndex(root: graph.root))
+        let chooser = OpenQuickly(index: index, search: searchIndex)
         chooser.onOpen = { [weak self] target, inSplit in self?.workspace.open(target, inSplit: inSplit) }
         return chooser
     }()
@@ -85,6 +87,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             self?.reloadFromDisk()
         }
         rescan()
+        // A `[[link]]`'s card shows the note it leads to.
+        LinkCard.noteSource = { [weak self] title in
+            guard let self, let path = index.resolve(title) else { return nil }
+            return (NoteRef(path: path), graph.read(path: path) ?? "")
+        }
+        // `[[` in a note finds what the chooser finds.
+        LinkCompletion.source = { [weak self] query in
+            guard let self else { return [] }
+            return OpenQuickly.items(for: query, index: index, search: searchIndex)
+        }
         // "Synced 2 minutes ago" goes stale on its own.
         statusTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.showStatus() }

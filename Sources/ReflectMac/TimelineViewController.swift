@@ -367,10 +367,9 @@ final class TimelineViewController: NSViewController, OutlineTextViewNavigator {
     /// whether to the split view.
     var onOpen: ((URL, _ inSplit: Bool) -> Void)?
 
-    func outlineView(_ view: OutlineTextView, open url: URL) {
-        let inSplit = NSApp.currentEvent?.modifierFlags.contains(.option) == true
+    func outlineView(_ view: OutlineTextView, open url: URL, inSplit: Bool) {
         // A day's link goes to the day, here in the timeline.
-        if url.scheme == "reflect-note", let day = Day(url.path), !inSplit {
+        if let target = url.wikiTarget, let day = Day(target), !inSplit {
             focus(day)
             return
         }

@@ -21,6 +21,8 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
         var title: String
         var detail: NSAttributedString?
         var symbol: String
+        /// What a `[[link]]` to it says.
+        var name: String = ""
     }
 
     let index: NoteIndex
@@ -170,6 +172,12 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
         var seen = Set<String>()
         func add(_ item: Item, path: String) {
             guard seen.insert(path).inserted else { return }
+            var item = item
+            switch item.target {
+            case .day(let day): item.name = day.description
+            case .note(let path): item.name = index.entry(path)?.title ?? item.title
+            case .create(let title): item.name = title
+            }
             items.append(item)
         }
 
@@ -216,7 +224,7 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
         // from whatever is typed.
         if !exists {
             items.append(Item(target: .create(query), title: "New Note “\(query)”", detail: plain("⌘↩ Make a note with this title"),
-                              symbol: "square.and.pencil"))
+                              symbol: "square.and.pencil", name: query))
         }
         return items
     }
@@ -344,7 +352,7 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
 }
 
 /// A result: its kind's symbol, its name, and a line more.
-private final class ChooserCell: NSTableCellView {
+final class ChooserCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("ChooserCell")
     private let symbol = NSImageView()
     private let title = NSTextField(labelWithString: "")

@@ -84,7 +84,7 @@ final class NotePaneController: NSViewController, OutlineTextViewNavigator {
         view.enter(from: edge, x: edge == .top ? 0 : .greatestFiniteMagnitude)
     }
 
-    func outlineView(_ view: OutlineTextView, open url: URL) {
-        onOpen?(url, NSApp.currentEvent?.modifierFlags.contains(.option) == true)
+    func outlineView(_ view: OutlineTextView, open url: URL, inSplit: Bool) {
+        onOpen?(url, inSplit)
     }
 }

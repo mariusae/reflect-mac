@@ -85,6 +85,17 @@ final class ImageStore: @unchecked Sendable {
         return nil
     }
 
+    /// Calls back once, when a picture sent for arrives.
+    func whenLoaded(_ source: String, _ done: @escaping @MainActor () -> Void) {
+        final class Token: @unchecked Sendable { var value: NSObjectProtocol? }
+        let token = Token()
+        token.value = NotificationCenter.default.addObserver(forName: Self.didLoad, object: nil, queue: .main) { notification in
+            guard notification.object as? String == source else { return }
+            if let value = token.value { NotificationCenter.default.removeObserver(value) }
+            MainActor.assumeIsolated { done() }
+        }
+    }
+
     /// The post a source links, once it is here; sent for when it is not.
     func tweet(_ source: String) -> Tweet? {
         Tweet.id(from: source).flatMap { tweet(source, id: $0) }
@@ -146,6 +157,9 @@ final class ImageStore: @unchecked Sendable {
         images.setObject(image, forKey: source as NSString)
         return image
     }
+
+    /// The file in the graph an `assets/…` source is, when it is one.
+    func graphFile(_ source: String) -> URL? { assetURL(source) }
 
     /// The file an `assets/…` source names, when it is safely inside the
     /// graph and there. As Reflect does, nothing outside `assets/` is read,

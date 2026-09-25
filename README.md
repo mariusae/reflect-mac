@@ -38,6 +38,19 @@ by date, then title, then alias, as Reflect resolves them — or, with ⌥, in
 the split view; a link to a note that is not there yet makes it, as Reflect
 does: `notes/<slug>.md`, with a ULID `id` and the title as its first heading.
 
+Resting the pointer on a link shows its card. A link to the web shows the
+page's icon, title and description — read as Reflect reads them, from
+`og:title` or `<title>`, fetched once and cached — with Open and Copy; an
+address written out bare also offers Use Title, which puts
+`[Page Title](address)` in its place. A link to a post on X shows the post. A
+`[[link]]` shows the note it leads to, as it reads, with Open and Open in Split
+View, or offers to make it when there is no such note. Links in a note marked
+`private: true` are never looked up.
+
+Typing `[[` in a note brings up the chooser's own search, under the caret, for
+the words that follow: ↑ and ↓ choose, Return or Tab puts in `[[Title]]` (or
+`[[2026-09-24]]` for a day), and Escape leaves what is typed as it is.
+
 ## The outline
 
 Each row is a Markdown list item — or a heading, a paragraph, a quote, a
@@ -63,7 +76,8 @@ Pictures pasted or dropped in are saved as `assets/pasted-<time>.png`; other
 files keep a readable form of their own name (`Q3 Report (final).PDF` →
 `assets/q3-report-final.pdf`) and are linked by it. Nothing already there is
 ever written over: a name in use gets `-2`, `-3`. Double-click a picture or a
-card to open it; click a link to a file in `assets/` to open it in the app
+card to open it, or right-click it to open it, show it in the Finder, copy it
+(as PNG and TIFF, so it pastes anywhere) or its address, or delete it; click a link to a file in `assets/` to open it in the app
 that opens it. Over a bullet, a checkbox or a picture the pointer is an arrow.
 
 As in Bike, the caret has two places at each edge of a styled span — inside it

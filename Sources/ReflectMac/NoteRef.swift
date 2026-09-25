@@ -25,3 +25,25 @@ enum NoteRef: Hashable {
     /// always has been, any other note by its path.
     var stateKey: String { day?.description ?? path }
 }
+
+import Foundation
+
+extension URL {
+    /// The title a `reflect-note:` link names — what `[[title]]` says.
+    ///
+    /// Read from the whole address: such a link has no path in the web's
+    /// sense, and once it has been through AppKit, as `NSURL`, its `path`
+    /// is empty.
+    var wikiTarget: String? {
+        guard scheme == "reflect-note" else { return nil }
+        let rest = absoluteString.dropFirst("reflect-note:".count)
+        let title = (String(rest).removingPercentEncoding ?? String(rest)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? nil : title
+    }
+
+    /// A `reflect-note:` link to a title.
+    static func wiki(_ title: String) -> URL? {
+        let encoded = title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: ":/?#")))
+        return encoded.flatMap { URL(string: "reflect-note:" + $0) }
+    }
+}

@@ -187,7 +187,10 @@ final class WorkspaceController: NSViewController {
     func open(_ url: URL, inSplit: Bool) {
         switch url.scheme {
         case "reflect-note":
-            let title = url.path
+            guard let title = url.wikiTarget else {
+                NSSound.beep()
+                return
+            }
             if let path = index.resolve(title) {
                 show(NoteRef(path: path), inSplit: inSplit)
             } else if let path = create(title) {
@@ -202,6 +205,11 @@ final class WorkspaceController: NSViewController {
 
     /// Makes a note for a title, and says what it did.
     func create(_ title: String) -> String? {
+        // A note is made only with a name to make it by.
+        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            NSSound.beep()
+            return nil
+        }
         do {
             let path = try NoteCreation.create(title: title, in: graph.root)
             index.refresh(path)

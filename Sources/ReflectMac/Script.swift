@@ -110,7 +110,8 @@ enum Script {
                     for child in view.subviews { if let found = find(child) { return found } }
                     return nil
                 }
-                if let root = controller.window?.contentView, let button = find(root) {
+                let roots = [controller.window?.contentView] + (controller.window?.childWindows ?? []).map(\.contentView)
+                if let button = roots.compactMap({ $0 }).lazy.compactMap(find).first {
                     button.performClick(nil)
                 } else {
                     print("script: no button \(argument)")
@@ -173,10 +174,9 @@ enum Script {
             case "link":
                 // link <title> [split]: as if a [[title]] were followed.
                 let parts = argument.components(separatedBy: " | ")
-                var components = URLComponents()
-                components.scheme = "reflect-note"
-                components.path = parts[0]
-                controller.workspace.open(components.url!, inSplit: parts.count > 1)
+                // Through NSURL, as a link out of the text arrives.
+                let url = (URL.wiki(parts[0])! as NSURL) as URL
+                controller.workspace.open(url, inSplit: parts.count > 1)
             case "choose":
                 // choose <query>: the chooser, showing what a query finds.
                 controller.openQuickly(nil)
@@ -187,6 +187,8 @@ enum Script {
                 if let panel = NSApp.windows.first(where: { $0 is ChooserPanel }), let field = panel.firstResponder as? NSTextView {
                     field.insertText(argument, replacementRange: field.selectedRange())
                 }
+            case "snap-children":
+                for child in controller.window?.childWindows ?? [] where child.isVisible { write(child, name: argument) }
             case "snap-chooser":
                 if let panel = NSApp.windows.first(where: { $0 is ChooserPanel }) { write(panel, name: argument) }
             case "back":
@@ -195,6 +197,124 @@ enum Script {
                 controller.closeSplitView(nil)
             case "title":
                 print("title: \(controller.window?.title ?? "")")
+                fflush(stdout)
+            case "click-text", "option-click-text":
+                // click-text <text>: a real click, through the window, in the
+                // middle of that text in the note the keyboard is in.
+                if let editor = controller.window?.firstResponder as? OutlineTextView, let window = controller.window,
+                   let layout = editor.layoutManager, let container = editor.textContainer {
+                    let range = (editor.string as NSString).range(of: argument)
+                    guard range.location != NSNotFound else { print("script: no \(argument)"); break }
+                    let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: range.location + range.length / 2, length: 1), actualCharacterRange: nil)
+                    let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+                        .offsetBy(dx: editor.textContainerOrigin.x, dy: editor.textContainerOrigin.y)
+                    let point = editor.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+                    let flags: NSEvent.ModifierFlags = command == "option-click-text" ? [.option] : []
+                    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                        if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: flags,
+                                                          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                          context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0) {
+                            NSApp.postEvent(event, atStart: false)
+                        }
+                    }
+                }
+            case "hover-text":
+                // hover-text <text>: the pointer comes to rest on that text.
+                if let editor = controller.window?.firstResponder as? OutlineTextView,
+                   let layout = editor.layoutManager, let container = editor.textContainer {
+                    let range = (editor.string as NSString).range(of: argument)
+                    guard range.location != NSNotFound else { print("script: no \(argument)"); break }
+                    let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: range.location + range.length / 2, length: 1), actualCharacterRange: nil)
+                    let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+                    let point = NSPoint(x: rect.midX + editor.textContainerOrigin.x, y: rect.midY + editor.textContainerOrigin.y)
+                    if let hover = editor.linkHover(at: point) {
+                        LinkCard.shared.hover(hover, in: editor, anchor: editor.firstRect(forCharacterRange: hover.range, actualRange: nil))
+                    } else {
+                        print("script: no link at \(argument)")
+                    }
+                }
+            case "clipboard-paste":
+                // clipboard-paste <image>: the image alone on the clipboard,
+                // Edit ▸ Paste as the menu has it, then the clipboard as it was.
+                let board = NSPasteboard.general
+                let saved = (board.pasteboardItems ?? []).map { item in
+                    item.types.reduce(into: [NSPasteboard.PasteboardType: Data]()) { $0[$1] = item.data(forType: $1) }
+                }
+                board.clearContents()
+                board.setData(try? Data(contentsOf: URL(fileURLWithPath: argument)), forType: .png)
+                func find(_ menu: NSMenu?) -> NSMenuItem? {
+                    for item in menu?.items ?? [] {
+                        if item.action == #selector(NSText.paste(_:)) { return item }
+                        if let found = find(item.submenu) { return found }
+                    }
+                    return nil
+                }
+                if let item = find(NSApp.mainMenu), let editor = controller.window?.firstResponder as? OutlineTextView {
+                    let enabled = editor.validateUserInterfaceItem(item)
+                    print("paste enabled: \(enabled)")
+                    if enabled { editor.paste(item) }
+                }
+                board.clearContents()
+                for item in saved {
+                    let restored = NSPasteboardItem()
+                    for (type, data) in item { restored.setData(data, forType: type) }
+                    board.writeObjects([restored])
+                }
+                fflush(stdout)
+            case "drop-file":
+                // drop-file <path>: a drag of a file, from a pasteboard of
+                // the script's own, into the note the keyboard is in.
+                if let editor = controller.window?.firstResponder as? OutlineTextView {
+                    let board = NSPasteboard(name: NSPasteboard.Name("ReflectScriptDrag"))
+                    board.clearContents()
+                    board.writeObjects([URL(fileURLWithPath: argument) as NSURL])
+                    let drag = FakeDrag(pasteboard: board, location: editor.convert(NSPoint(x: 60, y: 10), to: nil), window: controller.window!)
+                    let entered = editor.draggingEntered(drag)
+                    let prepared = editor.prepareForDragOperation(drag)
+                    let performed = editor.performDragOperation(drag)
+                    print("drop: entered \(entered.rawValue) prepared \(prepared) performed \(performed)")
+                }
+                fflush(stdout)
+            case "picture-menu":
+                // picture-menu [item]: right-clicks the first picture in the
+                // note the keyboard is in, lists its menu, and chooses an item.
+                guard let editor = controller.window?.firstResponder as? OutlineTextView, let window = controller.window,
+                      let storage = editor.textStorage, let layout = editor.layoutManager, let container = editor.textContainer else { break }
+                var target: NSPoint?
+                storage.enumerateAttribute(.outlineImage, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
+                    guard value is ImageBox else { return }
+                    let glyph = layout.glyphIndexForCharacter(at: range.location)
+                    var lineGlyphs = NSRange()
+                    let fragment = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: &lineGlyphs)
+                    let characters = layout.characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil)
+                    if let frame = ImageLine.frames(in: storage, characters: characters, container: container, fragment: fragment, indent: 30).first?.frame {
+                        target = NSPoint(x: frame.midX + editor.textContainerOrigin.x, y: frame.midY + editor.textContainerOrigin.y)
+                    }
+                    stop.pointee = true
+                }
+                guard let point = target,
+                      let event = NSEvent.mouseEvent(with: .rightMouseDown, location: editor.convert(point, to: nil), modifierFlags: [],
+                                                     timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                     context: nil, eventNumber: 0, clickCount: 1, pressure: 1),
+                      let menu = editor.menu(for: event) else { print("script: no picture menu"); break }
+                print("menu: " + menu.items.map { $0.isSeparatorItem ? "—" : $0.title }.joined(separator: " · "))
+                if !argument.isEmpty, let item = menu.items.first(where: { $0.title == argument }), let action = item.action {
+                    let board = NSPasteboard.general
+                    let saved = (board.pasteboardItems ?? []).map { item in
+                        item.types.reduce(into: [NSPasteboard.PasteboardType: Data]()) { $0[$1] = item.data(forType: $1) }
+                    }
+                    NSApp.sendAction(action, to: item.target, from: item)
+                    if argument.hasPrefix("Copy") {
+                        let types = (board.types ?? []).map(\.rawValue)
+                        print("clipboard: \(types) png \(board.data(forType: .png)?.count ?? 0) bytes")
+                        board.clearContents()
+                        for item in saved {
+                            let restored = NSPasteboardItem()
+                            for (type, data) in item { restored.setData(data, forType: type) }
+                            board.writeObjects([restored])
+                        }
+                    }
+                }
                 fflush(stdout)
             case "views":
                 print(controller.timeline.describeViews())
@@ -298,4 +418,30 @@ enum Script {
         let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).png")
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
+}
+
+/// A drag, as far as a drop needs one, for the script.
+final class FakeDrag: NSObject, NSDraggingInfo {
+    let draggingPasteboard: NSPasteboard
+    let draggingLocation: NSPoint
+    let draggingDestinationWindow: NSWindow?
+    init(pasteboard: NSPasteboard, location: NSPoint, window: NSWindow) {
+        draggingPasteboard = pasteboard
+        draggingLocation = location
+        draggingDestinationWindow = window
+    }
+    var draggingSourceOperationMask: NSDragOperation { .copy }
+    var draggedImageLocation: NSPoint { draggingLocation }
+    var draggedImage: NSImage? { nil }
+    var draggingSource: Any? { nil }
+    var draggingSequenceNumber: Int { 1 }
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    var draggingFormation: NSDraggingFormation = .default
+    var animatesToDestination: Bool = false
+    var numberOfValidItemsForDrop: Int = 1
+    func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?, classes classArray: [AnyClass],
+                                searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
+                                using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+    func resetSpringLoading() {}
 }
