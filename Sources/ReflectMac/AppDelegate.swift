@@ -20,7 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func open(_ root: URL) {
-        windowController?.timeline.saveAll()
+        windowController?.workspace.saveAll()
         windowController?.recordState()
         windowController?.close()
         let graph = Graph(root: root)
@@ -65,12 +65,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        windowController?.timeline.reloadFromDisk()
+        windowController?.reloadFromDisk()
         windowController?.sync.sync(becauseActivated: true)
     }
 
     func applicationDidResignActive(_ notification: Notification) {
-        windowController?.timeline.saveAll()
+        windowController?.workspace.saveAll()
         windowController?.recordState()
         SessionState.shared.writeNow()
     }
@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// note written just before quitting is not left only on this disk.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let controller = windowController else { return .terminateNow }
-        controller.timeline.saveAll()
+        controller.workspace.saveAll()
         controller.recordState()
         SessionState.shared.writeNow()
         guard controller.sync.git != nil else { return .terminateNow }

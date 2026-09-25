@@ -21,7 +21,7 @@ final class TimelineViewController: NSViewController, OutlineTextViewNavigator {
         }
     }
     /// Told when a note is written.
-    var onSave: (() -> Void)?
+    var onSave: ((NoteRef) -> Void)?
 
     private var first: Day
     private var last: Day
@@ -238,7 +238,10 @@ final class TimelineViewController: NSViewController, OutlineTextViewNavigator {
         let view = DayView(day: day, graph: graph, images: images, metrics: metrics)
         view.editor.navigator = self
         view.onHeightChange = { [weak self] view in self?.heightChanged(view) }
-        view.onSave = { [weak self] in self?.onSave?() }
+        view.onSave = { [weak self, weak view] in
+            guard let view else { return }
+            self?.onSave?(view.ref)
+        }
         views[day] = view
         document.addSubview(view)
         return view
@@ -360,30 +363,39 @@ final class TimelineViewController: NSViewController, OutlineTextViewNavigator {
         }
     }
 
+    /// Told of links to follow elsewhere: notes, files, the web — and
+    /// whether to the split view.
+    var onOpen: ((URL, _ inSplit: Bool) -> Void)?
+
     func outlineView(_ view: OutlineTextView, open url: URL) {
-        switch url.scheme {
-        case "reflect-note":
-            if let day = Day(url.path) {
-                scroll(to: day)
-            } else {
-                NSSound.beep()
-            }
-        case nil, "":
-            // A graph-relative path — `assets/report.pdf` — opens in the app
-            // that opens it, as long as it is safely inside the graph.
-            let path = url.path.removingPercentEncoding ?? url.path
-            let segments = path.split(separator: "/", omittingEmptySubsequences: false)
-            guard path.hasPrefix("assets/"), segments.dropFirst().allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
-                NSSound.beep()
-                return
-            }
-            let file = graph.root.appendingPathComponent(path)
-            if !NSWorkspace.shared.open(file) {
-                Log.shared.warning("files", "Could not open \(path)")
-                NSWorkspace.shared.activateFileViewerSelecting([file])
-            }
-        default:
+        let inSplit = NSApp.currentEvent?.modifierFlags.contains(.option) == true
+        // A day's link goes to the day, here in the timeline.
+        if url.scheme == "reflect-note", let day = Day(url.path), !inSplit {
+            focus(day)
+            return
+        }
+        if let onOpen {
+            onOpen(url, inSplit)
+        } else if url.scheme == nil || url.scheme == "" {
+            openAsset(url)
+        } else {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// A graph-relative path — `assets/report.pdf` — opens in the app that
+    /// opens it, as long as it is safely inside the graph.
+    func openAsset(_ url: URL) {
+        let path = url.path.removingPercentEncoding ?? url.path
+        let segments = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard path.hasPrefix("assets/"), segments.dropFirst().allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+            NSSound.beep()
+            return
+        }
+        let file = graph.root.appendingPathComponent(path)
+        if !NSWorkspace.shared.open(file) {
+            Log.shared.warning("files", "Could not open \(path)")
+            NSWorkspace.shared.activateFileViewerSelecting([file])
         }
     }
 

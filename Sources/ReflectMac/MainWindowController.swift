@@ -4,11 +4,22 @@ import ReflectCore
 /// The window: the timeline, a toolbar, and how the sync is doing in the
 /// subtitle.
 @MainActor
-final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate, NSMenuItemValidation {
+final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate, NSMenuItemValidation,
+    NSToolbarItemValidation {
     let graph: Graph
     let sync: SyncController
     let timeline: TimelineViewController
+    /// What the window shows: the timeline, a note, the split view.
+    let workspace: WorkspaceController
+    /// The graph's notes by name, for finding and following links.
+    let index: NoteIndex
     private var watcher: DirectoryWatcher?
+    private var notesWatcher: DirectoryWatcher?
+    private lazy var chooser: OpenQuickly = {
+        let chooser = OpenQuickly(index: index, search: ReflectSearchIndex(root: graph.root))
+        chooser.onOpen = { [weak self] target, inSplit in self?.workspace.open(target, inSplit: inSplit) }
+        return chooser
+    }()
     private var statusTimer: Timer?
 
     static let fontSizeKey = "FontSize"
@@ -20,6 +31,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         let stored = UserDefaults.standard.double(forKey: Self.fontSizeKey)
         let size = stored > 0 ? CGFloat(stored) : Self.defaultFontSize
         timeline = TimelineViewController(graph: graph, metrics: OutlineMetrics(fontSize: size))
+        index = NoteIndex(root: graph.root)
+        workspace = WorkspaceController(graph: graph, timeline: timeline, index: index)
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 800),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -30,8 +43,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.titlebarSeparatorStyle = .automatic
         window.toolbarStyle = .unified
         window.tabbingMode = .disallowed
-        window.contentViewController = timeline
-        // A view controller's view sizes its window; the timeline has no
+        window.contentViewController = workspace
+        // A view controller's view sizes its window; the workspace has no
         // size of its own to give.
         window.setContentSize(NSSize(width: 900, height: 820))
         super.init(window: window)
@@ -45,21 +58,33 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.setFrameAutosaveName("Main")
         if !window.setFrameUsingName("Main") { window.center() }
 
-        timeline.onSave = { [weak self] in
-            self?.sync.noteChanged()
-            self?.refreshReview()
+        let saved: (NoteRef) -> Void = { [weak self] ref in
+            guard let self else { return }
+            sync.noteChanged()
+            refreshReview()
+            index.refresh(ref.path)
         }
-        sync.flush = { [weak timeline] in timeline?.saveAll() }
-        sync.onPulled = { [weak timeline] _ in timeline?.reloadFromDisk() }
+        timeline.onSave = saved
+        workspace.onSave = saved
+        workspace.onChange = { [weak self] in
+            self?.showTitle()
+            self?.noteState()
+        }
+        sync.flush = { [weak workspace] in workspace?.saveAll() }
+        sync.onPulled = { [weak self] _ in self?.reloadFromDisk() }
         sync.onStatus = { [weak self] status in
             if case .synced = status { self?.refreshReview() }
             self?.showStatus()
         }
         sync.onConflicts = { [weak self] paths in self?.noteConflicts(paths) }
         sync.onLargeFiles = { [weak self] files in self?.showLargeFiles(files) }
-        watcher = DirectoryWatcher(url: graph.root.appendingPathComponent(GraphPaths.dailyDirectory)) { [weak timeline] in
-            timeline?.reloadFromDisk()
+        watcher = DirectoryWatcher(url: graph.root.appendingPathComponent(GraphPaths.dailyDirectory)) { [weak self] in
+            self?.reloadFromDisk()
         }
+        notesWatcher = DirectoryWatcher(url: graph.root.appendingPathComponent(GraphPaths.notesDirectory)) { [weak self] in
+            self?.reloadFromDisk()
+        }
+        rescan()
         // "Synced 2 minutes ago" goes stale on its own.
         statusTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.showStatus() }
@@ -70,6 +95,22 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Reads every note's name again, off the main thread.
+    private func rescan() {
+        let index = index
+        Task.detached(priority: .utility) { index.scan() }
+    }
+
+    /// Takes in what changed on disk: notes on screen, and names.
+    func reloadFromDisk() {
+        workspace.reloadFromDisk()
+        rescan()
+    }
+
+    private func showTitle() {
+        window?.title = workspace.noteTitle ?? graph.root.lastPathComponent
+    }
 
     private var restored = false
 
@@ -82,6 +123,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             guard let self else { return }
             let state = SessionState.shared.graph(graph.root)
             timeline.restore(state.top, focus: state.focus)
+            // The note that was open, and the one in the split view.
+            if let path = state.mainNote, graph.exists(path: path) { workspace.show(NoteRef(path: path), inSplit: false) }
+            if let path = state.splitNote, graph.exists(path: path) { workspace.show(NoteRef(path: path), inSplit: true) }
             if state.consoleOpen == true { ConsoleWindowController.shared.show(); window?.makeKeyAndOrderFront(nil) }
             timeline.onScroll = { [weak self] in self?.noteState() }
             NotificationCenter.default.addObserver(self, selector: #selector(selectionChanged(_:)),
@@ -111,12 +155,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         let place = timeline.place
         let focus = timeline.focusedSelection
         let consoleOpen = ConsoleWindowController.shared.window?.isVisible == true
+        let mainNote = workspace.current?.path
+        let splitNote = workspace.split?.ref.path
         SessionState.shared.update(graph.root) { state in
             state.top = place
             // With the keyboard elsewhere — the console, a sheet — the last
             // caret stands.
             if let focus { state.focus = focus }
             state.consoleOpen = consoleOpen
+            state.mainNote = mainNote
+            state.splitNote = splitNote
         }
     }
 
@@ -185,7 +233,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// Notes a merge left for review. Nothing interrupts: each day that has
     /// one says so where it is, and the subtitle says how many there are.
     private func noteConflicts(_ paths: [String]) {
-        timeline.reloadFromDisk()
+        reloadFromDisk()
         showStatus()
     }
 
@@ -205,11 +253,18 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     @objc func showConsole(_ sender: Any?) { ConsoleWindowController.shared.show() }
 
     @objc func saveDocument(_ sender: Any?) {
-        timeline.saveAll()
+        workspace.saveAll()
         sync.commitAndPush()
     }
 
-    @objc func goToToday(_ sender: Any?) { timeline.goToToday(sender) }
+    @objc func goToToday(_ sender: Any?) { workspace.showToday() }
+
+    /// File ▸ Open: the chooser.
+    @objc func openQuickly(_ sender: Any?) { chooser.show(over: window) }
+
+    @objc func goBack(_ sender: Any?) { workspace.goBack(sender) }
+    @objc func goForward(_ sender: Any?) { workspace.goForward(sender) }
+    @objc func closeSplitView(_ sender: Any?) { workspace.closeSplit() }
 
     /// Go ▸ Next Note Needing Review: the next day after this one whose note
     /// carries a conflict, round to the first.
@@ -219,14 +274,33 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         timeline.focus(days.first(where: { $0 > timeline.currentDay }) ?? first)
     }
 
+    func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+        switch item.action {
+        case #selector(goBack(_:)): workspace.canGoBack
+        case #selector(goForward(_:)): workspace.canGoForward
+        case #selector(syncNow(_:)): sync.git != nil
+        default: true
+        }
+    }
+
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(goToNextConflict(_:)) {
             return needingReview.contains { GraphPaths.day(fromDailyPath: $0) != nil }
         }
+        if item.action == #selector(goBack(_:)) { return workspace.canGoBack }
+        if item.action == #selector(goForward(_:)) { return workspace.canGoForward }
+        if item.action == #selector(closeSplitView(_:)) { return workspace.split != nil }
         return true
     }
-    @objc func goToPreviousDay(_ sender: Any?) { timeline.goToPreviousDay(sender) }
-    @objc func goToNextDay(_ sender: Any?) { timeline.goToNextDay(sender) }
+    @objc func goToPreviousDay(_ sender: Any?) {
+        if workspace.current != nil { workspace.showToday() }
+        timeline.goToPreviousDay(sender)
+    }
+
+    @objc func goToNextDay(_ sender: Any?) {
+        if workspace.current != nil { workspace.showToday() }
+        timeline.goToNextDay(sender)
+    }
 
     @objc func makeTextBigger(_ sender: Any?) { setFontSize(timeline.metrics.fontSize + 1) }
     @objc func makeTextSmaller(_ sender: Any?) { setFontSize(timeline.metrics.fontSize - 1) }
@@ -235,11 +309,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private func setFontSize(_ size: CGFloat) {
         let size = min(max(size, 10), 32)
         UserDefaults.standard.set(Double(size), forKey: Self.fontSizeKey)
-        timeline.metrics = OutlineMetrics(fontSize: size)
+        workspace.metrics = OutlineMetrics(fontSize: size)
     }
 
     @objc func revealInFinder(_ sender: Any?) {
-        let url = graph.url(for: timeline.currentDay)
+        let url = graph.url(for: workspace.current?.path ?? GraphPaths.dailyPath(for: timeline.currentDay))
         if FileManager.default.fileExists(atPath: url.path) {
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } else {
@@ -249,8 +323,17 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // MARK: NSWindowDelegate
 
+    /// ⌘W puts the split view away first, and closes the window after.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard workspace.split == nil else {
+            workspace.closeSplit()
+            return false
+        }
+        return true
+    }
+
     func windowDidResignKey(_ notification: Notification) {
-        timeline.saveAll()
+        workspace.saveAll()
     }
 
     // MARK: NSToolbarDelegate
@@ -259,12 +342,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private static let syncItemIdentifier = NSToolbarItem.Identifier("Sync")
     private weak var syncItem: NSToolbarItem?
 
+    private static let backItem = NSToolbarItem.Identifier("Back")
+    private static let forwardItem = NSToolbarItem.Identifier("Forward")
+    private static let openItem = NSToolbarItem.Identifier("Open")
+
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, Self.todayItem, Self.syncItemIdentifier]
+        [Self.backItem, Self.forwardItem, .flexibleSpace, Self.openItem, Self.todayItem, Self.syncItemIdentifier]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, .space, Self.todayItem, Self.syncItemIdentifier]
+        [Self.backItem, Self.forwardItem, .flexibleSpace, .space, Self.openItem, Self.todayItem, Self.syncItemIdentifier]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
@@ -272,6 +359,18 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.isBordered = true
         switch identifier {
+        case Self.backItem, Self.forwardItem:
+            let isBack = identifier == Self.backItem
+            item.label = isBack ? "Back" : "Forward"
+            item.toolTip = isBack ? "Back (⌘[)" : "Forward (⌘])"
+            item.image = NSImage(systemSymbolName: isBack ? "chevron.left" : "chevron.right", accessibilityDescription: item.label)
+            item.action = isBack ? #selector(goBack(_:)) : #selector(goForward(_:))
+            item.isNavigational = true
+        case Self.openItem:
+            item.label = "Open"
+            item.toolTip = "Open a Note or a Day (⌘O)"
+            item.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Open")
+            item.action = #selector(openQuickly(_:))
         case Self.todayItem:
             item.label = "Today"
             item.toolTip = "Go to Today"

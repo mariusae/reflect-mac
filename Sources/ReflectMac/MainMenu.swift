@@ -23,7 +23,8 @@ enum MainMenu {
         ]))
 
         main.addItem(submenu("File", [
-            item("Open Graph…", #selector(AppDelegate.openGraph(_:)), "o"),
+            item("Open…", #selector(MainWindowController.openQuickly(_:)), "o"),
+            item("Open Graph…", #selector(AppDelegate.openGraph(_:)), "o", [.command, .shift]),
             .separator(),
             item("Save", #selector(MainWindowController.saveDocument(_:)), "s"),
             item("Sync Now", #selector(MainWindowController.syncNow(_:)), "r"),
@@ -114,8 +115,8 @@ enum MainMenu {
         main.addItem(submenu("Outline", [
             item("New Row", #selector(OutlineTextView.newRow(_:)), "\r"),
             .separator(),
-            item("Indent", #selector(OutlineTextView.indentRows(_:)), "]"),
-            item("Outdent", #selector(OutlineTextView.outdentRows(_:)), "["),
+            item("Indent", #selector(OutlineTextView.indentRows(_:)), arrow(NSRightArrowFunctionKey), [.command, .control]),
+            item("Outdent", #selector(OutlineTextView.outdentRows(_:)), arrow(NSLeftArrowFunctionKey), [.command, .control]),
             item("Move Up", #selector(OutlineTextView.moveRowsUp(_:)), up, [.command, .control]),
             item("Move Down", #selector(OutlineTextView.moveRowsDown(_:)), down, [.command, .control]),
             .separator(),
@@ -136,6 +137,8 @@ enum MainMenu {
             item("Smaller", #selector(MainWindowController.makeTextSmaller(_:)), "-"),
             item("Actual Size", #selector(MainWindowController.makeTextStandardSize(_:))),
             .separator(),
+            item("Close Split View", #selector(MainWindowController.closeSplitView(_:))),
+            .separator(),
             item("Show Toolbar", #selector(NSWindow.toggleToolbarShown(_:)), "t", [.command, .option]),
             item("Customize Toolbar…", #selector(NSWindow.runToolbarCustomizationPalette(_:))),
             .separator(),
@@ -143,6 +146,9 @@ enum MainMenu {
         ]))
 
         main.addItem(submenu("Go", [
+            item("Back", #selector(MainWindowController.goBack(_:)), "["),
+            item("Forward", #selector(MainWindowController.goForward(_:)), "]"),
+            .separator(),
             item("Today", #selector(MainWindowController.goToToday(_:)), "t"),
             .separator(),
             item("Previous Day", #selector(MainWindowController.goToPreviousDay(_:)), up, [.control, .option]),

@@ -33,6 +33,10 @@ final class SessionState {
         var focus: Focus?
         var folds: [String: [OutlineFolds.Mark]] = [:]
         var consoleOpen: Bool?
+        /// The note open in the window's main place, when not the timeline.
+        var mainNote: String?
+        /// The note in the split view.
+        var splitNote: String?
     }
 
     private var graphs: [String: Graph] = [:]
@@ -60,14 +64,14 @@ final class SessionState {
         scheduleWrite()
     }
 
-    func folds(_ root: URL, _ day: Day) -> [OutlineFolds.Mark] {
-        graph(root).folds[day.description] ?? []
+    func folds(_ root: URL, _ note: NoteRef) -> [OutlineFolds.Mark] {
+        graph(root).folds[note.stateKey] ?? []
     }
 
-    /// Notes a day's folds, writing only when they changed.
-    func setFolds(_ root: URL, _ day: Day, _ marks: [OutlineFolds.Mark]) {
-        guard folds(root, day) != marks else { return }
-        update(root) { $0.folds[day.description] = marks.isEmpty ? nil : marks }
+    /// Notes a note's folds, writing only when they changed.
+    func setFolds(_ root: URL, _ note: NoteRef, _ marks: [OutlineFolds.Mark]) {
+        guard folds(root, note) != marks else { return }
+        update(root) { $0.folds[note.stateKey] = marks.isEmpty ? nil : marks }
     }
 
     // MARK: Writing

@@ -1,14 +1,18 @@
 import AppKit
 import ReflectCore
 
-/// One day of the timeline: its date, and its note as an outline.
+/// A note as an outline, under its name: a day of the timeline under its
+/// date, or any other note under its title — unless the title is the note's
+/// own first heading, which says it already.
 ///
 /// A day with no note shows an empty row to write in, and is not a file
 /// until something is written: a note is saved a moment after typing stops,
 /// and an untouched day stays out of the graph.
 @MainActor
 final class DayView: NSView, NSTextViewDelegate {
-    let day: Day
+    let ref: NoteRef
+    /// The day, for a day of the timeline.
+    var day: Day! { ref.day }
     let graph: Graph
     let editor: OutlineTextView
     private let title = NSTextField(labelWithString: "")
@@ -46,8 +50,12 @@ final class DayView: NSView, NSTextViewDelegate {
 
     override var isFlipped: Bool { true }
 
-    init(day: Day, graph: Graph, images: ImageStore, metrics: OutlineMetrics) {
-        self.day = day
+    convenience init(day: Day, graph: Graph, images: ImageStore, metrics: OutlineMetrics) {
+        self.init(ref: .day(day), graph: graph, images: images, metrics: metrics)
+    }
+
+    init(ref: NoteRef, graph: Graph, images: ImageStore, metrics: OutlineMetrics) {
+        self.ref = ref
         self.graph = graph
         editor = OutlineTextView(metrics: metrics)
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 200))
@@ -58,7 +66,7 @@ final class DayView: NSView, NSTextViewDelegate {
             needsLayout = true
             onHeightChange?(self)
         }
-        editor.setAccessibilityLabel("Note for \(Self.titleFormatter.string(from: day.date ?? Date()))")
+        editor.setAccessibilityLabel(ref.day.map { "Note for \(Self.titleFormatter.string(from: $0.date ?? Date()))" } ?? "Note")
         title.isSelectable = false
         badge.isSelectable = false
         badge.textColor = .secondaryLabelColor
@@ -103,6 +111,18 @@ final class DayView: NSView, NSTextViewDelegate {
     }()
 
     func updateTitle() {
+        guard let day = ref.day else {
+            // A note's name, when its first heading does not already give it.
+            let entry = NoteIndex.entry(path: ref.path, source: savedText)
+            title.stringValue = entry.titleIsHeading ? "" : entry.title
+            title.textColor = .labelColor
+            var notes: [String] = []
+            if conflictView != nil { notes.append("Needs Review") } else if isReadOnly { notes.append("Read Only") }
+            badge.stringValue = notes.joined(separator: " · ")
+            badge.isHidden = notes.isEmpty
+            needsLayout = true
+            return
+        }
         let today = Day.today
         let date = day.date ?? Date()
         title.stringValue = (day.year == today.year ? Self.titleFormatter : Self.titleWithYearFormatter).string(from: date)
@@ -129,7 +149,12 @@ final class DayView: NSView, NSTextViewDelegate {
 
     private var headerTop: CGFloat { round(metrics.fontSize * 2.2) }
     private var headerHeight: CGFloat { ceil(title.intrinsicContentSize.height) }
-    private var editorTop: CGFloat { headerTop + headerHeight + round(metrics.fontSize * 0.7) }
+    /// Where the note starts: under its name, or, for a note whose first
+    /// heading is its name, straight away.
+    private var editorTop: CGFloat {
+        guard ref.day != nil || !title.stringValue.isEmpty || !badge.isHidden else { return round(metrics.fontSize * 1.6) }
+        return headerTop + headerHeight + round(metrics.fontSize * 0.7)
+    }
     private var bottomPadding: CGFloat { round(metrics.fontSize * 1.6) }
 
     override func layout() {
@@ -182,6 +207,8 @@ final class DayView: NSView, NSTextViewDelegate {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        // Days are ruled apart; a note on its own needs no rule.
+        guard ref.day != nil else { return }
         let column = column
         NSColor.separatorColor.setFill()
         NSRect(x: column.minX, y: 0, width: column.width, height: 1).fill()
@@ -191,7 +218,7 @@ final class DayView: NSView, NSTextViewDelegate {
 
     /// Reads the note from disk, and shows it.
     func load() {
-        show(graph.read(day) ?? "")
+        show(graph.read(path: ref.path) ?? "")
     }
 
     /// Shows a note as it stands on disk, clean.
@@ -217,7 +244,7 @@ final class DayView: NSView, NSTextViewDelegate {
             var outline = OutlineMarkdown.parse(text)
             isReadOnly = text.contains(OutlineText.lineSeparator) || OutlineMarkdown.serialize(outline) != text
             // The rows folded when the note was last on screen here.
-            let rows = OutlineFolds.apply(SessionState.shared.folds(graph.root, day), to: outline.rows)
+            let rows = OutlineFolds.apply(SessionState.shared.folds(graph.root, ref), to: outline.rows)
             outline.rows = []
             shell = outline
             editor.load(rows.isEmpty ? [.blank] : rows)
@@ -231,7 +258,7 @@ final class DayView: NSView, NSTextViewDelegate {
     /// yet saved, neither is written over: saving waits, and the choice is
     /// offered, as Reflect does.
     func reloadIfChanged() {
-        let text = graph.read(day) ?? ""
+        let text = graph.read(path: ref.path) ?? ""
         guard text != savedText else { return }
         if isDirty {
             park(text)
@@ -282,10 +309,10 @@ final class DayView: NSView, NSTextViewDelegate {
     /// Keeps one side of every conflict in the note, or both, by splicing
     /// the file's text — the markers never pass through the editor.
     private func resolveConflict(keeping keep: ConflictMarkers.Resolution) {
-        let source = graph.read(day) ?? savedText
+        let source = graph.read(path: ref.path) ?? savedText
         let resolved = ConflictMarkers.resolve(source, keeping: keep)
         do {
-            try graph.write(resolved, for: day)
+            try graph.write(resolved, path: ref.path)
             show(resolved)
             onHeightChange?(self)
             onSave?()
@@ -312,18 +339,18 @@ final class DayView: NSView, NSTextViewDelegate {
             isDirty = false
             return
         }
-        if text.isEmpty && !graph.exists(day) {
+        if text.isEmpty && !graph.exists(path: ref.path) {
             savedText = text
             isDirty = false
             return
         }
-        let disk = graph.read(day) ?? ""
+        let disk = graph.read(path: ref.path) ?? ""
         if !overwriting && disk != savedText && disk != text {
             park(disk)
             return
         }
         do {
-            try graph.write(text, for: day)
+            try graph.write(text, path: ref.path)
             savedText = text
             isDirty = false
             onSave?()
@@ -336,7 +363,7 @@ final class DayView: NSView, NSTextViewDelegate {
 
     func textDidChange(_ notification: Notification) {
         // Folding is an edit to the text on screen, if not to the note.
-        SessionState.shared.setFolds(graph.root, day, OutlineFolds.marks(editor.rows))
+        SessionState.shared.setFolds(graph.root, ref, OutlineFolds.marks(editor.rows))
         isDirty = true
         saveTimer?.invalidate()
         saveTimer = Timer.scheduledTimer(withTimeInterval: Self.saveDelay, repeats: false) { [weak self] _ in

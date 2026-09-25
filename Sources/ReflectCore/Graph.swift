@@ -12,6 +12,27 @@ public final class Graph: @unchecked Sendable {
         self.git = Git.open(root)
     }
 
+    // MARK: Any note, by its graph-relative path
+
+    public func url(for path: String) -> URL { root.appendingPathComponent(path) }
+
+    public func read(path: String) -> String? {
+        guard let data = try? Data(contentsOf: url(for: path)) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    public func exists(path: String) -> Bool {
+        FileManager.default.fileExists(atPath: url(for: path).path)
+    }
+
+    public func write(_ text: String, path: String) throws {
+        let url = url(for: path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: url, options: .atomic)
+    }
+
+    // MARK: Daily notes
+
     public func url(for day: Day) -> URL {
         root.appendingPathComponent(GraphPaths.dailyPath(for: day))
     }

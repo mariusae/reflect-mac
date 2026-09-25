@@ -166,6 +166,36 @@ enum Script {
                     }
                 }
                 fflush(stdout)
+            case "open":
+                // open <path> [split]: as if chosen in the chooser.
+                let (path, mode) = split(argument)
+                controller.workspace.show(NoteRef(path: path), inSplit: mode == "split")
+            case "link":
+                // link <title> [split]: as if a [[title]] were followed.
+                let parts = argument.components(separatedBy: " | ")
+                var components = URLComponents()
+                components.scheme = "reflect-note"
+                components.path = parts[0]
+                controller.workspace.open(components.url!, inSplit: parts.count > 1)
+            case "choose":
+                // choose <query>: the chooser, showing what a query finds.
+                controller.openQuickly(nil)
+                let items = OpenQuickly.items(for: argument, index: controller.index, search: ReflectSearchIndex(root: controller.graph.root))
+                print("choose “\(argument)”: " + items.prefix(8).map { "\($0.title) [\($0.detail?.string.prefix(50) ?? "")]" }.joined(separator: " · "))
+                fflush(stdout)
+            case "type-chooser":
+                if let panel = NSApp.windows.first(where: { $0 is ChooserPanel }), let field = panel.firstResponder as? NSTextView {
+                    field.insertText(argument, replacementRange: field.selectedRange())
+                }
+            case "snap-chooser":
+                if let panel = NSApp.windows.first(where: { $0 is ChooserPanel }) { write(panel, name: argument) }
+            case "back":
+                controller.goBack(nil)
+            case "close-split":
+                controller.closeSplitView(nil)
+            case "title":
+                print("title: \(controller.window?.title ?? "")")
+                fflush(stdout)
             case "views":
                 print(controller.timeline.describeViews())
                 fflush(stdout)

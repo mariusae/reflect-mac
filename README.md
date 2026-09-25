@@ -18,6 +18,26 @@ row to write in, and does not become a file until something is written.
 The arrow keys run off the end of one day into the next. ⌘T goes to today,
 ⌃⌥↑ and ⌃⌥↓ to the day before and after. A `[[2026-09-25]]` link goes to its day.
 
+## Notes, and finding them
+
+⌘O opens the chooser: one field that finds anything. A note by its title or
+any of its names — frontmatter `aliases`, the parts of a `Project // Topic`
+title — with the whole name first, then its start, the starts of its words,
+and its initials ("dd" finds "Design Doc"). A day by its date, written or said
+("2026-09-24", "sep 24", "next friday", "yesterday"). Notes by words in them:
+from Reflect's own search index (`.reflect/index.sqlite`, read only, never
+written) when Reflect keeps one for the graph, else by reading the notes. With
+nothing typed, today and the notes edited last. ↩ opens; ⌥↩ or an ⌥-click
+opens in the split view; ⌘↩ opens the note with the name typed, making it
+when there is none.
+
+A note opens in place of the timeline, edited as a day is; ⌘[ and ⌘] go back
+and forward, and ⌘T back to today. The split view slides a second note in
+from the right, over the first; ⌘W puts it away. A `[[link]]` opens its note —
+by date, then title, then alias, as Reflect resolves them — or, with ⌥, in
+the split view; a link to a note that is not there yet makes it, as Reflect
+does: `notes/<slug>.md`, with a ULID `id` and the title as its first heading.
+
 ## The outline
 
 Each row is a Markdown list item — or a heading, a paragraph, a quote, a
@@ -73,7 +93,7 @@ Editing follows Bike:
 
 | | |
 |---|---|
-| Tab, ⇧Tab, ⌘], ⌘[ | Indent, outdent |
+| Tab, ⇧Tab, ⌃⌘→, ⌃⌘← | Indent, outdent |
 | ⌃⌘↑, ⌃⌘↓ | Move up, move down |
 | ⌘0, ⌘9 | Expand, collapse |
 | ⌃⌘0, ⌃⌘9 | Expand, collapse completely |
@@ -196,5 +216,5 @@ or given with `-GraphPath <folder>`.
 
 ## Not yet
 
-Notes other than daily notes, backlinks, search, focusing into a row (Bike's
+Backlinks, focusing into a row (Bike's
 ⌥⌘→), and dragging rows.
