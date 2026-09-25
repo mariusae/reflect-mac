@@ -151,3 +151,30 @@ private func shape(_ rows: [Row]) -> String {
         #expect(outline.rows[4].depth == 2)
     }
 }
+
+@Suite struct FoldMarkTests {
+    let note = "- a\n  - b\n    - c\n  - d\n- e\n  - f\n"
+
+    @Test func recordsAndRestoresFoldsNestedInFolds() {
+        var rows = OutlineMarkdown.parse(note).rows
+        OutlineEditing.fold(&rows, at: 1)   // b
+        OutlineEditing.fold(&rows, at: 0)   // a, with b folded inside
+        OutlineEditing.fold(&rows, at: 1)   // e
+        let marks = OutlineFolds.marks(rows)
+        #expect(marks == [.init(index: 0, text: "a"), .init(index: 1, text: "b"), .init(index: 4, text: "e")])
+        let restored = OutlineFolds.apply(marks, to: OutlineMarkdown.parse(note).rows)
+        #expect(restored == rows)
+    }
+
+    @Test func followsARowThatMovedAndDropsOneThatWent() {
+        let edited = OutlineMarkdown.parse("- new\n- a\n  - b\n- e\n").rows
+        let restored = OutlineFolds.apply([.init(index: 0, text: "a"), .init(index: 4, text: "gone")], to: edited)
+        #expect(restored.map(\.text) == ["new", "a", "e"])
+        #expect(restored[1].isFolded)
+    }
+
+    @Test func foldsNothingWithoutChildren() {
+        let rows = OutlineMarkdown.parse("- a\n- b\n").rows
+        #expect(OutlineFolds.apply([.init(index: 0, text: "a")], to: rows) == rows)
+    }
+}

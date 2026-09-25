@@ -286,6 +286,18 @@ final class OutlineTextView: NSTextView {
 
     // MARK: Selection
 
+    /// Puts back a selection noted before: rows, or a range of text, kept
+    /// inside the text as it now is.
+    func restoreSelection(location: Int, length: Int, rows: [Int]?) {
+        let count = paragraphRanges.count
+        if let rows, rows.count == 2 {
+            selectRows(anchor: min(rows[0], count - 1), head: min(rows[1], count - 1))
+            return
+        }
+        let start = min(max(location, 0), lastLocation)
+        setSelectedRange(NSRange(location: start, length: min(max(length, 0), lastLocation - start)))
+    }
+
     /// A selection, of text or of rows.
     struct SelectionSnapshot: Equatable {
         var range: NSRange

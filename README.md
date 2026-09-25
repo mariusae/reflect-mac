@@ -96,6 +96,14 @@ next heading of its rank or higher. Collapsing a heading folds its section;
 moving, deleting, copying or selecting its branch takes the section along.
 Indenting follows list nesting only, since that is all Markdown can indent.
 
+The app opens where it was left: the same day at the top of the window, as far
+into it, the caret or selection where it was, the rows folded as they were,
+and the console if it was open. This is kept per graph in
+`~/Library/Application Support/Reflect Mac/State.json` — it is how this Mac
+shows the notes, so it stays out of them and out of the repository. A fold
+is remembered by the row's place and its text, so it finds its row again
+after the note changes elsewhere, and is dropped when the row is gone.
+
 Folding is how a day is shown, not what it says: a folded row's children are
 written out like any other.
 

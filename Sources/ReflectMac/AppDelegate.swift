@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func open(_ root: URL) {
         windowController?.timeline.saveAll()
+        windowController?.recordState()
         windowController?.close()
         let graph = Graph(root: root)
         Log.shared.info("app", "Opened \(root.path)" + (graph.git == nil ? ", which is not in a git repository" : ""))
@@ -70,6 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidResignActive(_ notification: Notification) {
         windowController?.timeline.saveAll()
+        windowController?.recordState()
+        SessionState.shared.writeNow()
     }
 
     /// Saves, and gives git a moment to commit and push what was saved, so a
@@ -77,6 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let controller = windowController else { return .terminateNow }
         controller.timeline.saveAll()
+        controller.recordState()
+        SessionState.shared.writeNow()
         guard controller.sync.git != nil else { return .terminateNow }
         Task {
             await controller.sync.finish()

@@ -71,10 +71,53 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    private var restored = false
+
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
+        guard !restored else { return }
+        restored = true
         // Once the window has its size, so that the day lands where it should.
-        DispatchQueue.main.async { [weak self] in self?.timeline.focus(.today) }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let state = SessionState.shared.graph(graph.root)
+            timeline.restore(state.top, focus: state.focus)
+            if state.consoleOpen == true { ConsoleWindowController.shared.show(); window?.makeKeyAndOrderFront(nil) }
+            timeline.onScroll = { [weak self] in self?.noteState() }
+            NotificationCenter.default.addObserver(self, selector: #selector(selectionChanged(_:)),
+                                                   name: NSTextView.didChangeSelectionNotification, object: nil)
+        }
+    }
+
+    @objc private func selectionChanged(_ notification: Notification) {
+        guard (notification.object as? NSView)?.window === window else { return }
+        noteState()
+    }
+
+    private var stateTimer: Timer?
+
+    /// Notes where the app is a moment after it stops moving.
+    private func noteState() {
+        stateTimer?.invalidate()
+        stateTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.recordState() }
+        }
+    }
+
+    /// Notes where the app is, now.
+    func recordState() {
+        stateTimer?.invalidate()
+        guard restored else { return }
+        let place = timeline.place
+        let focus = timeline.focusedSelection
+        let consoleOpen = ConsoleWindowController.shared.window?.isVisible == true
+        SessionState.shared.update(graph.root) { state in
+            state.top = place
+            // With the keyboard elsewhere — the console, a sheet — the last
+            // caret stands.
+            if let focus { state.focus = focus }
+            state.consoleOpen = consoleOpen
+        }
     }
 
     // MARK: Status

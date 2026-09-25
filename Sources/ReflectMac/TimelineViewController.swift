@@ -178,6 +178,7 @@ final class TimelineViewController: NSViewController, OutlineTextViewNavigator {
 
     @objc private func scrolled(_ notification: Notification) {
         tile()
+        onScroll?()
     }
 
     /// Makes views for the days near the window, lets go of the rest, and
@@ -249,6 +250,48 @@ final class TimelineViewController: NSViewController, OutlineTextViewNavigator {
         guard measured[view.day] != height else { return }
         keepingTop { measured[view.day] = height }
         tile()
+    }
+
+    // MARK: Where the app is
+
+    /// Told when the window's place in the timeline moves.
+    var onScroll: (() -> Void)?
+
+    /// The day at the top of the window, and how far into it.
+    var place: SessionState.Place {
+        let index = index(atY: visibleTop + 1)
+        return SessionState.Place(day: day(at: index).description, offset: Double(visibleTop - offsets[index]))
+    }
+
+    /// The day the keyboard is in, and what is selected there.
+    var focusedSelection: SessionState.Focus? {
+        guard let editor = view.window?.firstResponder as? OutlineTextView,
+              let day = views.first(where: { $0.value.editor === editor })?.key else { return nil }
+        let range = editor.selectedRange()
+        return SessionState.Focus(day: day.description, location: range.location, length: range.length,
+                                  rows: editor.selectedRows.map { _ in [editor.rowAnchor, editor.rowHead] })
+    }
+
+    /// Puts the window back where it was: the same day at the top, as far
+    /// into it, and the caret where it was, wherever that is.
+    func restore(_ place: SessionState.Place?, focus caret: SessionState.Focus?) {
+        guard let place, let top = Day(place.day) else {
+            focus(.today)
+            return
+        }
+        scroll(to: top)
+        for _ in 0..<3 {
+            setVisibleTop(offsets[index(of: top)] + CGFloat(place.offset))
+            tile()
+        }
+        guard let caret, let day = Day(caret.day), day >= first, day <= last else { return }
+        // The keyboard's day need not be on screen; its view is made where
+        // it is, and kept while it has the keyboard.
+        let view = views[day] ?? makeView(for: day)
+        tile()
+        guard !view.hasConflict else { return }
+        view.window?.makeFirstResponder(view.editor)
+        view.editor.restoreSelection(location: caret.location, length: caret.length, rows: caret.rows)
     }
 
     // MARK: Going places

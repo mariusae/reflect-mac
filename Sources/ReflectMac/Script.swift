@@ -166,7 +166,13 @@ enum Script {
                 fflush(stdout)
             case "quit":
                 controller.timeline.saveAll()
+                controller.recordState()
+                SessionState.shared.writeNow()
                 exit(0)
+            case "place":
+                let place = controller.timeline.place
+                print("place \(place.day) +\(Int(place.offset)) focus \(String(describing: controller.timeline.focusedSelection))")
+                fflush(stdout)
             default:
                 print("script: what is \(line)?")
             }

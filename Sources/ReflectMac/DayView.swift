@@ -216,7 +216,8 @@ final class DayView: NSView, NSTextViewDelegate {
             editor.isHidden = false
             var outline = OutlineMarkdown.parse(text)
             isReadOnly = text.contains(OutlineText.lineSeparator) || OutlineMarkdown.serialize(outline) != text
-            let rows = outline.rows
+            // The rows folded when the note was last on screen here.
+            let rows = OutlineFolds.apply(SessionState.shared.folds(graph.root, day), to: outline.rows)
             outline.rows = []
             shell = outline
             editor.load(rows.isEmpty ? [.blank] : rows)
@@ -334,6 +335,8 @@ final class DayView: NSView, NSTextViewDelegate {
     // MARK: NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) {
+        // Folding is an edit to the text on screen, if not to the note.
+        SessionState.shared.setFolds(graph.root, day, OutlineFolds.marks(editor.rows))
         isDirty = true
         saveTimer?.invalidate()
         saveTimer = Timer.scheduledTimer(withTimeInterval: Self.saveDelay, repeats: false) { [weak self] _ in
