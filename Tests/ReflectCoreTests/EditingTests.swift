@@ -1,0 +1,153 @@
+import Testing
+@testable import ReflectCore
+
+/// Rows written as an outline in a string, `  ` a level: `"a\n  b"`.
+private func rows(_ text: String) -> [Row] {
+    text.split(separator: "\n").map { line in
+        let depth = line.prefix(while: { $0 == " " }).count / 2
+        let name = line.drop(while: { $0 == " " })
+        if name.hasPrefix("p:") { return Row(kind: .paragraph, depth: depth, text: String(name.dropFirst(2))) }
+        return Row(kind: .bullet, depth: depth, text: String(name))
+    }
+}
+
+private func shape(_ rows: [Row]) -> String {
+    rows.map { String(repeating: "  ", count: $0.depth) + ($0.kind == .paragraph ? "p:" : "") + $0.text + ($0.isFolded ? "+" : "") }
+        .joined(separator: "\n")
+}
+
+@Suite struct EditingTests {
+    @Test func indentTakesChildren() {
+        var outline = rows("a\nb\n  c\nd")
+        #expect(OutlineEditing.indent(&outline, 1..<2) == 1..<2)
+        #expect(shape(outline) == "a\n  b\n    c\nd")
+    }
+
+    @Test func indentNeedsASibling() {
+        var outline = rows("a\n  b")
+        #expect(OutlineEditing.indent(&outline, 1..<2) == nil)
+        #expect(OutlineEditing.indent(&outline, 0..<1) == nil)
+    }
+
+    @Test func indentUnderParagraphIsRefused() {
+        var outline = rows("p:a\nb")
+        #expect(OutlineEditing.indent(&outline, 1..<2) == nil)
+    }
+
+    @Test func indentOpensAFoldedParent() {
+        var outline = rows("a\n  x\nb")
+        OutlineEditing.fold(&outline, at: 0)
+        #expect(shape(outline) == "a+\nb")
+        #expect(OutlineEditing.indent(&outline, 1..<2) == 2..<3)
+        #expect(shape(outline) == "a\n  x\n  b")
+    }
+
+    @Test func outdentAdoptsFollowingSiblings() {
+        var outline = rows("a\n  b\n  c")
+        #expect(OutlineEditing.outdent(&outline, 1..<2) == 1..<2)
+        #expect(shape(outline) == "a\nb\n  c")
+    }
+
+    @Test func moveUpSwapsSubtrees() {
+        var outline = rows("a\n  a1\nb\n  b1\nc")
+        #expect(OutlineEditing.moveUp(&outline, 2..<3) == 0..<1)
+        #expect(shape(outline) == "b\n  b1\na\n  a1\nc")
+        #expect(OutlineEditing.moveUp(&outline, 0..<1) == nil)
+    }
+
+    @Test func moveDownSwapsSubtrees() {
+        var outline = rows("a\n  a1\nb\n  b1\nc")
+        #expect(OutlineEditing.moveDown(&outline, 0..<1) == 2..<3)
+        #expect(shape(outline) == "b\n  b1\na\n  a1\nc")
+        #expect(OutlineEditing.moveDown(&outline, 4..<5) == nil)
+    }
+
+    @Test func foldAndUnfold() {
+        var outline = rows("a\n  b\n    c\nd")
+        OutlineEditing.foldCompletely(&outline, at: 0)
+        #expect(shape(outline) == "a+\nd")
+        OutlineEditing.unfold(&outline, at: 0)
+        #expect(shape(outline) == "a\n  b+\nd")
+        OutlineEditing.fold(&outline, at: 0)
+        OutlineEditing.unfold(&outline, at: 0, completely: true)
+        #expect(shape(outline) == "a\n  b\n    c\nd")
+    }
+
+    @Test func foldedRowsAreWritten() {
+        var outline = OutlineMarkdown.parse("- a\n  - b\n- c\n")
+        OutlineEditing.fold(&outline.rows, at: 0)
+        #expect(outline.rows.count == 2)
+        #expect(OutlineMarkdown.serialize(outline) == "- a\n  - b\n- c\n")
+    }
+
+    @Test func deleteTakesChildrenAndKeepsARow() {
+        var outline = rows("a\n  b\nc")
+        #expect(OutlineEditing.delete(&outline, 0..<1) == 0)
+        #expect(shape(outline) == "c")
+        _ = OutlineEditing.delete(&outline, 0..<1)
+        #expect(outline == [.blank])
+    }
+
+    @Test func normalizeClampsDepth() {
+        var outline = rows("a\n    b\np:c\n  d")
+        OutlineEditing.normalize(&outline)
+        #expect(shape(outline) == "a\n  b\np:c\nd")
+    }
+
+    @Test func editorRowsStayRows() {
+        // A paragraph row made right under a list item must come back a row.
+        let outline = Outline(rows: [Row(kind: .bullet, text: "a"), Row(kind: .paragraph, depth: 1, text: "b")])
+        let text = OutlineMarkdown.serialize(outline)
+        #expect(text == "- a\n\n  b\n")
+        #expect(OutlineMarkdown.parse(text).rows.map(\.depth) == [0, 1])
+    }
+
+    @Test func orderedItemsAreSiblings() {
+        #expect(OutlineMarkdown.parse("1. a\n2. b\n").rows.count == 2)
+        #expect(OutlineMarkdown.parse("text\n2. b\n").rows.count == 1)
+    }
+}
+
+@Suite struct GapTests {
+    @Test func movingKeepsBlankLinesInPlace() {
+        var outline = OutlineMarkdown.parse("## H\n\n- a\n- b\n")
+        #expect(OutlineEditing.moveUp(&outline.rows, 2..<3) == 1..<2)
+        #expect(OutlineMarkdown.serialize(outline) == "## H\n\n- b\n- a\n")
+        #expect(OutlineEditing.moveDown(&outline.rows, 1..<2) == 2..<3)
+        #expect(OutlineMarkdown.serialize(outline) == "## H\n\n- a\n- b\n")
+    }
+}
+
+@Suite struct SectionTests {
+    let note = "- a\n\n## [[Links]]\n\n- one\n- two\n  - three\n\n## Next\n\n- four\n"
+
+    @Test func headingsHoldTheirSections() {
+        let rows = OutlineMarkdown.parse(note).rows
+        #expect(OutlineEditing.levels(rows) == [0, 0, 1, 1, 2, 0, 1])
+        #expect(OutlineEditing.subtreeEnd(rows, 1) == 5)
+        let nested = OutlineMarkdown.parse("# A\n## B\n- x\n## C\n# D\n").rows
+        #expect(OutlineEditing.levels(nested) == [0, 1, 2, 1, 0])
+    }
+
+    @Test func foldingAHeadingFoldsItsSection() {
+        var outline = OutlineMarkdown.parse(note)
+        #expect(OutlineEditing.fold(&outline.rows, at: 1) == 3)
+        #expect(outline.rows.map(\.text) == ["a", "[[Links]]", "Next", "four"])
+        #expect(OutlineMarkdown.serialize(outline) == note)
+        OutlineEditing.unfold(&outline.rows, at: 1)
+        #expect(OutlineMarkdown.serialize(outline) == note)
+    }
+
+    @Test func movingAHeadingTakesItsSection() {
+        var outline = OutlineMarkdown.parse(note)
+        #expect(OutlineEditing.moveDown(&outline.rows, 1..<2) == 3..<4)
+        #expect(OutlineMarkdown.serialize(outline) == "- a\n\n## Next\n\n- four\n\n## [[Links]]\n\n- one\n- two\n  - three\n")
+    }
+
+    @Test func indentingIgnoresSections() {
+        var outline = OutlineMarkdown.parse(note)
+        #expect(OutlineEditing.indent(&outline.rows, 3..<4) == 3..<4)
+        #expect(outline.rows[3].depth == 1)
+        #expect(outline.rows[4].depth == 2)
+    }
+}

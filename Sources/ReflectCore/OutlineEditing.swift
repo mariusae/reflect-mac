@@ -1,0 +1,255 @@
+import Foundation
+
+/// The outline commands, as operations on a run of rows.
+///
+/// These are Bike's: a row always takes its children along — when indented,
+/// outdented, moved or deleted — and every operation leaves the rows as
+/// Markdown can say them. Each takes the rows the command applies to, and
+/// gives back where those rows ended up, or nil when the command cannot be
+/// done there.
+public enum OutlineEditing {
+
+    /// Where each row sits in the outline. A list nests by indentation; a
+    /// heading at the top of the note also holds what follows it, up to the
+    /// next heading of its rank or higher — its section — so that a `##`
+    /// holds the rows under it and a `#` holds its `##`s.
+    public static func levels(_ rows: [Row]) -> [Int] {
+        var sections: [Int] = []  // the rank of each open heading
+        return rows.map { row in
+            if case .heading(let rank) = row.kind, row.depth == 0 {
+                while let open = sections.last, open >= rank { sections.removeLast() }
+                defer { sections.append(rank) }
+                return sections.count
+            }
+            return sections.count + row.depth
+        }
+    }
+
+    /// The index after the last descendant of the row at `index`.
+    public static func subtreeEnd(_ rows: [Row], _ index: Int) -> Int {
+        subtreeEnd(levels(rows), index)
+    }
+
+    static func subtreeEnd(_ levels: [Int], _ index: Int) -> Int {
+        var end = index + 1
+        while end < levels.count, levels[end] > levels[index] { end += 1 }
+        return end
+    }
+
+    /// The rows a selection of rows acts on: the selection, and the children
+    /// of every row in it.
+    public static func block(_ rows: [Row], _ selection: Range<Int>) -> Range<Int> {
+        let levels = levels(rows)
+        var end = selection.upperBound
+        for index in selection { end = max(end, subtreeEnd(levels, index)) }
+        return selection.lowerBound..<end
+    }
+
+    /// The rows a selection takes along when indented or outdented: its
+    /// list children only, since a section is not something to indent.
+    static func listBlock(_ rows: [Row], _ selection: Range<Int>) -> Range<Int> {
+        var end = selection.upperBound
+        for index in selection {
+            var last = index + 1
+            while last < rows.count, rows[last].depth > rows[index].depth { last += 1 }
+            end = max(end, last)
+        }
+        return selection.lowerBound..<end
+    }
+
+    /// Whether the row at `index` has children, shown or folded.
+    public static func hasChildren(_ rows: [Row], _ index: Int) -> Bool {
+        rows[index].isFolded || subtreeEnd(rows, index) > index + 1
+    }
+
+    /// The nearest row before `index` at `depth` in its list, before any
+    /// row shallower.
+    public static func previousSibling(_ rows: [Row], before index: Int, depth: Int) -> Int? {
+        var candidate = index - 1
+        while candidate >= 0 {
+            if rows[candidate].depth == depth { return candidate }
+            if rows[candidate].depth < depth { return nil }
+            candidate -= 1
+        }
+        return nil
+    }
+
+    /// The nearest row before `index` at `level` in the outline, before any
+    /// row that holds it.
+    static func previousSibling(_ levels: [Int], before index: Int, level: Int) -> Int? {
+        var candidate = index - 1
+        while candidate >= 0 {
+            if levels[candidate] == level { return candidate }
+            if levels[candidate] < level { return nil }
+            candidate -= 1
+        }
+        return nil
+    }
+
+    // MARK: Indent and outdent
+
+    /// Makes the rows children of the row before them.
+    public static func indent(_ rows: inout [Row], _ selection: Range<Int>) -> Range<Int>? {
+        let block = listBlock(rows, selection)
+        guard let depth = rows[block].map(\.depth).min(),
+              let parent = previousSibling(rows, before: block.lowerBound, depth: depth),
+              rows[parent].canHaveChildren
+        else { return nil }
+        var shift = 0
+        if rows[parent].isFolded {
+            // Bike opens the row that takes the new children, so they are
+            // not hidden as they arrive.
+            shift = unfold(&rows, at: parent)
+        }
+        let moved = (block.lowerBound + shift)..<(block.upperBound + shift)
+        for index in moved { rows[index].depth += 1 }
+        normalize(&rows)
+        return (selection.lowerBound + shift)..<(selection.upperBound + shift)
+    }
+
+    /// Makes the rows siblings of their parent. The rows after them that
+    /// were their siblings become their children, as the text reads.
+    public static func outdent(_ rows: inout [Row], _ selection: Range<Int>) -> Range<Int>? {
+        let block = listBlock(rows, selection)
+        guard let depth = rows[block].map(\.depth).min(), depth > 0 else { return nil }
+        for index in block { rows[index].depth -= 1 }
+        normalize(&rows)
+        return selection
+    }
+
+    // MARK: Moving
+
+    /// Swaps the rows with the sibling before them.
+    public static func moveUp(_ rows: inout [Row], _ selection: Range<Int>) -> Range<Int>? {
+        let block = block(rows, selection)
+        let levels = levels(rows)
+        guard let level = levels[block].min(),
+              let sibling = previousSibling(levels, before: block.lowerBound, level: level)
+        else { return nil }
+        let above = Array(rows[sibling..<block.lowerBound])
+        let moving = Array(rows[block])
+        rows.replaceSubrange(sibling..<block.upperBound, with: swappingGaps(moving, above))
+        normalize(&rows)
+        let offset = block.lowerBound - sibling
+        return (selection.lowerBound - offset)..<(selection.upperBound - offset)
+    }
+
+    /// Swaps the rows with the sibling after them.
+    public static func moveDown(_ rows: inout [Row], _ selection: Range<Int>) -> Range<Int>? {
+        let block = block(rows, selection)
+        let levels = levels(rows)
+        guard let level = levels[block].min(),
+              block.upperBound < rows.count, levels[block.upperBound] == level
+        else { return nil }
+        let below = Array(rows[block.upperBound..<subtreeEnd(levels, block.upperBound)])
+        let moving = Array(rows[block])
+        rows.replaceSubrange(block.lowerBound..<(block.upperBound + below.count), with: swappingGaps(below, moving))
+        normalize(&rows)
+        return (selection.lowerBound + below.count)..<(selection.upperBound + below.count)
+    }
+
+    /// Two runs of rows, the second now first. The blank lines between
+    /// them are where the text had them, not with the rows that moved.
+    private static func swappingGaps(_ first: [Row], _ second: [Row]) -> [Row] {
+        var first = first, second = second
+        swap(&first[0].gap, &second[0].gap)
+        return first + second
+    }
+
+    // MARK: Folding
+
+    /// Folds away the children of the row at `index`. Returns how many rows
+    /// left the screen.
+    @discardableResult
+    public static func fold(_ rows: inout [Row], at index: Int) -> Int {
+        let end = subtreeEnd(rows, index)
+        guard end > index + 1 else { return 0 }
+        let depth = rows[index].depth
+        let children = rows[(index + 1)..<end].map { child in
+            var child = child
+            child.depth -= depth
+            return child
+        }
+        rows[index].folded = children + rows[index].folded
+        rows.removeSubrange((index + 1)..<end)
+        return children.count
+    }
+
+    /// Shows the folded children of the row at `index`; with `completely`,
+    /// theirs too, all the way down. Returns how many rows came onto the
+    /// screen.
+    @discardableResult
+    public static func unfold(_ rows: inout [Row], at index: Int, completely: Bool = false) -> Int {
+        let before = rows.count
+        if completely {
+            let end = subtreeEnd(rows, index)
+            rows.replaceSubrange(index..<end, with: Row.unfold(Array(rows[index..<end])))
+        } else {
+            let depth = rows[index].depth
+            let children = rows[index].folded.map { child in
+                var child = child
+                child.depth += depth
+                return child
+            }
+            rows[index].folded = []
+            rows.insert(contentsOf: children, at: index + 1)
+        }
+        return rows.count - before
+    }
+
+    /// Folds the row and every row inside it, so that each opens later on
+    /// its own children folded.
+    @discardableResult
+    public static func foldCompletely(_ rows: inout [Row], at index: Int) -> Int {
+        let end = subtreeEnd(rows, index)
+        var removed = 0
+        // Innermost first, so each fold takes its own children with it.
+        for child in stride(from: end - 1, through: index, by: -1) {
+            removed += fold(&rows, at: child)
+        }
+        return removed
+    }
+
+    // MARK: Rows
+
+    /// Deletes the rows and their children. A note keeps one row.
+    public static func delete(_ rows: inout [Row], _ selection: Range<Int>) -> Int {
+        let block = block(rows, selection)
+        rows.removeSubrange(block)
+        if rows.isEmpty { rows = [.blank] }
+        normalize(&rows)
+        return min(block.lowerBound, rows.count - 1)
+    }
+
+    /// Copies the rows and their children, and puts the copy after them.
+    public static func duplicate(_ rows: inout [Row], _ selection: Range<Int>) -> Range<Int> {
+        let block = block(rows, selection)
+        rows.insert(contentsOf: rows[block], at: block.upperBound)
+        return (selection.lowerBound + block.count)..<(selection.upperBound + block.count)
+    }
+
+    /// Checks the rows off, or, when all are done, unchecks them. Rows
+    /// without a checkbox are left alone, unless none has one.
+    public static func toggleDone(_ rows: inout [Row], _ selection: Range<Int>) {
+        let tasks = selection.filter { rows[$0].task != nil }
+        if tasks.isEmpty {
+            for index in selection where rows[index].kind.isListItem { rows[index].task = .done("x") }
+            return
+        }
+        let allDone = tasks.allSatisfy { rows[$0].task?.isDone == true }
+        for index in tasks { rows[index].task = allDone ? .open : .done("x") }
+    }
+
+    /// Brings every row to a depth Markdown can write: no deeper than one
+    /// below the row before, and only below a list item.
+    public static func normalize(_ rows: inout [Row]) {
+        guard !rows.isEmpty else { return }
+        rows[0].depth = 0
+        for index in rows.indices.dropFirst() {
+            let previous = rows[index - 1]
+            let deepest = previous.depth + (previous.canHaveChildren ? 1 : 0)
+            if rows[index].depth > deepest { rows[index].depth = deepest }
+            if rows[index].depth < 0 { rows[index].depth = 0 }
+        }
+    }
+}

@@ -1,0 +1,346 @@
+import AppKit
+import ReflectCore
+
+/// One day of the timeline: its date, and its note as an outline.
+///
+/// A day with no note shows an empty row to write in, and is not a file
+/// until something is written: a note is saved a moment after typing stops,
+/// and an untouched day stays out of the graph.
+@MainActor
+final class DayView: NSView, NSTextViewDelegate {
+    let day: Day
+    let graph: Graph
+    let editor: OutlineTextView
+    private let title = NSTextField(labelWithString: "")
+    private let badge = NSTextField(labelWithString: "")
+    private let undo = UndoManager()
+
+    /// Told when the view wants another height.
+    var onHeightChange: ((DayView) -> Void)?
+    /// Told when the note has been written to disk.
+    var onSave: (() -> Void)?
+
+    /// What is on disk, as last read or written; empty when there is no file.
+    private(set) var savedText = ""
+    /// The note's frontmatter and the like, which the editor does not show.
+    private var shell = Outline(rows: [])
+    private(set) var isDirty = false
+    private var saveTimer: Timer?
+    /// A note the editor cannot write back as it was is shown, not edited.
+    private(set) var isReadOnly = false
+    /// A note carrying a sync conflict is shown as its two sides, with the
+    /// choice of what to keep, instead of in the editor.
+    private var conflictView: SyncConflictView?
+    var hasConflict: Bool { conflictView != nil }
+    /// What another app or a sync wrote while there was writing here not
+    /// yet saved; saving waits on the choice between the two.
+    private var parked: String?
+    private var parkedNotice: ChangedOnDiskNotice?
+    /// The least height to take, however little is written.
+    var minimumHeight: CGFloat = 0 {
+        didSet { if oldValue != minimumHeight { onHeightChange?(self) } }
+    }
+
+    static let columnWidth: CGFloat = 720
+    private static let saveDelay: TimeInterval = 0.8
+
+    override var isFlipped: Bool { true }
+
+    init(day: Day, graph: Graph, images: ImageStore, metrics: OutlineMetrics) {
+        self.day = day
+        self.graph = graph
+        editor = OutlineTextView(metrics: metrics)
+        super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 200))
+        editor.delegate = self
+        editor.images = images
+        editor.onPicturesChanged = { [weak self] in
+            guard let self else { return }
+            needsLayout = true
+            onHeightChange?(self)
+        }
+        editor.setAccessibilityLabel("Note for \(Self.titleFormatter.string(from: day.date ?? Date()))")
+        title.isSelectable = false
+        badge.isSelectable = false
+        badge.textColor = .secondaryLabelColor
+        addSubview(title)
+        addSubview(badge)
+        addSubview(editor)
+        applyMetrics()
+        load()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    var metrics: OutlineMetrics {
+        get { editor.metrics }
+        set {
+            editor.metrics = newValue
+            applyMetrics()
+            needsLayout = true
+            onHeightChange?(self)
+        }
+    }
+
+    private func applyMetrics() {
+        title.font = .systemFont(ofSize: round(metrics.fontSize * 1.45), weight: .bold)
+        badge.font = .systemFont(ofSize: round(metrics.fontSize * 0.95), weight: .medium)
+        updateTitle()
+    }
+
+    // MARK: Title
+
+    private static let titleFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEEEMMMMd")
+        return formatter
+    }()
+
+    private static let titleWithYearFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEEEMMMMdyyyy")
+        return formatter
+    }()
+
+    func updateTitle() {
+        let today = Day.today
+        let date = day.date ?? Date()
+        title.stringValue = (day.year == today.year ? Self.titleFormatter : Self.titleWithYearFormatter).string(from: date)
+        title.textColor = day == today ? .controlAccentColor : .labelColor
+        var notes: [String] = []
+        switch day {
+        case today: notes.append("Today")
+        case today.adding(-1): notes.append("Yesterday")
+        case today.adding(1): notes.append("Tomorrow")
+        default: break
+        }
+        if conflictView != nil { notes.append("Needs Review") } else if isReadOnly { notes.append("Read Only") }
+        badge.stringValue = notes.joined(separator: " · ")
+        badge.isHidden = notes.isEmpty
+        needsLayout = true
+    }
+
+    // MARK: Layout
+
+    private var column: NSRect {
+        let width = min(Self.columnWidth, bounds.width - 48)
+        return NSRect(x: ((bounds.width - width) / 2).rounded(), y: 0, width: width, height: bounds.height)
+    }
+
+    private var headerTop: CGFloat { round(metrics.fontSize * 2.2) }
+    private var headerHeight: CGFloat { ceil(title.intrinsicContentSize.height) }
+    private var editorTop: CGFloat { headerTop + headerHeight + round(metrics.fontSize * 0.7) }
+    private var bottomPadding: CGFloat { round(metrics.fontSize * 1.6) }
+
+    override func layout() {
+        super.layout()
+        let column = column
+        // A label draws its text a couple of points in from its edge.
+        let textX = column.minX + metrics.indent - 2
+        let size = title.intrinsicContentSize
+        title.frame = NSRect(x: textX, y: headerTop, width: size.width, height: size.height)
+        let badgeSize = badge.intrinsicContentSize
+        badge.frame = NSRect(x: title.frame.maxX + 10, y: title.frame.maxY - badgeSize.height - 3,
+                             width: badgeSize.width, height: badgeSize.height)
+        var y = editorTop
+        if let parkedNotice {
+            let height = parkedNotice.height(forWidth: column.width)
+            parkedNotice.frame = NSRect(x: column.minX, y: y, width: column.width, height: height)
+            y += height + noticeSpacing
+        }
+        if let conflictView {
+            conflictView.frame = NSRect(x: column.minX, y: y, width: column.width, height: conflictView.height(forWidth: column.width))
+        } else {
+            editor.frame = NSRect(x: column.minX, y: y, width: column.width, height: editorHeight(width: column.width))
+        }
+    }
+
+    private var noticeSpacing: CGFloat { round(metrics.fontSize * 0.8) }
+
+    /// The height the text takes at a width, without the empty line a text
+    /// view keeps after its last line break.
+    private func editorHeight(width: CGFloat) -> CGFloat {
+        guard let layout = editor.layoutManager, let container = editor.textContainer else { return 0 }
+        if abs(container.size.width - width) > 0.5 {
+            container.size = NSSize(width: width, height: .greatestFiniteMagnitude)
+        }
+        layout.ensureLayout(for: container)
+        var height = layout.usedRect(for: container).height
+        if layout.extraLineFragmentTextContainer != nil {
+            height -= layout.extraLineFragmentRect.height
+        }
+        return ceil(max(height, metrics.fontSize * 1.4))
+    }
+
+    /// The height the day wants at a width.
+    func desiredHeight(width: CGFloat) -> CGFloat {
+        let columnWidth = min(Self.columnWidth, width - 48)
+        var height = editorTop + bottomPadding
+        if let parkedNotice { height += parkedNotice.height(forWidth: columnWidth) + noticeSpacing }
+        height += conflictView?.height(forWidth: columnWidth) ?? editorHeight(width: columnWidth)
+        return max(minimumHeight, height)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let column = column
+        NSColor.separatorColor.setFill()
+        NSRect(x: column.minX, y: 0, width: column.width, height: 1).fill()
+    }
+
+    // MARK: Reading and writing
+
+    /// Reads the note from disk, and shows it.
+    func load() {
+        show(graph.read(day) ?? "")
+    }
+
+    /// Shows a note as it stands on disk, clean.
+    private func show(_ text: String) {
+        savedText = text
+        isDirty = false
+        dropParked()
+        conflictView?.removeFromSuperview()
+        conflictView = nil
+        if ConflictMarkers.detect(text) {
+            // Markers are not an outline; the note is shown as its sides
+            // until one is chosen, and never goes into the editor, whose
+            // next save could lose what it did not understand.
+            let view = SyncConflictView(source: text, fontSize: metrics.fontSize) { [weak self] keep in
+                self?.resolveConflict(keeping: keep)
+            }
+            conflictView = view
+            addSubview(view)
+            editor.isHidden = true
+            if window?.firstResponder === editor { window?.makeFirstResponder(nil) }
+        } else {
+            editor.isHidden = false
+            var outline = OutlineMarkdown.parse(text)
+            isReadOnly = text.contains(OutlineText.lineSeparator) || OutlineMarkdown.serialize(outline) != text
+            let rows = outline.rows
+            outline.rows = []
+            shell = outline
+            editor.load(rows.isEmpty ? [.blank] : rows)
+            editor.isEditable = !isReadOnly
+        }
+        updateTitle()
+        needsLayout = true
+    }
+
+    /// Takes in what another app, or a sync, wrote. With writing here not
+    /// yet saved, neither is written over: saving waits, and the choice is
+    /// offered, as Reflect does.
+    func reloadIfChanged() {
+        let text = graph.read(day) ?? ""
+        guard text != savedText else { return }
+        if isDirty {
+            park(text)
+            return
+        }
+        let focused = window?.firstResponder === editor
+        let caret = editor.caretPosition
+        show(text)
+        if focused && !hasConflict { editor.restoreCaret(caret) }
+        onHeightChange?(self)
+    }
+
+    private func park(_ text: String) {
+        saveTimer?.invalidate()
+        saveTimer = nil
+        parked = text
+        guard parkedNotice == nil else { return }
+        let notice = ChangedOnDiskNotice(keepMine: { [weak self] in self?.keepMine() },
+                                         loadTheirs: { [weak self] in self?.loadTheirs() },
+                                         fontSize: metrics.fontSize)
+        parkedNotice = notice
+        addSubview(notice)
+        needsLayout = true
+        onHeightChange?(self)
+    }
+
+    private func dropParked() {
+        parked = nil
+        parkedNotice?.removeFromSuperview()
+        parkedNotice = nil
+    }
+
+    /// Keep Mine: this writing goes to disk, over theirs.
+    private func keepMine() {
+        dropParked()
+        isDirty = true
+        save(overwriting: true)
+        onHeightChange?(self)
+    }
+
+    /// Load Theirs: what is on disk replaces this writing.
+    private func loadTheirs() {
+        guard let parked else { return }
+        show(parked)
+        onHeightChange?(self)
+    }
+
+    /// Keeps one side of every conflict in the note, or both, by splicing
+    /// the file's text — the markers never pass through the editor.
+    private func resolveConflict(keeping keep: ConflictMarkers.Resolution) {
+        let source = graph.read(day) ?? savedText
+        let resolved = ConflictMarkers.resolve(source, keeping: keep)
+        do {
+            try graph.write(resolved, for: day)
+            show(resolved)
+            onHeightChange?(self)
+            onSave?()
+            if !hasConflict {
+                window?.makeFirstResponder(editor)
+                editor.enter(from: .top, x: 0)
+            }
+        } catch {
+            presentError(error)
+        }
+    }
+
+    /// Writes the note, when there is anything new to write — and not
+    /// while another version waits on a choice, nor over one that arrived
+    /// unseen.
+    func save(overwriting: Bool = false) {
+        saveTimer?.invalidate()
+        saveTimer = nil
+        guard isDirty, !isReadOnly, !hasConflict, parked == nil else { return }
+        var outline = shell
+        outline.rows = editor.rows
+        let text = outline.isBlank ? "" : OutlineMarkdown.serialize(outline)
+        guard text != savedText else {
+            isDirty = false
+            return
+        }
+        if text.isEmpty && !graph.exists(day) {
+            savedText = text
+            isDirty = false
+            return
+        }
+        let disk = graph.read(day) ?? ""
+        if !overwriting && disk != savedText && disk != text {
+            park(disk)
+            return
+        }
+        do {
+            try graph.write(text, for: day)
+            savedText = text
+            isDirty = false
+            onSave?()
+        } catch {
+            presentError(error)
+        }
+    }
+
+    // MARK: NSTextViewDelegate
+
+    func textDidChange(_ notification: Notification) {
+        isDirty = true
+        saveTimer?.invalidate()
+        saveTimer = Timer.scheduledTimer(withTimeInterval: Self.saveDelay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.save() }
+        }
+        onHeightChange?(self)
+    }
+
+    func undoManager(for view: NSTextView) -> UndoManager? { undo }
+}
