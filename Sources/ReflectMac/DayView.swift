@@ -29,6 +29,8 @@ final class DayView: NSView, NSTextViewDelegate {
     /// The note's frontmatter and the like, which the editor does not show.
     private var shell = Outline(rows: [])
     private(set) var isDirty = false
+    /// The note is gone — moved to the Trash — and is never written again.
+    private(set) var isDiscarded = false
     private var saveTimer: Timer?
     /// A note the editor cannot write back as it was is shown, not edited.
     private(set) var isReadOnly = false
@@ -332,7 +334,7 @@ final class DayView: NSView, NSTextViewDelegate {
     func save(overwriting: Bool = false) {
         saveTimer?.invalidate()
         saveTimer = nil
-        guard isDirty, !isReadOnly, !hasConflict, parked == nil else { return }
+        guard isDirty, !isDiscarded, !isReadOnly, !hasConflict, parked == nil else { return }
         var outline = shell
         outline.rows = editor.rows
         let text = outline.isBlank ? "" : OutlineMarkdown.serialize(outline)
@@ -358,6 +360,14 @@ final class DayView: NSView, NSTextViewDelegate {
         } catch {
             presentError(error)
         }
+    }
+
+    /// Lets the note go without writing it: it has been deleted.
+    func discard() {
+        saveTimer?.invalidate()
+        saveTimer = nil
+        isDirty = false
+        isDiscarded = true
     }
 
     // MARK: NSTextViewDelegate

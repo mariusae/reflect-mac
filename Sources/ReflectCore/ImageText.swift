@@ -154,10 +154,6 @@ public final class ImageTextIndex: @unchecked Sendable {
 extension NoteIndex {
     /// Notes that show a picture, newest first.
     public func notes(showing asset: String) -> [String] {
-        let encoded = asset.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? asset
-        return all.filter { entry in
-            guard let text = body(entry.path) else { return false }
-            return text.contains(asset) || text.contains(encoded)
-        }.sorted { $0.modified > $1.modified }.map(\.path)
+        notePaths(showing: asset).compactMap(entry).sorted { $0.modified > $1.modified }.map(\.path)
     }
 }

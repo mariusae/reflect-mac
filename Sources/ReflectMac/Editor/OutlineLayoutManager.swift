@@ -82,6 +82,7 @@ final class OutlineLayoutManager: NSLayoutManager {
             if case .none = handle, index == view.hoveredRow, row.kind != .rule { handle = .ghost }
             drawHandle(handle, row: row, paragraph: paragraph, origin: origin, indent: indent)
             drawPictures(in: paragraph, origin: origin)
+            drawFilePills(in: paragraph, origin: origin)
         }
     }
 

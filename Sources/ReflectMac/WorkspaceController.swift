@@ -1,8 +1,8 @@
 import AppKit
 import ReflectCore
 
-/// What the window shows: the timeline, or a note in its place; and, slid
-/// in over the right of either, a second note — the split view.
+/// What the window shows: the timeline, or a note in its place; and, in a
+/// pane of its own on the right, a second note — the split view.
 ///
 /// Going from one to another is kept, so Back and Forward retrace it. The
 /// timeline is kept as it was while a note is shown, so going back to it
@@ -15,9 +15,11 @@ final class WorkspaceController: NSViewController {
 
     /// The note in the main place, when it is not the timeline.
     private(set) var main: NotePaneController?
-    /// The note in the split view.
-    private(set) var split: NotePaneController?
-    private let splitFrame = SplitFrameView()
+    /// The pane on the right, and its place in the window's split view.
+    let side: SidePaneController
+    let sideItem: NSSplitViewItem
+    /// The note in the split view, while it is open.
+    var split: NotePaneController? { sideItem.isCollapsed ? nil : side.pane }
 
     private var back: [NoteRef?] = []
     private var forward: [NoteRef?] = []
@@ -31,7 +33,7 @@ final class WorkspaceController: NSViewController {
         didSet {
             timeline.metrics = metrics
             main?.metrics = metrics
-            split?.metrics = metrics
+            side.metrics = metrics
         }
     }
 
@@ -40,8 +42,21 @@ final class WorkspaceController: NSViewController {
         self.timeline = timeline
         self.index = index
         metrics = timeline.metrics
+        side = SidePaneController(graph: graph, images: timeline.images, metrics: timeline.metrics)
+        sideItem = NSSplitViewItem(inspectorWithViewController: side)
+        sideItem.minimumThickness = 320
+        sideItem.maximumThickness = 1200
+        sideItem.canCollapse = true
+        sideItem.isCollapsed = true
+        // Up under the toolbar, whose items over it are the pane's own.
+        sideItem.allowsFullHeightLayout = true
         super.init(nibName: nil, bundle: nil)
         timeline.onOpen = { [weak self] url, inSplit in self?.open(url, inSplit: inSplit) }
+        // Links in the pane go on in it; with ⌥, to the main view.
+        side.onOpen = { [weak self] url, inMain in self?.open(url, inSplit: !inMain) }
+        side.onSave = { [weak self] ref in self?.onSave?(ref) }
+        side.onClose = { [weak self] in self?.closeSplit() }
+        side.onChange = { [weak self] in self?.onChange?() }
     }
 
     @available(*, unavailable)
@@ -51,18 +66,11 @@ final class WorkspaceController: NSViewController {
         view = FlippedView(frame: NSRect(x: 0, y: 0, width: 900, height: 800))
         addChild(timeline)
         view.addSubview(timeline.view)
-        splitFrame.onClose = { [weak self] in self?.closeSplit() }
     }
 
     override func viewDidLayout() {
         super.viewDidLayout()
         (main?.view ?? timeline.view).frame = view.bounds
-        if split != nil { splitFrame.frame = splitRect(open: true) }
-    }
-
-    private func splitRect(open: Bool) -> NSRect {
-        let width = min(max(view.bounds.width * 0.46, 380), max(view.bounds.width - 140, 300))
-        return NSRect(x: open ? view.bounds.width - width : view.bounds.width, y: 0, width: width, height: view.bounds.height)
     }
 
     // MARK: What is shown
@@ -97,7 +105,7 @@ final class WorkspaceController: NSViewController {
         if let target {
             let pane = pane(for: target)
             addChild(pane)
-            view.addSubview(pane.view, positioned: .below, relativeTo: split == nil ? nil : splitFrame)
+            view.addSubview(pane.view)
             pane.view.frame = view.bounds
             main = pane
             timeline.view.isHidden = true
@@ -108,6 +116,8 @@ final class WorkspaceController: NSViewController {
     }
 
     @objc func goBack(_ sender: Any?) {
+        // In the pane, the pane's way back.
+        if split != nil, side.hasFocus { side.goBack(sender); return }
         guard let previous = back.popLast() else { NSSound.beep(); return }
         forward.append(current)
         move(to: previous, recording: false)
@@ -115,6 +125,7 @@ final class WorkspaceController: NSViewController {
     }
 
     @objc func goForward(_ sender: Any?) {
+        if split != nil, side.hasFocus { side.goForward(sender); return }
         guard let next = forward.popLast() else { NSSound.beep(); return }
         back.append(current)
         move(to: next, recording: false)
@@ -136,47 +147,75 @@ final class WorkspaceController: NSViewController {
 
     // MARK: The split view
 
-    /// Slides a note in from the right, over what is shown; or puts it in
-    /// place of the one there.
+    /// Shows a note in the pane on the right, opening the pane if it was
+    /// put away; the note that was there goes into the pane's way back.
     func openSplit(_ ref: NoteRef) {
-        let wasOpen = split != nil
-        split?.save()
-        split?.view.removeFromSuperview()
-        split?.removeFromParent()
-        let pane = pane(for: ref)
-        addChild(pane)
-        split = pane
-        splitFrame.content = pane.view
-        if !wasOpen {
-            view.addSubview(splitFrame)
-            splitFrame.frame = splitRect(open: false)
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.22
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                splitFrame.animator().frame = splitRect(open: true)
+        if sideItem.isCollapsed {
+            // Put away, the pane started afresh.
+            side.clear()
+            side.show(ref)
+            makeRoomForSide()
+            // Once the window has taken its new width.
+            DispatchQueue.main.async { [self] in
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.2
+                    sideItem.animator().isCollapsed = false
+                }
+                // A hidden view takes no keyboard: once it shows.
+                side.focus()
+                onChange?()
             }
+        } else {
+            side.show(ref)
+            side.focus()
         }
-        pane.focus()
         onChange?()
     }
 
+    /// Widens the window, as far as the screen lets it, so that the main
+    /// view keeps its width beside the pane — rather than the pane pushing
+    /// it narrower than it can be.
+    private func makeRoomForSide() {
+        guard let window = view.window, let screen = window.screen?.visibleFrame else { return }
+        // The pane comes back as wide as it was.
+        let wanted = Self.mainMinimum + max(sideItem.minimumThickness, side.view.frame.width, 400)
+        let short = wanted - view.frame.width
+        guard short > 0 else { return }
+        var frame = window.frame
+        frame.size.width = min(frame.width + short, screen.width)
+        if frame.maxX > screen.maxX { frame.origin.x = max(screen.minX, screen.maxX - frame.width) }
+        window.setFrame(frame, display: true, animate: false)
+    }
+
+    /// The narrowest the main view is made.
+    static let mainMinimum: CGFloat = 520
+
+    /// Puts the pane on the right away.
     @objc func closeSplit(_ sender: Any? = nil) {
-        guard let pane = split else { return }
-        pane.save()
-        split = nil
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.18
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            splitFrame.animator().frame = splitRect(open: false)
-        }, completionHandler: { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, self.split == nil else { return }
-                self.splitFrame.removeFromSuperview()
-                self.splitFrame.content = nil
-                pane.removeFromParent()
-            }
-        })
+        guard !sideItem.isCollapsed else { return }
+        side.save()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            sideItem.animator().isCollapsed = true
+        }
         if let main { main.focus() } else { view.window?.makeFirstResponder(timeline.view) }
+        onChange?()
+    }
+
+    /// Lets a note go from wherever it is shown, it being gone: the main
+    /// view goes back to the timeline, the pane is put away. Nothing of it
+    /// is written again.
+    func forget(_ path: String) {
+        if split?.ref.path == path {
+            side.clear(saving: false)
+            sideItem.isCollapsed = true
+        }
+        if main?.ref.path == path {
+            main?.discard()
+            move(to: nil, recording: false)
+        }
+        back.removeAll { $0?.path == path }
+        forward.removeAll { $0?.path == path }
         onChange?()
     }
 
@@ -244,7 +283,7 @@ final class WorkspaceController: NSViewController {
 
     /// The editor a note is shown in, just after showing it.
     private func editor(showing ref: NoteRef, inSplit: Bool) -> OutlineTextView? {
-        if inSplit { return split?.noteView.editor }
+        if inSplit { return side.editor }
         if let day = ref.day { return timeline.view(for: day).editor }
         return main?.noteView.editor
     }
@@ -254,74 +293,15 @@ final class WorkspaceController: NSViewController {
     func saveAll() {
         timeline.saveAll()
         main?.save()
-        split?.save()
+        side.save()
     }
 
     func reloadFromDisk() {
         timeline.reloadFromDisk()
         main?.reloadFromDisk()
-        split?.reloadFromDisk()
+        side.reloadFromDisk()
     }
 
     /// The title of what is shown in the main place.
     var noteTitle: String? { main?.noteTitle }
-}
-
-/// The split view's frame: the note, a line and a shadow on its left edge,
-/// and a button to put it away.
-final class SplitFrameView: NSView {
-    var onClose: (() -> Void)?
-    private let close = NSButton()
-
-    var content: NSView? {
-        didSet {
-            oldValue?.removeFromSuperview()
-            if let content {
-                addSubview(content, positioned: .below, relativeTo: close)
-                needsLayout = true
-            }
-        }
-    }
-
-    override var isFlipped: Bool { true }
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-        layer?.masksToBounds = false
-        shadow = {
-            let shadow = NSShadow()
-            shadow.shadowColor = NSColor.black.withAlphaComponent(0.22)
-            shadow.shadowBlurRadius = 14
-            shadow.shadowOffset = NSSize(width: -2, height: 0)
-            return shadow
-        }()
-        close.bezelStyle = .regularSquare
-        close.isBordered = false
-        close.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close Split View")?
-            .withSymbolConfiguration(.init(pointSize: 15, weight: .regular).applying(.init(hierarchicalColor: .tertiaryLabelColor)))
-        close.toolTip = "Close Split View (⌘W)"
-        close.target = self
-        close.action = #selector(closeClicked(_:))
-        addSubview(close)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    @objc private func closeClicked(_ sender: Any?) { onClose?() }
-
-    override func layout() {
-        super.layout()
-        content?.frame = NSRect(x: 1, y: 0, width: bounds.width - 1, height: bounds.height)
-        let top = (window?.contentLayoutRect.minY).map { _ in window!.frame.height - window!.contentLayoutRect.maxY } ?? 0
-        close.frame = NSRect(x: bounds.width - 30, y: top + 8, width: 22, height: 22)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.textBackgroundColor.setFill()
-        bounds.fill()
-        NSColor.separatorColor.setFill()
-        NSRect(x: 0, y: 0, width: 1, height: bounds.height).fill()
-    }
 }

@@ -38,6 +38,10 @@ public final class NoteIndex: @unchecked Sendable {
     /// The text of each note, as written and lowercased, for finding words
     /// in notes when Reflect's own index is not there to ask.
     private var bodies: [String: (text: String, folded: String)] = [:]
+    /// The files in `assets/` each note shows or links to, and the notes
+    /// showing each: for finding a picture's notes without reading them all.
+    private var assetsOf: [String: Set<String>] = [:]
+    private var showing: [String: Set<String>] = [:]
 
     public init(root: URL) {
         self.root = root
@@ -70,9 +74,19 @@ public final class NoteIndex: @unchecked Sendable {
                 texts[path] = entry.text
             }
         }
+        var assets: [String: Set<String>] = [:]
+        var notes: [String: Set<String>] = [:]
+        for (path, text) in texts {
+            let referenced = Self.assets(in: text.text)
+            guard !referenced.isEmpty else { continue }
+            assets[path] = referenced
+            for asset in referenced { notes[asset, default: []].insert(path) }
+        }
         lock.lock()
         entries = found
         bodies = texts
+        assetsOf = assets
+        showing = notes
         lock.unlock()
     }
 
@@ -80,9 +94,16 @@ public final class NoteIndex: @unchecked Sendable {
     /// is gone.
     public func refresh(_ path: String) {
         let entry = read(path, at: root.appendingPathComponent(path))
+        let referenced = entry.map { Self.assets(in: $0.text.text) } ?? []
         lock.lock()
         entries[path] = entry?.entry
         bodies[path] = entry?.text
+        for asset in assetsOf[path] ?? [] where !referenced.contains(asset) {
+            showing[asset]?.remove(path)
+            if showing[asset]?.isEmpty == true { showing[asset] = nil }
+        }
+        for asset in referenced { showing[asset, default: []].insert(path) }
+        assetsOf[path] = referenced.isEmpty ? nil : referenced
         lock.unlock()
     }
 
@@ -190,6 +211,27 @@ public final class NoteIndex: @unchecked Sendable {
             return nil
         }.max()
         return highest.map { min(Int($0) + 1024, Int(Int32.max)) } ?? 1024
+    }
+
+    private static let assetReference = try! NSRegularExpression(pattern: #"assets/[^\s)\]>"'|]+"#)
+
+    /// The notes whose text names a file under `assets/`.
+    func notePaths(showing asset: String) -> Set<String> {
+        lock.lock()
+        defer { lock.unlock() }
+        return showing[asset] ?? []
+    }
+
+    /// The files under `assets/` a note's text names, as paths in the graph.
+    static func assets(in text: String) -> Set<String> {
+        guard text.contains("assets/") else { return [] }
+        let string = text as NSString
+        var found = Set<String>()
+        for match in assetReference.matches(in: text, range: NSRange(location: 0, length: string.length)) {
+            let written = string.substring(with: match.range)
+            found.insert(written.removingPercentEncoding ?? written)
+        }
+        return found
     }
 
     public var all: [NoteEntry] {

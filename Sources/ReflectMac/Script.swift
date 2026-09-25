@@ -187,10 +187,28 @@ enum Script {
                 controller.sidebar.search(for: argument)
             case "sidebar-open":
                 controller.sidebar.openRow(containing: argument)
+            case "side-state":
+                let item = controller.workspace.sideItem
+                if let split = controller.window?.contentViewController as? NSSplitViewController {
+                    print("split: " + split.splitView.arrangedSubviews.map { "\($0.frame.origin.x),\($0.frame.width)\($0.isHidden ? " hidden" : "")" }.joined(separator: " | "))
+                }
+                print("side: collapsed \(item.isCollapsed) frame \(controller.workspace.side.view.frame) window \(controller.window?.frame.size ?? .zero) note \(controller.workspace.side.ref?.path ?? "-")")
+                fflush(stdout)
+            case "sidebar-open-split":
+                controller.sidebar.openRow(containing: argument, inSplit: true)
             case "sidebar":
                 // sidebar [section]: what the sidebar shows.
                 print("sidebar: " + controller.sidebar.shownRows.prefix(40).joined(separator: " | "))
                 fflush(stdout)
+            case "sort-tags":
+                controller.sidebar.sort(tagsBy: argument == "count" ? .count : .name)
+            case "move-pinned":
+                // move-pinned <from> <to>: a pinned note dragged to a new place.
+                let parts = argument.split(separator: " ").compactMap { Int($0) }
+                if parts.count == 2 { controller.sidebar.movePinned(from: parts[0], to: parts[1]) }
+            case "trash-note":
+                // trash-note <path>: moved to the Trash, as if confirmed.
+                controller.trash(argument)
             case "pin":
                 controller.togglePinned(nil)
             case "picture-text":
@@ -199,6 +217,19 @@ enum Script {
                 print("picture-text \(pictures.count) pictures with text; “\(argument)”: "
                       + pictures.search(argument).prefix(5).map { "\($0.path) → \(controller.index.notes(showing: $0.path))" }.joined(separator: " · "))
                 fflush(stdout)
+            case "type-chooser-timed":
+                // type-chooser-timed <text>: each character typed on its own,
+                // with how long the main thread was held for each.
+                if let panel = NSApp.windows.first(where: { $0 is ChooserPanel }), let field = panel.firstResponder as? NSTextView {
+                    var times: [String] = []
+                    for character in argument {
+                        let start = Date()
+                        field.insertText(String(character), replacementRange: field.selectedRange())
+                        times.append(String(format: "%@ %.1fms", String(character), Date().timeIntervalSince(start) * 1000))
+                    }
+                    print("typed: " + times.joined(separator: ", "))
+                    fflush(stdout)
+                }
             case "type-chooser":
                 if let panel = NSApp.windows.first(where: { $0 is ChooserPanel }), let field = panel.firstResponder as? NSTextView {
                     field.insertText(argument, replacementRange: field.selectedRange())

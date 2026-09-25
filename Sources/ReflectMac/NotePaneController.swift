@@ -74,6 +74,7 @@ final class NotePaneController: NSViewController, OutlineTextViewNavigator {
     }
 
     func save() { noteView.save() }
+    func discard() { noteView.discard() }
     func reloadFromDisk() { noteView.reloadIfChanged() }
 
     // MARK: OutlineTextViewNavigator

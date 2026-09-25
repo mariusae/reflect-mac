@@ -39,7 +39,7 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
     private let scroll = NSScrollView()
     private let hint = NSTextField(labelWithString: "")
     private var items: [Item] = []
-    private var pending: DispatchWorkItem?
+    private let runner: SearchRunner
 
     private static let width: CGFloat = 640
     private static let fieldHeight: CGFloat = 56
@@ -50,6 +50,7 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
         self.index = index
         self.search = search
         self.pictures = pictures
+        runner = SearchRunner(sources: SearchSources(index: index, search: search, pictures: pictures))
         panel = ChooserPanel(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.fieldHeight),
                              styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: true)
         super.init()
@@ -121,6 +122,8 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
 
     func show(over window: NSWindow?) {
         field.stringValue = ""
+        // Today and the recent notes, at once: quick, and nothing to wait for.
+        show(StagedSearch(query: "", sources: runner.sources).first(), keepingSelection: false)
         refresh()
         if let window {
             let frame = window.frame
@@ -132,7 +135,7 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
     }
 
     func close() {
-        pending?.cancel()
+        runner.cancel()
         panel.orderOut(nil)
     }
 
@@ -156,100 +159,66 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
     // MARK: Finding
 
     func controlTextDidChange(_ notification: Notification) {
-        pending?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.refresh() }
-        pending = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
+        refresh()
     }
 
+    /// Searches for what is typed, in the background: what was showing
+    /// stays until the first of it comes, then fills in as the rest does.
     private func refresh() {
-        items = Self.items(for: field.stringValue, index: index, search: search, pictures: pictures)
+        let query = field.stringValue.trimmingCharacters(in: .whitespaces)
+        var first = true
+        runner.run(query) { [weak self] items, _ in
+            // The first results for a new query start the list afresh; the
+            // rest add to it without moving what is chosen.
+            self?.show(items, keepingSelection: !first)
+            first = false
+        }
+    }
+
+    /// Puts results in the list — keeping the chosen one chosen, when asked
+    /// and it is still there; else choosing the first.
+    private func show(_ found: [Item], keepingSelection: Bool) {
+        let chosen = keepingSelection && table.selectedRow > 0 && table.selectedRow < items.count ? key(items[table.selectedRow]) : nil
+        items = found
         table.reloadData()
-        if !items.isEmpty { table.selectRowIndexes([0], byExtendingSelection: false) }
-        table.scrollRowToVisible(0)
+        if let chosen, let row = items.firstIndex(where: { key($0) == chosen }) {
+            table.selectRowIndexes([row], byExtendingSelection: false)
+        } else if !items.isEmpty {
+            table.selectRowIndexes([0], byExtendingSelection: false)
+            table.scrollRowToVisible(0)
+        }
         layout()
     }
 
-    static func items(for query: String, index: NoteIndex, search: ReflectSearchIndex?, pictures: ImageTextIndex? = nil) -> [Item] {
-        let query = query.trimmingCharacters(in: .whitespaces)
-        var items: [Item] = []
-        var seen = Set<String>()
-        func add(_ item: Item, path: String) {
-            guard seen.insert(path).inserted else { return }
-            var item = item
-            switch item.target {
-            case .day(let day): item.name = day.description
-            case .note(let path): item.name = index.entry(path)?.title ?? item.title
-            case .create(let title): item.name = title
-            }
-            items.append(item)
-        }
+    private func key(_ item: Item) -> String { "\(item.target)" }
 
-        if query.isEmpty {
-            let today = Day.today
-            add(Item(target: .day(today), title: "Today", detail: plain(dayTitle(today)), symbol: "calendar"),
-                path: GraphPaths.dailyPath(for: today))
-            for match in index.matches("", limit: 12) {
-                add(Item(target: .note(match.entry.path), title: match.entry.title, detail: plain(relative(match.entry.modified)),
-                         symbol: "doc.text"), path: match.entry.path)
-            }
-            return items
-        }
-
-        if let day = day(from: query) {
-            add(Item(target: .day(day), title: dayTitle(day), detail: plain(day == .today ? "Today" : day.description),
-                     symbol: "calendar"), path: GraphPaths.dailyPath(for: day))
-        }
-        let named = index.matches(query, limit: 20)
-        for match in named {
-            let detail = match.alias.map { plain("also “\($0)”") } ?? plain(relative(match.entry.modified))
-            add(Item(target: .note(match.entry.path), title: match.entry.title, detail: detail, symbol: "doc.text"),
-                path: match.entry.path)
-        }
-        let key = NoteIndex.foldKey(query)
-        let exists = named.contains { NoteIndex.foldKey($0.entry.title) == key || $0.entry.aliases.contains { NoteIndex.foldKey($0) == key } }
-        // Then words in notes: from Reflect's index when there is one.
-        if let search {
-            for hit in search.search(query, limit: 25) {
-                let entry = index.entry(hit.path)
-                let title = entry?.day.map(dayTitle) ?? entry?.title ?? hit.title
-                add(Item(target: target(for: hit.path), title: title, detail: highlighted(hit.snippet),
-                         symbol: entry?.day == nil ? "text.magnifyingglass" : "calendar",
-                         found: .words(marked(hit.snippet) + words(query))), path: hit.path)
-            }
-        } else {
-            for hit in index.containing(query, limit: 25) {
-                let entry = index.entry(hit.path)
-                let title = entry?.day.map(dayTitle) ?? entry?.title ?? hit.path
-                add(Item(target: target(for: hit.path), title: title, detail: plain(hit.snippet),
-                         symbol: entry?.day == nil ? "text.magnifyingglass" : "calendar", found: .words(words(query))), path: hit.path)
-            }
-        }
-        // Then words in pictures, as the notes that show them.
-        for hit in pictures?.search(query) ?? [] {
-            for path in index.notes(showing: hit.path).prefix(3) {
-                let entry = index.entry(path)
-                let title = entry?.day.map(dayTitle) ?? entry?.title ?? path
-                add(Item(target: target(for: path), title: title, detail: highlighted(hit.snippet), symbol: "photo",
-                         found: .picture(hit.path, words: marked(hit.snippet))), path: path)
-            }
-        }
-        // Last, so Return never makes a note by chance; ⌘Return makes one
-        // from whatever is typed.
-        if !exists {
-            items.append(Item(target: .create(query), title: "New Note “\(query)”", detail: plain("⌘↩ Make a note with this title"),
-                              symbol: "square.and.pencil", name: query))
-        }
+    /// The results for what is typed now: those showing, if they are for
+    /// it; else its first stage, looked for here and now — quick — so that
+    /// Return never opens what an earlier query found.
+    private func currentItems() -> [Item] {
+        let query = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard runner.shownQuery != query else { return items }
+        show(StagedSearch(query: query, sources: runner.sources).first(), keepingSelection: false)
         return items
     }
 
-    private static func target(for path: String) -> Target {
+    /// Everything a query finds, all at once. For scripts and tests; the
+    /// chooser shows it as it comes, from `StagedSearch`.
+    static func items(for query: String, index: NoteIndex, search: ReflectSearchIndex?, pictures: ImageTextIndex? = nil) -> [Item] {
+        var found: [Item] = []
+        StagedSearch(query: query, sources: SearchSources(index: index, search: search, pictures: pictures))
+            .run(isCurrent: { true }) { items, _ in found = items }
+        return found
+    }
+
+    nonisolated static func target(for path: String) -> Target {
         GraphPaths.day(fromDailyPath: path).map(Target.day) ?? .note(path)
     }
 
+
     /// A day a query names: a date written out, or said — "today", "next
     /// friday", "sep 24".
-    static func day(from query: String) -> Day? {
+    nonisolated static func day(from query: String) -> Day? {
         if let day = Day(query) { return day }
         let lowered = query.lowercased()
         if ["today", "yesterday", "tomorrow"].contains(lowered) {
@@ -261,31 +230,31 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
         return Day(date)
     }
 
-    private static let dayFormatter: DateFormatter = {
+    nonisolated private static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.setLocalizedDateFormatFromTemplate("EEEEMMMMdyyyy")
         return formatter
     }()
 
-    static func dayTitle(_ day: Day) -> String { dayFormatter.string(from: day.date ?? Date()) }
+    nonisolated static func dayTitle(_ day: Day) -> String { dayFormatter.string(from: day.date ?? Date()) }
 
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
+    nonisolated(unsafe) private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
         return formatter
     }()
 
-    private static func relative(_ date: Date) -> String {
+    nonisolated static func relative(_ date: Date) -> String {
         date == .distantPast ? "" : "Edited " + relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 
-    private static func plain(_ text: String) -> NSAttributedString {
+    nonisolated static func plain(_ text: String) -> NSAttributedString {
         NSAttributedString(string: text, attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: NSFont.systemFont(ofSize: 12)])
     }
 
     /// A snippet with the words found in it set in bold.
     /// The words a snippet marks as found, in order, each once.
-    static func marked(_ snippet: String) -> [String] {
+    nonisolated static func marked(_ snippet: String) -> [String] {
         var words: [String] = []
         var rest = Substring(snippet)
         while let open = rest.firstIndex(of: "\u{1}"), let close = rest[open...].firstIndex(of: "\u{2}") {
@@ -297,11 +266,11 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
     }
 
     /// A query's words.
-    static func words(_ query: String) -> [String] {
+    nonisolated static func words(_ query: String) -> [String] {
         query.split(whereSeparator: \.isWhitespace).map(String.init)
     }
 
-    private static func highlighted(_ snippet: String) -> NSAttributedString {
+    nonisolated static func highlighted(_ snippet: String) -> NSAttributedString {
         let text = NSMutableAttributedString()
         var bold = false
         var current = ""
@@ -365,6 +334,7 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
     }
 
     private func openSelected(inSplit: Bool) {
+        _ = currentItems()
         guard table.selectedRow >= 0, table.selectedRow < items.count else { return }
         let item = items[table.selectedRow]
         close()

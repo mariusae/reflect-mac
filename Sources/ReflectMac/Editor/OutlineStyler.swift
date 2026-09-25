@@ -207,16 +207,31 @@ enum InlineMarkdown {
                     .backgroundColor: NSColor.quaternaryLabelColor.withAlphaComponent(0.15),
                 ], range: content)
             case .link(let target):
-                if let url = URL(string: target) { storage.addAttribute(.link, value: url, range: content) }
+                if let url = URL(string: target) {
+                    storage.addAttributes([.link: url, .foregroundColor: NSColor.linkColor], range: content)
+                }
+                // A file in the graph: a pill, its icon and size in the room
+                // its hidden brackets are given.
+                if let pill = images?.filePill(target), let open = span.markup.first, let close = span.markup.last,
+                   open.location < close.location {
+                    storage.addAttribute(.outlineFile, value: pill, range: span.range)
+                    storage.addAttribute(.outlineFileLead, value: pill, range: NSRange(location: open.location, length: 1))
+                    storage.addAttribute(.outlineFileTail, value: pill, range: NSRange(location: close.location, length: 1))
+                    storage.addAttribute(.foregroundColor, value: NSColor.labelColor, range: content)
+                }
             case .url(let target):
-                if let url = URL(string: target) { storage.addAttribute(.link, value: url, range: content) }
+                if let url = URL(string: target) {
+                    storage.addAttributes([.link: url, .foregroundColor: NSColor.linkColor], range: content)
+                }
                 // A post's bare link shows its card too, below the link.
                 if Tweet.id(from: target) != nil, let size = images?.naturalSize(target) {
                     storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: size),
                                          range: NSRange(location: span.range.location, length: 1))
                 }
             case .wikiLink(let title):
-                if let url = URL.wiki(title) { storage.addAttribute(.link, value: url, range: content) }
+                if let url = URL.wiki(title) {
+                    storage.addAttributes([.link: url, .foregroundColor: NSColor.linkColor], range: content)
+                }
             case .image(let reference):
                 if let size = images?.size(of: reference) {
                     storage.addAttribute(.outlineImage, value: ImageBox(source: reference.source, size: size),
@@ -294,10 +309,30 @@ final class HiddenMarkupGlyphs: NSObject, NSLayoutManagerDelegate {
 
     func layoutManager(_ layoutManager: NSLayoutManager, shouldUse action: NSLayoutManager.ControlCharacterAction,
                        forControlCharacterAt index: Int) -> NSLayoutManager.ControlCharacterAction {
-        if layoutManager.textStorage?.attribute(.outlineHidden, at: index, effectiveRange: nil) != nil {
+        guard let storage = layoutManager.textStorage else { return action }
+        // A file pill's icon and size take room where its brackets are hidden.
+        if storage.attribute(.outlineFileLead, at: index, effectiveRange: nil) != nil
+            || storage.attribute(.outlineFileTail, at: index, effectiveRange: nil) != nil {
+            return .whitespace
+        }
+        if storage.attribute(.outlineHidden, at: index, effectiveRange: nil) != nil {
             return .zeroAdvancement
         }
         return action
+    }
+
+    /// How much room a file pill's icon, or its size, takes.
+    func layoutManager(_ layoutManager: NSLayoutManager, boundingBoxForControlGlyphAt glyphIndex: Int, for textContainer: NSTextContainer,
+                       proposedLineFragment proposedRect: NSRect, glyphPosition: NSPoint, characterIndex: Int) -> NSRect {
+        guard let storage = layoutManager.textStorage else { return .zero }
+        let font = storage.attribute(.font, at: characterIndex, effectiveRange: nil) as? NSFont ?? .systemFont(ofSize: 15)
+        var width: CGFloat = 0
+        if storage.attribute(.outlineFileLead, at: characterIndex, effectiveRange: nil) != nil {
+            width = FilePill.leadWidth
+        } else if let pill = storage.attribute(.outlineFileTail, at: characterIndex, effectiveRange: nil) as? FilePill {
+            width = pill.tailWidth(for: font)
+        }
+        return NSRect(x: glyphPosition.x, y: glyphPosition.y, width: width, height: ceil(font.ascender - font.descender))
     }
 }
 

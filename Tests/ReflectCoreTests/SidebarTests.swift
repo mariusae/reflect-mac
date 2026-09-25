@@ -70,3 +70,34 @@ import Testing
         print("tags:", index.tags.prefix(30).map { "\($0.name) (\($0.count))" }.joined(separator: " · "))
     }
 }
+
+@Suite struct PinOrderTests {
+    func shelf(_ orders: [Int?]) -> [PinOrder.Pin] {
+        orders.enumerated().map { PinOrder.Pin(path: "n\($0)", order: $1) }
+    }
+
+    @Test func movesBetweenNeighbours() {
+        // n3 to the top: halfway to the first.
+        #expect(PinOrder.move(shelf([1024, 2048, 3072, 4096]), from: 3, to: 0) == [.init(path: "n3", order: 512)])
+        // n0 between n2 and n3.
+        #expect(PinOrder.move(shelf([1024, 2048, 3072, 4096]), from: 0, to: 2) == [.init(path: "n0", order: 3584)])
+        // n0 to the bottom: a fresh gap past the last.
+        #expect(PinOrder.move(shelf([1024, 2048, 3072]), from: 0, to: 2) == [.init(path: "n0", order: 4096)])
+    }
+
+    @Test func numbersAfreshWhenNothingFits() {
+        // No whole number between 1 and 2: the whole shelf, 1024 apart.
+        let changed = PinOrder.move(shelf([1, 2, 3]), from: 2, to: 1)
+        #expect(changed == [.init(path: "n0", order: 1024), .init(path: "n2", order: 2048), .init(path: "n1", order: 3072)])
+    }
+
+    @Test func numbersUnnumberedPins() {
+        // `pinned: true` notes have no number: moving among them numbers the shelf.
+        let changed = PinOrder.move(shelf([1024, nil, nil]), from: 2, to: 1)
+        #expect(changed == [.init(path: "n2", order: 2048), .init(path: "n1", order: 3072)])
+        #expect(PinOrder.order(.order(2048)) == 2048)
+        #expect(PinOrder.order(.order(1.5)) == nil)
+        #expect(PinOrder.order(.unordered) == nil)
+        #expect(PinOrder.move(shelf([1024]), from: 0, to: 0).isEmpty)
+    }
+}

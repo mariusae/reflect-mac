@@ -100,7 +100,8 @@ final class OutlineTextView: NSTextView {
         isAutomaticDataDetectionEnabled = false
         isContinuousSpellCheckingEnabled = true
         displaysLinkToolTips = true
-        linkTextAttributes = [.foregroundColor: NSColor.linkColor, .cursor: NSCursor.pointingHand]
+        // Links are coloured as they are styled: a file's pill is not blue.
+        linkTextAttributes = [.cursor: NSCursor.pointingHand]
         textSelectionAttributes = selectedTextAttributes
         load([.blank])
     }
@@ -1029,7 +1030,7 @@ final class OutlineTextView: NSTextView {
 
     /// `[[` just typed, outside code, starts a link to finish.
     private func beginLinkCompletion() {
-        guard LinkCompletion.source != nil, linkCompletion == nil, let storage = textStorage else { return }
+        guard LinkCompletion.sources != nil, linkCompletion == nil, let storage = textStorage else { return }
         let caret = selectedRange().location
         let text = storage.string as NSString
         guard caret >= 2, text.substring(with: NSRange(location: caret - 2, length: 2)) == "[[",

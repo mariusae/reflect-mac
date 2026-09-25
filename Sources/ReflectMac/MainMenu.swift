@@ -31,6 +31,7 @@ enum MainMenu {
             .separator(),
             item("Show in Finder", #selector(MainWindowController.revealInFinder(_:)), "r", [.command, .shift]),
             item("Pin Note", #selector(MainWindowController.togglePinned(_:)), "p", [.command, .shift]),
+            item("Move Note to Trash…", #selector(MainWindowController.trashNote(_:)), "\u{8}", [.command, .shift]),
             .separator(),
             item("Close Window", #selector(NSWindow.performClose(_:)), "w"),
         ]))
@@ -142,7 +143,7 @@ enum MainMenu {
             item("Actual Size", #selector(MainWindowController.makeTextStandardSize(_:))),
             .separator(),
             item("Show Sidebar", #selector(MainWindowController.toggleSidebar(_:)), "s", [.command, .control]),
-            tagged(item("Pinned", #selector(MainWindowController.showSidebarMode(_:)), "1"), 0),
+            tagged(item("Notes", #selector(MainWindowController.showSidebarMode(_:)), "1"), 0),
             tagged(item("Search", #selector(MainWindowController.showSidebarMode(_:)), "2"), 1),
             tagged(item("Tags", #selector(MainWindowController.showSidebarMode(_:)), "3"), 2),
             .separator(),

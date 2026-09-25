@@ -532,7 +532,7 @@ extension OutlineTextView {
     /// the Finder, or a picture on its own — a screenshot, an image copied
     /// from a page. Text wins over a picture that comes with it.
     /// Picture types a pasteboard can carry a picture's bytes as.
-    static let pictureTypes: [NSPasteboard.PasteboardType] = [.png, .tiff, NSPasteboard.PasteboardType(UTType.jpeg.identifier)]
+    static let pictureTypes: [NSPasteboard.PasteboardType] = [.png, .tiff, NSPasteboard.PasteboardType(UTType.jpeg.identifier), .pdf]
 
     /// Whether a pasteboard carries files or a picture, without reading them.
     func carriesFiles(_ pasteboard: NSPasteboard) -> Bool {
@@ -558,6 +558,11 @@ extension OutlineTextView {
         // Pasting, text that comes with a picture is what was meant; a drop
         // of a picture that carries its address along is the picture.
         if textFirst, let text = pasteboard.string(forType: .string), !text.isEmpty { return [] }
+        // A document copied as itself — a PDF from Preview — with no file to name it.
+        if let pdf = pasteboard.data(forType: .pdf) {
+            let name = Assets.pastedName(extension: "pdf")
+            return [Incoming(data: pdf, name: name, title: name, isImage: false)]
+        }
         if let png = pasteboard.data(forType: .png) {
             return [Incoming(data: png, name: Assets.pastedName(extension: "png"), title: "", isImage: true)]
         }
@@ -641,7 +646,8 @@ extension OutlineTextView {
         guard isEditable, carriesFiles(pasteboard) else { return super.performDragOperation(sender) }
         window?.makeFirstResponder(self)
         let point = convert(sender.draggingLocation, from: nil)
-        setSelectedRange(NSRange(location: characterIndexForInsertion(at: point), length: 0))
+        // Between words, and never inside a link or other Markdown.
+        setSelectedRange(NSRange(location: snappedLocation(characterIndexForInsertion(at: point)), length: 0))
         let files = incoming(from: pasteboard, textFirst: false)
         if !files.isEmpty {
             add(files)

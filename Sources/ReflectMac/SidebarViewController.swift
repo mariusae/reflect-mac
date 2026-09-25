@@ -2,22 +2,25 @@ import AppKit
 import ReflectCore
 
 /// The window's left column, as a Mac source list, in one of three modes —
-/// as Drafter has Inbox, Archive and Timeline: the pinned notes, in
-/// Reflect's order; a search of every note, whose results stay listed until
+/// as Drafter has Inbox, Archive and Timeline: the notes — the pinned, in
+/// Reflect's order, then the rest as they were last edited; a search of every note, whose results stay listed until
 /// it is cleared, and are there again next time; and the graph's tags, each
 /// a search for its notes.
 @MainActor
 final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate,
     NSMenuDelegate {
     enum Mode: Int, CaseIterable {
-        case pinned, search, tags
+        case notes, search, tags
 
-        var title: String { ["Pinned", "Search", "Tags"][rawValue] }
+        var title: String { ["Notes", "Search", "Tags"][rawValue] }
     }
 
-    /// A row: something to open, or words in place of rows.
+    /// A row: something to open, a section's heading, or words in place of rows.
     enum Row {
+        case header(String)
         case pinned(NoteEntry)
+        /// A note lately edited.
+        case recent(NoteEntry)
         case result(OpenQuickly.Item)
         case tag(name: String, count: Int)
         case hint(String)
@@ -32,18 +35,39 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     var onOpen: ((OpenQuickly.Target, _ inSplit: Bool, _ found: OutlineTextView.Found?) -> Void)?
     /// Told to pin a note, or take its pin away.
     var onPin: ((_ path: String, _ pinned: Bool) -> Void)?
+    /// Told to move a note to the Trash, once asked.
+    var onTrash: ((String) -> Void)?
+    /// Told to give pinned notes new numbers, to put the shelf in a new order.
+    var onReorder: (([PinOrder.Pin]) -> Void)?
 
-    private(set) var mode: Mode = .pinned
+    /// How the tags are listed.
+    enum TagOrder: Int, CaseIterable {
+        case name, count
+
+        var title: String { ["Name", "Number of Notes"][rawValue] }
+    }
+
+    private(set) var mode: Mode = .notes
+    /// How many of the notes lately edited Notes lists.
+    private static let recentCount = 60
+    private(set) var tagOrder: TagOrder = TagOrder(rawValue: UserDefaults.standard.integer(forKey: SidebarViewController.tagOrderKey)) ?? .name
+    private let tagSort = NSPopUpButton(frame: .zero, pullsDown: false)
     private let modes = NSSegmentedControl(labels: Mode.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
     private let field = NSSearchField()
     private let table = SidebarTableView()
     private let scroll = NSScrollView()
     private var rows: [Row] = []
+    /// The search's results so far, found in the background.
+    private var found: [Row] = []
+    private var runner: SearchRunner!
     /// The table's top: under the search field in Search, else under the modes.
     private var underField: NSLayoutConstraint!
     private var underModes: NSLayoutConstraint!
 
     private static let modeKey = "SidebarMode"
+    fileprivate static let tagOrderKey = "SidebarTagOrder"
+    /// The table's top in Tags: under the sort.
+    private var underSort: NSLayoutConstraint!
 
     init(index: NoteIndex, search: ReflectSearchIndex?, pictures: ImageTextIndex?, root: URL) {
         self.index = index
@@ -51,6 +75,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         self.pictures = pictures
         self.root = root
         super.init(nibName: nil, bundle: nil)
+        runner = SearchRunner(sources: SearchSources(index: index, search: search, pictures: pictures))
     }
 
     @available(*, unavailable)
@@ -76,6 +101,19 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         field.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(field)
 
+        tagSort.controlSize = .small
+        tagSort.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        tagSort.isBordered = false
+        for order in TagOrder.allCases {
+            tagSort.addItem(withTitle: "Sort by " + order.title)
+            tagSort.lastItem?.tag = order.rawValue
+        }
+        tagSort.selectItem(withTag: tagOrder.rawValue)
+        tagSort.target = self
+        tagSort.action = #selector(tagSortChanged(_:))
+        tagSort.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(tagSort)
+
         table.addTableColumn(NSTableColumn(identifier: .init("main")))
         table.headerView = nil
         table.style = .sourceList
@@ -86,6 +124,9 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         table.delegate = self
         table.target = self
         table.action = #selector(clicked(_:))
+        table.registerForDraggedTypes([Self.pinType])
+        table.setDraggingSourceOperationMask(.move, forLocal: true)
+        table.draggingDestinationFeedbackStyle = .gap
         table.menu = NSMenu()
         table.menu?.delegate = self
         table.onReturn = { [weak self] in self?.openSelected(inSplit: NSApp.currentEvent?.modifierFlags.contains(.option) == true) }
@@ -98,7 +139,10 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
 
         underField = scroll.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 6)
         underModes = scroll.topAnchor.constraint(equalTo: modes.bottomAnchor, constant: 8)
+        underSort = scroll.topAnchor.constraint(equalTo: tagSort.bottomAnchor, constant: 2)
         NSLayoutConstraint.activate([
+            tagSort.topAnchor.constraint(equalTo: modes.bottomAnchor, constant: 6),
+            tagSort.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
             modes.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 6),
             modes.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
             modes.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
@@ -112,13 +156,15 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         view = container
 
         field.stringValue = SessionState.shared.graph(root).search ?? ""
-        show(Mode(rawValue: UserDefaults.standard.integer(forKey: Self.modeKey)) ?? .pinned)
+        found = results(for: "")
+        show(Mode(rawValue: UserDefaults.standard.integer(forKey: Self.modeKey)) ?? .notes)
+        research()
     }
 
     // MARK: Modes
 
     @objc private func modeChanged(_ sender: Any?) {
-        show(Mode(rawValue: modes.selectedSegment) ?? .pinned)
+        show(Mode(rawValue: modes.selectedSegment) ?? .notes)
     }
 
     /// Shows a mode: its rows, and in Search, the field.
@@ -126,10 +172,13 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         self.mode = mode
         UserDefaults.standard.set(mode.rawValue, forKey: Self.modeKey)
         modes.selectedSegment = mode.rawValue
-        let searching = mode == .search
+        let searching = mode == .search, tagging = mode == .tags
         field.isHidden = !searching
-        underModes.isActive = !searching
-        underField.isActive = searching
+        tagSort.isHidden = !tagging
+        underModes.isActive = false
+        underField.isActive = false
+        underSort.isActive = false
+        (searching ? underField : tagging ? underSort : underModes).isActive = true
         reload()
         table.scrollRowToVisible(0)
     }
@@ -142,14 +191,23 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         guard isViewLoaded else { return }
         let selected = table.selectedRow >= 0 && table.selectedRow < rows.count ? key(rows[table.selectedRow]) : nil
         switch mode {
-        case .pinned:
-            let pinned = index.pinned.map(Row.pinned)
-            rows = pinned.isEmpty ? [.hint("No pinned notes. Pin one with ⇧⌘P.")] : pinned
+        case .notes:
+            let pinned = index.pinned
+            let pinnedPaths = Set(pinned.map(\.path))
+            let recent = index.all.filter { !pinnedPaths.contains($0.path) }
+                .sorted { $0.modified > $1.modified }.prefix(Self.recentCount)
+            rows = [.header("Pinned")] + (pinned.isEmpty ? [.hint("Pin a note with ⇧⌘P")] : pinned.map(Row.pinned))
+                + [.header("Recent")] + recent.map(Row.recent)
         case .search:
-            rows = results(for: query)
+            rows = found
         case .tags:
-            let tags = index.tags.map { Row.tag(name: $0.name, count: $0.count) }
-            rows = tags.isEmpty ? [.hint("No #tags in any note")] : tags
+            var tags = index.tags
+            if tagOrder == .count {
+                // Most used first; the same count, by name.
+                tags.sort { $0.count != $1.count ? $0.count > $1.count : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            }
+            let rows = tags.map { Row.tag(name: $0.name, count: $0.count) }
+            self.rows = rows.isEmpty ? [.hint("No #tags in any note")] : rows
         }
         table.reloadData()
         if let selected, let row = rows.firstIndex(where: { key($0) == selected }) {
@@ -158,6 +216,24 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     private var query: String { field.stringValue.trimmingCharacters(in: .whitespaces) }
+
+    /// Looks again for what the field holds: a `#tag`'s notes at once,
+    /// anything else in the background, shown as it comes.
+    private func research() {
+        let query = query
+        guard !query.isEmpty, !(query.hasPrefix("#") && !query.contains(" ") && query.count > 1) else {
+            runner.cancel()
+            found = results(for: query)
+            if mode == .search { reload() }
+            return
+        }
+        runner.run(query) { [weak self] items, done in
+            guard let self else { return }
+            let results = items.filter { if case .create = $0.target { false } else { true } }
+            found = results.isEmpty ? [.hint(done ? "No results" : "Searching…")] : results.map(Row.result)
+            if mode == .search { reload() }
+        }
+    }
 
     private func results(for query: String) -> [Row] {
         guard !query.isEmpty else { return [.hint("Results stay here until the search is cleared")] }
@@ -172,14 +248,33 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
                                                 symbol: entry.day == nil ? "doc.text" : "calendar", found: .words([query])))
             }
         }
-        let items = OpenQuickly.items(for: query, index: index, search: search, pictures: pictures)
-            .filter { if case .create = $0.target { false } else { true } }
-        return items.isEmpty ? [.hint("No results")] : items.map(Row.result)
+        return []
+    }
+
+    @objc private func tagSortChanged(_ sender: NSPopUpButton) {
+        sort(tagsBy: TagOrder(rawValue: sender.selectedTag()) ?? .name)
+    }
+
+    /// Lists the tags by name, or by how many notes have them.
+    func sort(tagsBy order: TagOrder) {
+        tagOrder = order
+        UserDefaults.standard.set(order.rawValue, forKey: Self.tagOrderKey)
+        tagSort.selectItem(withTag: order.rawValue)
+        if mode == .tags {
+            reload()
+            table.scrollRowToVisible(0)
+        }
     }
 
     @objc private func searchChanged(_ sender: Any?) {
         SessionState.shared.update(root) { $0.search = query.isEmpty ? nil : query }
-        if mode == .search { reload() }
+        research()
+    }
+
+    /// Searches again — the notes have changed — keeping the results shown
+    /// until the new ones come.
+    func refreshSearch() {
+        research()
     }
 
     /// Search, with the keyboard in the field.
@@ -205,7 +300,9 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     var shownRows: [String] {
         ["[\(mode.title)]"] + rows.map { row in
             switch row {
+            case .header(let title): "[\(title)]"
             case .pinned(let entry): "pin " + entry.title
+            case .recent(let entry): "recent " + entry.title
             case .result(let item): "result " + item.title + (item.detail.map { " — " + $0.string.prefix(40) } ?? "")
             case .tag(let name, let count): "#\(name) \(count)"
             case .hint(let text): "(\(text))"
@@ -218,10 +315,10 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         for (index, row) in rows.enumerated() {
             let title: String
             switch row {
-            case .pinned(let entry): title = entry.title
+            case .pinned(let entry), .recent(let entry): title = entry.title
             case .result(let item): title = item.title
             case .tag(let name, _): title = "#" + name
-            case .hint: continue
+            case .hint, .header: continue
             }
             if title.contains(text) {
                 table.selectRowIndexes([index], byExtendingSelection: false)
@@ -246,13 +343,13 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
 
     private func open(_ row: Row, inSplit: Bool) {
         switch row {
-        case .pinned(let entry):
+        case .pinned(let entry), .recent(let entry):
             onOpen?(entry.day.map { .day($0) } ?? .note(entry.path), inSplit, nil)
         case .result(let item):
             onOpen?(item.target, inSplit, item.found)
         case .tag(let name, _):
             show(tag: name)
-        case .hint:
+        case .hint, .header:
             break
         }
     }
@@ -261,11 +358,19 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if mode == .tags {
+            for order in TagOrder.allCases {
+                let item = ClosureMenuItem(title: "Sort by " + order.title) { [weak self] in self?.sort(tagsBy: order) }
+                item.state = order == tagOrder ? .on : .off
+                menu.addItem(item)
+            }
+            return
+        }
         guard table.clickedRow >= 0, table.clickedRow < rows.count else { return }
         let row = rows[table.clickedRow]
         let path: String?
         switch row {
-        case .pinned(let entry): path = entry.path
+        case .pinned(let entry), .recent(let entry): path = entry.path
         case .result(let item):
             switch item.target {
             case .note(let note): path = note
@@ -280,6 +385,10 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         menu.addItem(.separator())
         let isPinned = index.entry(path)?.pin != nil
         menu.addItem(ClosureMenuItem(title: isPinned ? "Unpin" : "Pin") { [weak self] in self?.onPin?(path, !isPinned) })
+        if GraphPaths.day(fromDailyPath: path) == nil {
+            menu.addItem(.separator())
+            menu.addItem(ClosureMenuItem(title: "Move to Trash…") { [weak self] in self?.onTrash?(path) })
+        }
     }
 
     // MARK: NSTableViewDataSource, NSTableViewDelegate
@@ -287,16 +396,33 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-        if case .hint = rows[row] { return false }
-        return true
+        switch rows[row] {
+        case .hint, .header: false
+        default: true
+        }
+    }
+
+    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+        if case .header = rows[row] { return true }
+        return false
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         switch rows[row] {
+        case .header(let title):
+            let cell = tableView.makeView(withIdentifier: HeaderCell.identifier, owner: nil) as? HeaderCell ?? HeaderCell()
+            cell.textField?.stringValue = title
+            return cell
         case .pinned(let entry):
             let cell = tableView.makeView(withIdentifier: RowCell.identifier, owner: nil) as? RowCell ?? RowCell()
             cell.show(title: entry.day.map(OpenQuickly.dayTitle) ?? entry.title, detail: nil,
                       symbol: entry.day == nil ? "pin" : "calendar", badge: nil)
+            return cell
+        case .recent(let entry):
+            let cell = tableView.makeView(withIdentifier: RowCell.identifier, owner: nil) as? RowCell ?? RowCell()
+            cell.show(title: entry.day.map(OpenQuickly.dayTitle) ?? entry.title,
+                      detail: OpenQuickly.plain(OpenQuickly.relative(entry.modified)),
+                      symbol: entry.day == nil ? "doc.text" : "calendar", badge: nil)
             return cell
         case .result(let item):
             let cell = tableView.makeView(withIdentifier: RowCell.identifier, owner: nil) as? RowCell ?? RowCell()
@@ -313,13 +439,74 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         }
     }
 
+    // MARK: Dragging the pinned into a new order
+
+    private static let pinType = NSPasteboard.PasteboardType("com.mariusae.reflect.pinned-row")
+
+    /// The rows the pinned notes are in.
+    private var pinnedRows: Range<Int> {
+        guard mode == .notes, let first = rows.firstIndex(where: { if case .pinned = $0 { true } else { false } }) else { return 0..<0 }
+        var end = first
+        while end < rows.count, case .pinned = rows[end] { end += 1 }
+        return first..<end
+    }
+
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard pinnedRows.contains(row) else { return nil }
+        let item = NSPasteboardItem()
+        item.setString(String(row), forType: Self.pinType)
+        return item
+    }
+
+    func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int,
+                   proposedDropOperation operation: NSTableView.DropOperation) -> NSDragOperation {
+        let pinned = pinnedRows
+        // Only among the pinned: between them, or just after the last.
+        guard info.draggingSource as? NSTableView === table, row >= pinned.lowerBound, row <= pinned.upperBound else { return [] }
+        if operation == .on { tableView.setDropRow(row, dropOperation: .above) }
+        return .move
+    }
+
+    func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int,
+                   dropOperation: NSTableView.DropOperation) -> Bool {
+        let pinned = pinnedRows
+        guard let fromRow = info.draggingPasteboard.pasteboardItems?.first?.string(forType: Self.pinType).flatMap(Int.init),
+              pinned.contains(fromRow) else { return false }
+        let shelf = rows[pinned].compactMap { row -> PinOrder.Pin? in
+            guard case .pinned(let entry) = row else { return nil }
+            return PinOrder.Pin(path: entry.path, order: PinOrder.order(entry.pin))
+        }
+        // Dropped above a row: past itself, one fewer is in the way.
+        let toRow = min(row > fromRow ? row - 1 : row, pinned.upperBound - 1)
+        let changed = PinOrder.move(shelf, from: fromRow - pinned.lowerBound, to: toRow - pinned.lowerBound)
+        guard !changed.isEmpty else { return false }
+        // Shown in the new order at once; the notes are written after.
+        let movedRow = rows.remove(at: fromRow)
+        rows.insert(movedRow, at: toRow)
+        tableView.moveRow(at: fromRow, to: toRow)
+        onReorder?(changed)
+        return true
+    }
+
+    /// Moves a pinned note on the shelf, as a drag would. For scripts.
+    func movePinned(from: Int, to: Int) {
+        let shelf = rows.compactMap { row -> PinOrder.Pin? in
+            guard case .pinned(let entry) = row else { return nil }
+            return PinOrder.Pin(path: entry.path, order: PinOrder.order(entry.pin))
+        }
+        let changed = PinOrder.move(shelf, from: from, to: to)
+        print("reorder: " + changed.map { "\($0.path)=\($0.order ?? -1)" }.joined(separator: " "))
+        onReorder?(changed)
+    }
+
     /// What a row is, to find it again after reloading.
     private func key(_ row: Row) -> String? {
         switch row {
         case .pinned(let entry): "pin:" + entry.path
+        case .recent(let entry): "recent:" + entry.path
         case .result(let item): "result:\(item.target)"
         case .tag(let name, _): "tag:" + name
-        case .hint: nil
+        case .hint, .header: nil
         }
     }
 }
@@ -335,6 +522,31 @@ final class SidebarTableView: NSTableView {
             super.keyDown(with: event)
         }
     }
+}
+
+/// A section's heading, as a source list has them.
+private final class HeaderCell: NSTableCellView {
+    static let identifier = NSUserInterfaceItemIdentifier("header")
+
+    init() {
+        super.init(frame: .zero)
+        identifier = Self.identifier
+        let label = NSTextField(labelWithString: "")
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        textField = label
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
 }
 
 /// Words in place of rows, when there are none.

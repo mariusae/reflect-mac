@@ -198,6 +198,16 @@ extension OutlineTextView {
         replace(before, with: after, actionName: "Move Picture")
     }
 
+    /// The nearest place to put something dropped, in the text view's
+    /// text: not inside a word, nor inside a link or other Markdown.
+    func snappedLocation(_ location: Int) -> Int {
+        guard let storage = textStorage, storage.length > 0 else { return location }
+        let index = rowIndex(at: min(location, storage.length - 1))
+        let start = paragraphRanges[index].location
+        let offset = min(max(location - start, 0), (rows[index].text as NSString).length)
+        return start + snapped(offset, inRow: index)
+    }
+
     /// The nearest place to put a picture in a row's text: not inside a
     /// word, nor inside a link or other Markdown.
     private func snapped(_ offset: Int, inRow index: Int) -> Int {

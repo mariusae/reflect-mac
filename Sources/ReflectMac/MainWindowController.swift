@@ -63,8 +63,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sidebarItem.allowsFullHeightLayout = true
         split.addSplitViewItem(sidebarItem)
         let content = NSSplitViewItem(viewController: workspace)
-        content.minimumThickness = 360
+        content.minimumThickness = WorkspaceController.mainMinimum
+        // The main view gives way to the sidebar and the pane as the window narrows.
+        content.holdingPriority = .init(rawValue: 250)
         split.addSplitViewItem(content)
+        split.addSplitViewItem(workspace.sideItem)
         split.splitView.autosaveName = "MainSplit"
         window.contentViewController = split
         // A view controller's view sizes its window; the workspace has no
@@ -91,10 +94,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         }
         sidebar.onOpen = { [weak self] target, inSplit, found in self?.workspace.open(target, inSplit: inSplit, found: found) }
         sidebar.onPin = { [weak self] path, pinned in self?.setPinned(path, pinned) }
+        sidebar.onReorder = { [weak self] pins in self?.renumberPins(pins) }
+        sidebar.onTrash = { [weak self] path in self?.confirmTrash(path) }
         timeline.onSave = saved
         workspace.onSave = saved
         workspace.onChange = { [weak self] in
             self?.showTitle()
+            self?.showSideItems()
             self?.noteState()
         }
         sync.flush = { [weak workspace] in workspace?.saveAll() }
@@ -118,10 +124,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             return (NoteRef(path: path), graph.read(path: path) ?? "")
         }
         // `[[` in a note finds what the chooser finds.
-        LinkCompletion.source = { [weak self] query in
-            guard let self else { return [] }
-            return OpenQuickly.items(for: query, index: index, search: searchIndex, pictures: pictureText.index)
-        }
+        LinkCompletion.sources = SearchSources(index: index, search: searchIndex, pictures: pictureText.index)
         // "Synced 2 minutes ago" goes stale on its own.
         statusTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.showStatus() }
@@ -156,7 +159,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// Reads the sidebar again, once things settle.
     private func sidebarNeedsReload() {
         sidebarReload?.cancel()
-        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.sidebar.reload() } }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.sidebar.reload()
+                self?.sidebar.refreshSearch()
+            }
+        }
         sidebarReload = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
@@ -168,7 +176,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// View ▸ Pinned, Search, Tags: the sidebar in that mode, shown if it was not.
     @objc func showSidebarMode(_ sender: NSMenuItem) {
         if sidebarItem.isCollapsed { sidebarItem.animator().isCollapsed = false }
-        sidebar.show(SidebarViewController.Mode(rawValue: sender.tag) ?? .pinned)
+        sidebar.show(SidebarViewController.Mode(rawValue: sender.tag) ?? .notes)
     }
 
     /// Find ▸ Search All Notes: the sidebar's search, shown if it was not.
@@ -195,6 +203,54 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         setPinned(path, index.entry(path)?.pin == nil)
     }
 
+    /// The note the keyboard is in, shown in the Finder.
+    @objc func revealNoteInFinder(_ sender: Any?) {
+        guard let path = focusedNotePath, graph.exists(path: path) else { NSSound.beep(); return }
+        NSWorkspace.shared.activateFileViewerSelecting([graph.root.appendingPathComponent(path)])
+    }
+
+    /// File ▸ Move Note to Trash: the note the keyboard is in.
+    @objc func trashNote(_ sender: Any?) {
+        guard let path = focusedNotePath else { NSSound.beep(); return }
+        confirmTrash(path)
+    }
+
+    /// Asks, then moves a note to the Trash — as Reflect deletes notes: the
+    /// file is recoverable from the Trash, and gone from the graph, and so
+    /// from other devices once this Mac syncs. Daily notes are not deleted.
+    func confirmTrash(_ path: String) {
+        guard GraphPaths.day(fromDailyPath: path) == nil, graph.exists(path: path), let window else { NSSound.beep(); return }
+        let title = index.entry(path)?.title ?? path
+        let alert = NSAlert()
+        alert.messageText = "Move “\(title)” to the Trash?"
+        alert.informativeText = "You can take it back out of the Trash. Your other devices lose it when this Mac next syncs."
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard response == .alertFirstButtonReturn else { return }
+                self?.trash(path)
+            }
+        }
+    }
+
+    func trash(_ path: String) {
+        workspace.saveAll()
+        workspace.forget(path)
+        do {
+            try FileManager.default.trashItem(at: graph.root.appendingPathComponent(path), resultingItemURL: nil)
+        } catch {
+            Log.shared.error("files", "Could not move \(path) to the Trash", detail: error.localizedDescription)
+            presentError(error)
+            return
+        }
+        Log.shared.info("files", "Moved \(path) to the Trash")
+        index.refresh(path)
+        sync.noteChanged()
+        sidebar.reload()
+        sidebar.refreshSearch()
+    }
+
     /// Pins a note, after every other, as Reflect does — `pinned:` in its
     /// frontmatter — or takes its pin away.
     func setPinned(_ path: String, _ pinned: Bool) {
@@ -211,6 +267,28 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         }
         Log.shared.info("files", "\(pinned ? "Pinned" : "Unpinned") \(path)")
         index.refresh(path)
+        workspace.reloadFromDisk()
+        sync.noteChanged()
+        sidebar.reload()
+    }
+
+    /// Gives pinned notes new numbers — `pinned:` in each — putting the
+    /// shelf in a new order, as Reflect's sidebar does when one is dragged.
+    func renumberPins(_ pins: [PinOrder.Pin]) {
+        workspace.saveAll()
+        for pin in pins {
+            guard let order = pin.order, let source = graph.read(path: pin.path) else { continue }
+            let updated = Frontmatter.setting("pinned", to: String(order), in: source)
+            guard updated != source else { continue }
+            do {
+                try graph.write(updated, path: pin.path)
+                index.refresh(pin.path)
+            } catch {
+                Log.shared.error("files", "Could not reorder \(pin.path)", detail: error.localizedDescription)
+                presentError(error)
+            }
+        }
+        Log.shared.info("files", "Reordered the pinned notes", detail: pins.map { "\($0.path): \($0.order ?? 0)" }.joined(separator: "\n"))
         workspace.reloadFromDisk()
         sync.noteChanged()
         sidebar.reload()
@@ -233,7 +311,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             timeline.restore(state.top, focus: state.focus)
             // The note that was open, and the one in the split view.
             if let path = state.mainNote, graph.exists(path: path) { workspace.show(NoteRef(path: path), inSplit: false) }
-            if let path = state.splitNote, graph.exists(path: path) { workspace.show(NoteRef(path: path), inSplit: true) }
+            if let path = state.splitNote, graph.exists(path: path) {
+                workspace.show(NoteRef(path: path), inSplit: true)
+            } else {
+                // The window's saved layout may have the pane open, with nothing for it.
+                workspace.sideItem.isCollapsed = true
+            }
             if state.consoleOpen == true { ConsoleWindowController.shared.show(); window?.makeKeyAndOrderFront(nil) }
             timeline.onScroll = { [weak self] in self?.noteState() }
             NotificationCenter.default.addObserver(self, selector: #selector(selectionChanged(_:)),
@@ -373,6 +456,18 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     @objc func goBack(_ sender: Any?) { workspace.goBack(sender) }
     @objc func goForward(_ sender: Any?) { workspace.goForward(sender) }
     @objc func closeSplitView(_ sender: Any?) { workspace.closeSplit() }
+    @objc func sideBack(_ sender: Any?) { workspace.side.goBack(sender) }
+    @objc func sideForward(_ sender: Any?) { workspace.side.goForward(sender) }
+
+    /// The pane's items in the toolbar: shown with the pane, titled for its note.
+    private func showSideItems() {
+        let open = workspace.split != nil
+        for item in window?.toolbar?.items ?? [] where Self.sideItems.contains(item.itemIdentifier) {
+            item.isHidden = !open
+        }
+        sideTitle.stringValue = open ? workspace.side.noteTitle : ""
+        window?.toolbar?.validateVisibleItems()
+    }
 
     /// Go ▸ Next Note Needing Review: the next day after this one whose note
     /// carries a conflict, round to the first.
@@ -386,6 +481,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         switch item.action {
         case #selector(goBack(_:)): workspace.canGoBack
         case #selector(goForward(_:)): workspace.canGoForward
+        case #selector(sideBack(_:)): workspace.side.canGoBack
+        case #selector(sideForward(_:)): workspace.side.canGoForward
         case #selector(syncNow(_:)): sync.git != nil
         default: true
         }
@@ -403,6 +500,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         }
         if item.action == #selector(toggleSidebar(_:)) {
             item.title = sidebarItem.isCollapsed ? "Show Sidebar" : "Hide Sidebar"
+        }
+        if item.action == #selector(revealNoteInFinder(_:)) {
+            return focusedNotePath.map(graph.exists(path:)) ?? false
+        }
+        if item.action == #selector(trashNote(_:)) {
+            guard let path = focusedNotePath else { return false }
+            return GraphPaths.day(fromDailyPath: path) == nil && graph.exists(path: path)
         }
         if item.action == #selector(togglePinned(_:)) {
             guard let path = focusedNotePath, graph.read(path: path) != nil else {
@@ -466,22 +570,70 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private static let backItem = NSToolbarItem.Identifier("Back")
     private static let forwardItem = NSToolbarItem.Identifier("Forward")
     private static let openItem = NSToolbarItem.Identifier("Open")
+    private static let noteItem = NSToolbarItem.Identifier("Note")
+    /// Over the pane on the right: its way back and forward, title, and close.
+    private static let sideBackItem = NSToolbarItem.Identifier("SideBack")
+    private static let sideForwardItem = NSToolbarItem.Identifier("SideForward")
+    private static let sideTitleItem = NSToolbarItem.Identifier("SideTitle")
+    private static let sideCloseItem = NSToolbarItem.Identifier("SideClose")
+    private static let sideItems = [sideBackItem, sideForwardItem, sideTitleItem, sideCloseItem]
+    private let sideTitle = NSTextField(labelWithString: "")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, Self.backItem, Self.forwardItem, .flexibleSpace, Self.openItem,
-         Self.todayItem, Self.syncItemIdentifier]
+        [.toggleSidebar, .sidebarTrackingSeparator, Self.backItem, Self.forwardItem, .flexibleSpace, Self.noteItem, Self.openItem,
+         Self.todayItem, Self.syncItemIdentifier, .inspectorTrackingSeparator] + Self.sideItems
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, Self.backItem, Self.forwardItem, .flexibleSpace, .space, Self.openItem,
-         Self.todayItem, Self.syncItemIdentifier]
+        [.toggleSidebar, .sidebarTrackingSeparator, Self.backItem, Self.forwardItem, .flexibleSpace, .space, Self.noteItem, Self.openItem,
+         Self.todayItem, Self.syncItemIdentifier, .inspectorTrackingSeparator] + Self.sideItems
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        if identifier == Self.noteItem {
+            // What can be done to the note the keyboard is in.
+            let item = NSMenuToolbarItem(itemIdentifier: identifier)
+            item.label = "Note"
+            item.toolTip = "Pin or Delete This Note"
+            item.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Note")
+            item.showsIndicator = false
+            let menu = NSMenu()
+            menu.addItem(withTitle: "Pin Note", action: #selector(togglePinned(_:)), keyEquivalent: "")
+            menu.addItem(withTitle: "Show in Finder", action: #selector(revealNoteInFinder(_:)), keyEquivalent: "")
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Move Note to Trash…", action: #selector(trashNote(_:)), keyEquivalent: "")
+            for entry in menu.items { entry.target = self }
+            item.menu = menu
+            return item
+        }
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.isBordered = true
+        if Self.sideItems.contains(identifier) {
+            item.isHidden = workspace.split == nil
+        }
         switch identifier {
+        case Self.sideBackItem, Self.sideForwardItem:
+            let isBack = identifier == Self.sideBackItem
+            item.label = isBack ? "Back" : "Forward"
+            item.toolTip = isBack ? "Back in the Split View" : "Forward in the Split View"
+            item.image = NSImage(systemSymbolName: isBack ? "chevron.left" : "chevron.right", accessibilityDescription: item.label)
+            item.action = isBack ? #selector(sideBack(_:)) : #selector(sideForward(_:))
+        case Self.sideTitleItem:
+            sideTitle.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+            sideTitle.lineBreakMode = .byTruncatingTail
+            sideTitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            item.view = sideTitle
+            item.label = "Title"
+            item.isBordered = false
+            // It takes what room the pane's toolbar has.
+            item.visibilityPriority = .low
+            return item
+        case Self.sideCloseItem:
+            item.label = "Close"
+            item.toolTip = "Close Split View"
+            item.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Split View")
+            item.action = #selector(closeSplitView(_:))
         case Self.backItem, Self.forwardItem:
             let isBack = identifier == Self.backItem
             item.label = isBack ? "Back" : "Forward"

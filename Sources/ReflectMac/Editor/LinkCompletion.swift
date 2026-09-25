@@ -10,14 +10,16 @@ import ReflectCore
 /// puts the list away, and so does the caret leaving the link.
 @MainActor
 final class LinkCompletion: NSObject, NSTableViewDataSource, NSTableViewDelegate {
-    /// What a query finds; the window sets it to the chooser's search.
-    static var source: ((String) -> [OpenQuickly.Item])?
+    /// Where to look; the window sets it to where the chooser looks.
+    static var sources: SearchSources?
 
     private weak var textView: OutlineTextView?
     /// Where the link's words start: just after `[[`.
     private(set) var start: Int
     private var items: [OpenQuickly.Item] = []
     private let panel: NSPanel
+    /// Searches in the background, so typing never waits on it.
+    private let runner: SearchRunner?
     private let table = NSTableView()
     private let scroll = NSScrollView()
 
@@ -28,6 +30,7 @@ final class LinkCompletion: NSObject, NSTableViewDataSource, NSTableViewDelegate
     init(textView: OutlineTextView, start: Int) {
         self.textView = textView
         self.start = start
+        runner = Self.sources.map(SearchRunner.init)
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 100),
                         styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         super.init()
@@ -72,13 +75,35 @@ final class LinkCompletion: NSObject, NSTableViewDataSource, NSTableViewDelegate
         return typed
     }
 
-    /// Finds again for what is typed, and moves the list to the caret; or
-    /// says, returning false, that the link is no longer being typed.
+    /// Finds again for what is typed — in the background, the list filling
+    /// in as results come — and moves the list to the caret; or says,
+    /// returning false, that the link is no longer being typed.
     func refresh() -> Bool {
-        guard let query, let textView, let window = textView.window else { return false }
-        items = Self.source?(query) ?? []
+        guard let query, textView?.window != nil else { return false }
+        var first = true
+        runner?.run(query) { [weak self] found, _ in
+            self?.show(found, keepingSelection: !first)
+            first = false
+        }
+        place()
+        return true
+    }
+
+    private func show(_ found: [OpenQuickly.Item], keepingSelection: Bool) {
+        let chosen = keepingSelection && table.selectedRow > 0 && table.selectedRow < items.count ? "\(items[table.selectedRow].target)" : nil
+        items = found
         table.reloadData()
-        if !items.isEmpty { table.selectRowIndexes([0], byExtendingSelection: false) }
+        if let chosen, let row = items.firstIndex(where: { "\($0.target)" == chosen }) {
+            table.selectRowIndexes([row], byExtendingSelection: false)
+        } else if !items.isEmpty {
+            table.selectRowIndexes([0], byExtendingSelection: false)
+        }
+        place()
+    }
+
+    /// Sizes the list to what it holds, under the link being typed.
+    private func place() {
+        guard let textView, let window = textView.window else { return }
         let rows = min(max(items.count, 1), Self.visibleRows)
         let height = CGFloat(rows) * (Self.rowHeight + 3) + 10
         scroll.frame = NSRect(x: 0, y: 0, width: Self.width, height: height)
@@ -90,10 +115,10 @@ final class LinkCompletion: NSObject, NSTableViewDataSource, NSTableViewDelegate
         panel.setFrame(NSRect(origin: origin, size: NSSize(width: Self.width, height: height)), display: true)
         if panel.parent == nil { window.addChildWindow(panel, ordered: .above) }
         panel.orderFront(nil)
-        return true
     }
 
     func close() {
+        runner?.cancel()
         panel.parent?.removeChildWindow(panel)
         panel.orderOut(nil)
     }
@@ -108,6 +133,11 @@ final class LinkCompletion: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// Puts the chosen link in: `[[Title]]`, closing the brackets unless
     /// they are there already.
     func accept() {
+        // Results for what was typed before the last keystroke name the wrong
+        // thing: the first of what is typed now, found here — quickly.
+        if let query, let runner, runner.shownQuery != query {
+            show(StagedSearch(query: query, sources: runner.sources).first(), keepingSelection: false)
+        }
         guard let textView, let storage = textView.textStorage, table.selectedRow >= 0, table.selectedRow < items.count else { return }
         let name = items[table.selectedRow].name
         let caret = textView.selectedRange().location

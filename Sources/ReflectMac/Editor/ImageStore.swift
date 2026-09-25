@@ -23,6 +23,8 @@ final class ImageStore: @unchecked Sendable {
     private var fetching: Set<String> = []
     /// Posts, by the source that links them; nil for one that is gone.
     private var tweets: [String: Tweet?] = [:]
+    /// The pills of files linked from notes, by source.
+    var pills: [String: FilePill] = [:]
     /// The pictures a post's card shows, and the post's source: when one
     /// arrives, the card is drawn again.
     private var dependents: [String: Set<String>] = [:]
