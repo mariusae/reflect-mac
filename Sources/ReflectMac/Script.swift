@@ -180,8 +180,14 @@ enum Script {
             case "choose":
                 // choose <query>: the chooser, showing what a query finds.
                 controller.openQuickly(nil)
-                let items = OpenQuickly.items(for: argument, index: controller.index, search: ReflectSearchIndex(root: controller.graph.root))
+                let items = OpenQuickly.items(for: argument, index: controller.index, search: ReflectSearchIndex(root: controller.graph.root), pictures: controller.pictureText.index)
                 print("choose “\(argument)”: " + items.prefix(8).map { "\($0.title) [\($0.detail?.string.prefix(50) ?? "")]" }.joined(separator: " · "))
+                fflush(stdout)
+            case "picture-text":
+                // picture-text <query>: the pictures whose text has the words.
+                let pictures = controller.pictureText.index
+                print("picture-text \(pictures.count) pictures with text; “\(argument)”: "
+                      + pictures.search(argument).prefix(5).map { "\($0.path) → \(controller.index.notes(showing: $0.path))" }.joined(separator: " · "))
                 fflush(stdout)
             case "type-chooser":
                 if let panel = NSApp.windows.first(where: { $0 is ChooserPanel }), let field = panel.firstResponder as? NSTextView {
@@ -217,6 +223,37 @@ enum Script {
                             NSApp.postEvent(event, atStart: false)
                         }
                     }
+                }
+            case "drop-picture":
+                // drop-picture <on|above|below|margin> <text>: the first picture
+                // dragged to that text, just above or below its row, or into the
+                // space before it — as a drop at that point would take it.
+                if let editor = controller.window?.firstResponder as? OutlineTextView,
+                   let layout = editor.layoutManager, let container = editor.textContainer, let storage = editor.textStorage {
+                    let parts = argument.split(separator: " ", maxSplits: 1).map(String.init)
+                    guard parts.count == 2 else { break }
+                    var picture: NSRange?
+                    storage.enumerateAttribute(.outlineImage, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
+                        if value != nil { picture = range; stop.pointee = true }
+                    }
+                    let range = (editor.string as NSString).range(of: parts[1])
+                    guard let picture, range.location != NSNotFound,
+                          let span = editor.spans(atRowOf: picture.location).first(where: { $0.range.location == picture.location })
+                    else { print("script: no picture or no \(parts[1])"); break }
+                    let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: range.location + range.length / 2, length: 1), actualCharacterRange: nil)
+                    let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+                        .offsetBy(dx: editor.textContainerOrigin.x, dy: editor.textContainerOrigin.y)
+                    let line = layout.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
+                        .offsetBy(dx: editor.textContainerOrigin.x, dy: editor.textContainerOrigin.y)
+                    let point: NSPoint = switch parts[0] {
+                    case "above": NSPoint(x: rect.midX, y: line.minY + 1)
+                    case "below": NSPoint(x: rect.midX, y: line.maxY - 1)
+                    case "margin": NSPoint(x: editor.textContainerOrigin.x + 4, y: rect.midY)
+                    default: NSPoint(x: rect.midX, y: line.minY + 10)
+                    }
+                    let drop = editor.pictureDrop(at: point)
+                    print("drop \(drop)")
+                    editor.movePicture((editor.string as NSString).substring(with: span.range), from: (editor, span.range), to: drop)
                 }
             case "hover-text":
                 // hover-text <text>: the pointer comes to rest on that text.

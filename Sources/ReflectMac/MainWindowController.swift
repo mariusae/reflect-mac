@@ -17,8 +17,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private var notesWatcher: DirectoryWatcher?
     /// Reflect's own search index for the graph, when it keeps one.
     private lazy var searchIndex = ReflectSearchIndex(root: graph.root)
+    /// The text in the graph's pictures, and what reads it.
+    let pictureText: ImageTextReader
     private lazy var chooser: OpenQuickly = {
-        let chooser = OpenQuickly(index: index, search: searchIndex)
+        let chooser = OpenQuickly(index: index, search: searchIndex, pictures: pictureText.index)
         chooser.onOpen = { [weak self] target, inSplit in self?.workspace.open(target, inSplit: inSplit) }
         return chooser
     }()
@@ -34,6 +36,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         let size = stored > 0 ? CGFloat(stored) : Self.defaultFontSize
         timeline = TimelineViewController(graph: graph, metrics: OutlineMetrics(fontSize: size))
         index = NoteIndex(root: graph.root)
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(Bundle.main.bundleIdentifier ?? "ReflectMac").appendingPathComponent("PictureText")
+        pictureText = ImageTextReader(index: ImageTextIndex(root: graph.root, cache: caches))
         workspace = WorkspaceController(graph: graph, timeline: timeline, index: index)
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 800),
@@ -65,6 +70,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             sync.noteChanged()
             refreshReview()
             index.refresh(ref.path)
+            pictureText.update()
         }
         timeline.onSave = saved
         workspace.onSave = saved
@@ -95,7 +101,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         // `[[` in a note finds what the chooser finds.
         LinkCompletion.source = { [weak self] query in
             guard let self else { return [] }
-            return OpenQuickly.items(for: query, index: index, search: searchIndex)
+            return OpenQuickly.items(for: query, index: index, search: searchIndex, pictures: pictureText.index)
         }
         // "Synced 2 minutes ago" goes stale on its own.
         statusTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
@@ -112,6 +118,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private func rescan() {
         let index = index
         Task.detached(priority: .utility) { index.scan() }
+        pictureText.update()
     }
 
     /// Takes in what changed on disk: notes on screen, and names.

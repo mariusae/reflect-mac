@@ -230,6 +230,11 @@ final class OutlineLayoutManager: NSLayoutManager {
 
     /// The picture at a point in the text view, if any.
     func pictureHit(at point: NSPoint, origin: NSPoint) -> ImageBox? {
+        pictureFrame(at: point, origin: origin)?.box
+    }
+
+    /// The picture at a point in the text view, and where it is drawn there.
+    func pictureFrame(at point: NSPoint, origin: NSPoint) -> (box: ImageBox, frame: NSRect)? {
         guard let storage = textStorage, let container = textContainers.first, storage.length > 0 else { return nil }
         let inContainer = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
         let glyph = glyphIndex(for: inContainer, in: container)
@@ -240,7 +245,8 @@ final class OutlineLayoutManager: NSLayoutManager {
         let characters = characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil)
         let indent = (storage.attribute(.paragraphStyle, at: characters.location, effectiveRange: nil) as? NSParagraphStyle)?.headIndent ?? 0
         return ImageLine.frames(in: storage, characters: characters, container: container, fragment: fragment, indent: indent)
-            .first { $0.frame.contains(inContainer) }?.box
+            .first { $0.frame.contains(inContainer) }
+            .map { ($0.box, $0.frame.offsetBy(dx: origin.x, dy: origin.y)) }
     }
 
     /// The row whose handle is at a point in the text view, if any.

@@ -57,6 +57,10 @@ final class OutlineTextView: NSTextView {
     /// Set while the editor changes its own text, so that what it does is
     /// not taken for the writer's.
     private var adjusting = false
+    /// The picture being dragged from here, while it is.
+    var draggedPicture: DraggedPicture?
+    /// Where a dragged picture's new row would go.
+    let dropLine = DropLineView()
     /// How selected text looks, set aside while rows are selected, which
     /// look like rows instead.
     private var textSelectionAttributes: [NSAttributedString.Key: Any] = [:]
@@ -104,7 +108,7 @@ final class OutlineTextView: NSTextView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    private var outlineLayout: OutlineLayoutManager { layoutManager as! OutlineLayoutManager }
+    var outlineLayout: OutlineLayoutManager { layoutManager as! OutlineLayoutManager }
 
     // MARK: Content
 
@@ -501,7 +505,7 @@ final class OutlineTextView: NSTextView {
         needsDisplay = true
     }
 
-    private func leaveRowSelection() {
+    func leaveRowSelection() {
         selectedRows = nil
         selectedTextAttributes = textSelectionAttributes
         needsDisplay = true
@@ -668,7 +672,17 @@ final class OutlineTextView: NSTextView {
                 // Double-clicked, a picture opens in the app that opens it.
                 if let url = URL(string: picture.source) { navigator?.outlineView(self, open: url, inSplit: false) }
             } else if let location = rangeOfPicture(picture)?.location {
-                // Once, it takes the caret beside it.
+                // Once, it takes the caret beside it — or, moved, it is dragged.
+                let start = event.locationInWindow
+                while let next = window?.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) {
+                    if next.type == .leftMouseUp { break }
+                    if hypot(next.locationInWindow.x - start.x, next.locationInWindow.y - start.y) >= 4 {
+                        if let frame = outlineLayout.pictureFrame(at: point, origin: textContainerOrigin)?.frame, isEditable {
+                            beginDragging(picture, frame: frame, event: event)
+                        }
+                        return
+                    }
+                }
                 if selectedRows != nil { leaveRowSelection() }
                 setSelectedRange(NSRange(location: location, length: 0))
             }
@@ -710,7 +724,7 @@ final class OutlineTextView: NSTextView {
     }
 
     /// Where a picture's Markdown is in the text.
-    private func rangeOfPicture(_ picture: ImageBox) -> NSRange? {
+    func rangeOfPicture(_ picture: ImageBox) -> NSRange? {
         var found: NSRange?
         textStorage!.enumerateAttribute(.outlineImage, in: NSRange(location: 0, length: textStorage!.length)) { value, range, stop in
             if value as? ImageBox === picture {
@@ -796,7 +810,11 @@ final class OutlineTextView: NSTextView {
 
     /// Takes a picture out of the note, its size and all.
     private func deletePicture(at location: Int) {
-        guard let span = spans(atRowOf: location).first(where: { $0.isImage && $0.range.location == location }) else { return }
+        guard let span = spans(atRowOf: location).first(where: { span in
+            guard span.range.location == location else { return false }
+            if case .url = span.kind { return true }
+            return span.isImage
+        }) else { return }
         insertText("", replacementRange: span.range)
         undoManager?.setActionName("Delete Image")
     }

@@ -27,6 +27,7 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
 
     let index: NoteIndex
     private let search: ReflectSearchIndex?
+    private let pictures: ImageTextIndex?
     /// Told what to open, and whether in the split view.
     var onOpen: ((Target, _ inSplit: Bool) -> Void)?
 
@@ -43,9 +44,10 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
     private static let rowHeight: CGFloat = 46
     private static let visibleRows = 9
 
-    init(index: NoteIndex, search: ReflectSearchIndex?) {
+    init(index: NoteIndex, search: ReflectSearchIndex?, pictures: ImageTextIndex?) {
         self.index = index
         self.search = search
+        self.pictures = pictures
         panel = ChooserPanel(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.fieldHeight),
                              styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: true)
         super.init()
@@ -159,14 +161,14 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
     }
 
     private func refresh() {
-        items = Self.items(for: field.stringValue, index: index, search: search)
+        items = Self.items(for: field.stringValue, index: index, search: search, pictures: pictures)
         table.reloadData()
         if !items.isEmpty { table.selectRowIndexes([0], byExtendingSelection: false) }
         table.scrollRowToVisible(0)
         layout()
     }
 
-    static func items(for query: String, index: NoteIndex, search: ReflectSearchIndex?) -> [Item] {
+    static func items(for query: String, index: NoteIndex, search: ReflectSearchIndex?, pictures: ImageTextIndex? = nil) -> [Item] {
         let query = query.trimmingCharacters(in: .whitespaces)
         var items: [Item] = []
         var seen = Set<String>()
@@ -218,6 +220,14 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
                 let title = entry?.day.map(dayTitle) ?? entry?.title ?? hit.path
                 add(Item(target: target(for: hit.path), title: title, detail: plain(hit.snippet),
                          symbol: entry?.day == nil ? "text.magnifyingglass" : "calendar"), path: hit.path)
+            }
+        }
+        // Then words in pictures, as the notes that show them.
+        for hit in pictures?.search(query) ?? [] {
+            for path in index.notes(showing: hit.path).prefix(3) {
+                let entry = index.entry(path)
+                let title = entry?.day.map(dayTitle) ?? entry?.title ?? path
+                add(Item(target: target(for: path), title: title, detail: highlighted(hit.snippet), symbol: "photo"), path: path)
             }
         }
         // Last, so Return never makes a note by chance; ⌘Return makes one

@@ -28,10 +28,11 @@ struct OutlineMetrics {
         }
     }
 
-    /// Where a row's text starts. A list item's marker hangs in the space
-    /// before it; anything else lines up with the text of the item it is in.
+    /// Where a row's text starts: one step in for each level, whether or
+    /// not it has a bullet — a list item's marker hangs in the space before
+    /// it — so taking a bullet off leaves the text where it was.
     func textIndent(for row: Row) -> CGFloat {
-        indent * CGFloat(row.kind.isListItem ? row.depth + 1 : max(row.depth, 1))
+        indent * CGFloat(row.depth + 1)
     }
 }
 
@@ -64,7 +65,11 @@ final class OutlineStyler: NSObject, NSTextStorageDelegate {
         if mask.contains(.editedCharacters) { onCharactersEdited?() }
         guard storage.length > 0 else { return }
         let text = storage.string as NSString
-        let range = text.paragraphRange(for: NSRange(location: min(edited.location, text.length), length: edited.length))
+        var range = text.paragraphRange(for: NSRange(location: min(edited.location, text.length), length: edited.length))
+        // The row after is spaced by this one, so it is styled again too.
+        if NSMaxRange(range) < text.length {
+            range = NSUnionRange(range, text.paragraphRange(for: NSRange(location: NSMaxRange(range), length: 0)))
+        }
         if mask.contains(.editedCharacters) { unify(storage, in: range, inserted: edited) }
         style(storage, in: range)
     }
@@ -112,8 +117,9 @@ final class OutlineStyler: NSObject, NSTextStorageDelegate {
         for paragraph in OutlineText.paragraphs(text.substring(with: range) as NSString) {
             let paragraph = NSRange(location: paragraph.location + range.location, length: paragraph.length)
             let row = OutlineText.style(storage, at: paragraph.location).row
+            let previous = paragraph.location > 0 ? OutlineText.style(storage, at: paragraph.location - 1).row : nil
             let style = storage.attribute(.outlineRow, at: paragraph.location, effectiveRange: nil) as Any
-            storage.setAttributes(attributes(for: row, first: paragraph.location == 0), range: paragraph)
+            storage.setAttributes(attributes(for: row, after: previous), range: paragraph)
             storage.addAttribute(.outlineRow, value: style, range: paragraph)
             if case .code = row.kind {} else if case .rule = row.kind {} else {
                 InlineMarkdown.style(storage, in: paragraph, base: metrics.font(for: row), done: row.task?.isDone == true, images: images)
@@ -123,7 +129,13 @@ final class OutlineStyler: NSObject, NSTextStorageDelegate {
         }
     }
 
-    func attributes(for row: Row, first: Bool) -> [NSAttributedString.Key: Any] {
+    /// How a row looks, and how far it stands from the row before.
+    ///
+    /// Rows are spaced evenly, whatever blank lines the Markdown has between
+    /// them: in an outline they mean nothing, and a list written loose here
+    /// and tight there would read unevenly. A heading has room above it, and
+    /// prose keeps the blank line between one paragraph and the next.
+    func attributes(for row: Row, after previous: Row?) -> [NSAttributedString.Key: Any] {
         let font = metrics.font(for: row)
         let paragraph = NSMutableParagraphStyle()
         let indent = metrics.textIndent(for: row)
@@ -131,9 +143,13 @@ final class OutlineStyler: NSObject, NSTextStorageDelegate {
         paragraph.headIndent = indent
         paragraph.lineHeightMultiple = metrics.lineHeightMultiple
         paragraph.paragraphSpacing = round(metrics.fontSize * 0.2)
-        var before: CGFloat = row.gap.isEmpty ? 0 : round(metrics.fontSize * 0.45)
-        if case .heading = row.kind { before += round(metrics.fontSize * 0.5) }
-        paragraph.paragraphSpacingBefore = first ? 0 : before
+        var before: CGFloat = 0
+        if case .heading = row.kind {
+            before = round(metrics.fontSize * 0.8)
+        } else if row.kind == .paragraph, previous?.kind == .paragraph, !row.gap.isEmpty {
+            before = round(metrics.fontSize * 0.45)
+        }
+        paragraph.paragraphSpacingBefore = previous == nil ? 0 : before
         var attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .paragraphStyle: paragraph,
@@ -190,8 +206,15 @@ enum InlineMarkdown {
                     .font: NSFont.monospacedSystemFont(ofSize: round(base.pointSize * 0.9), weight: .regular),
                     .backgroundColor: NSColor.quaternaryLabelColor.withAlphaComponent(0.15),
                 ], range: content)
-            case .link(let target), .url(let target):
+            case .link(let target):
                 if let url = URL(string: target) { storage.addAttribute(.link, value: url, range: content) }
+            case .url(let target):
+                if let url = URL(string: target) { storage.addAttribute(.link, value: url, range: content) }
+                // A post's bare link shows its card too, below the link.
+                if Tweet.id(from: target) != nil, let size = images?.naturalSize(target) {
+                    storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: size),
+                                         range: NSRange(location: span.range.location, length: 1))
+                }
             case .wikiLink(let title):
                 if let url = URL.wiki(title) { storage.addAttribute(.link, value: url, range: content) }
             case .image(let reference):

@@ -113,6 +113,13 @@ public final class NoteIndex: @unchecked Sendable {
         return Array(entries.values)
     }
 
+    /// A note's text, as last read.
+    public func body(_ path: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return bodies[path]?.text
+    }
+
     public func entry(_ path: String) -> NoteEntry? {
         lock.lock()
         defer { lock.unlock() }

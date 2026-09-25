@@ -309,6 +309,34 @@ extension OutlineTextView {
         }
     }
 
+    /// Format ▸ Bullet: takes the bullets off the selected rows, leaving
+    /// their text where it is — written, as Reflect writes it, as a paragraph
+    /// in the item above — or, when some have none, puts bullets on those.
+    @objc func toggleBullet(_ sender: Any?) {
+        perform("Bullet") { rows, selection in
+            let on = rows[selection].allSatisfy(\.kind.isListItem)
+            var changed = false
+            for index in selection {
+                var row = rows[index]
+                if on {
+                    row.kind = .paragraph
+                    row.task = nil
+                } else if row.kind == .paragraph {
+                    row.kind = .bullet
+                    row.marker = "-"
+                    row.spacing = 1
+                } else {
+                    continue
+                }
+                rows[index] = row
+                changed = true
+            }
+            guard changed else { return nil }
+            OutlineEditing.normalize(&rows)
+            return selection
+        }
+    }
+
     // MARK: Inline formatting
 
     @objc func toggleBold(_ sender: Any?) { wrapSelection("**") }
@@ -392,7 +420,7 @@ extension OutlineTextView {
             return isEditable && !isSelectingRows
         case #selector(indentRows(_:)), #selector(outdentRows(_:)), #selector(moveRowsUp(_:)),
              #selector(moveRowsDown(_:)), #selector(deleteRows(_:)), #selector(duplicateRows(_:)),
-             #selector(toggleDone(_:)), #selector(newRow(_:)), #selector(setRowType(_:)):
+             #selector(toggleDone(_:)), #selector(newRow(_:)), #selector(setRowType(_:)), #selector(toggleBullet(_:)):
             return isEditable
         default:
             return super.validateUserInterfaceItem(item)
@@ -580,26 +608,35 @@ extension OutlineTextView {
     }
 
     override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
-        super.acceptableDragTypes + [.fileURL] + Self.pictureTypes
+        super.acceptableDragTypes + [.fileURL, Self.pictureType] + Self.pictureTypes
             + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if carriesPicture(sender) { return pictureDragUpdated(sender) }
         let operation = super.draggingEntered(sender)
         return isEditable && carriesFiles(sender.draggingPasteboard) ? .copy : operation
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if carriesPicture(sender) { return pictureDragUpdated(sender) }
         // The text view moves its drop caret along; the answer is ours.
         let operation = super.draggingUpdated(sender)
         return isEditable && carriesFiles(sender.draggingPasteboard) ? .copy : operation
     }
 
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        pictureDragEnded()
+        super.draggingExited(sender)
+    }
+
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        isEditable && carriesFiles(sender.draggingPasteboard) ? true : super.prepareForDragOperation(sender)
+        if carriesPicture(sender) { return isEditable }
+        return isEditable && carriesFiles(sender.draggingPasteboard) ? true : super.prepareForDragOperation(sender)
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if carriesPicture(sender) { return dropPicture(sender) }
         let pasteboard = sender.draggingPasteboard
         guard isEditable, carriesFiles(pasteboard) else { return super.performDragOperation(sender) }
         window?.makeFirstResponder(self)

@@ -109,6 +109,7 @@ enum MainMenu {
             item("Strikethrough", #selector(OutlineTextView.toggleStrikethrough(_:)), "-", [.command, .shift]),
             item("Link…", #selector(OutlineTextView.addLink(_:)), "k"),
             .separator(),
+            item("Bullet", #selector(OutlineTextView.toggleBullet(_:)), "8", [.command, .shift]),
             rowType,
         ]))
 
