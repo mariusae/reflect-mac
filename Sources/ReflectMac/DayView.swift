@@ -118,7 +118,9 @@ final class DayView: NSView, NSTextViewDelegate {
         guard let day = ref.day else {
             // A note's name, when its first heading does not already give it.
             let entry = NoteIndex.entry(path: ref.path, source: savedText)
-            title.stringValue = entry.titleIsHeading ? "" : entry.title
+            // Untitled: nothing over it — the title is typed in the note.
+            let untitled = TitleRename.authoredTitle(path: ref.path, source: savedText) == nil && entry.title == "Untitled"
+            title.stringValue = entry.titleIsHeading || untitled ? "" : entry.title
             title.textColor = .labelColor
             var notes: [String] = []
             if conflictView != nil { notes.append("Needs Review") } else if isReadOnly { notes.append("Read Only") }

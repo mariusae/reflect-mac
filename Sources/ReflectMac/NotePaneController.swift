@@ -131,7 +131,9 @@ final class NotePaneController: NSViewController, OutlineTextViewNavigator {
     func refreshBacklinks() {
         guard isViewLoaded, let index = Self.index else { return }
         let isTopic = NoteIndex.entry(path: ref.path, source: noteView.savedText).isTopic
+        // Empty, and named: a note with no title yet has nothing linking to it.
         let isEmpty = ref.day == nil && Backlinks.isEmpty(noteView.editor.rows)
+            && TitleRename.authoredTitle(path: ref.path, source: noteView.savedText) != nil
         backlinkGeneration += 1
         guard isTopic || isEmpty else {
             if showsBacklinks {

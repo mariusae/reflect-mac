@@ -148,7 +148,12 @@ public final class NoteIndex: @unchecked Sendable {
             title = heading
             titleIsHeading = true
         }
-        if title.isEmpty { title = day?.description ?? String(path.split(separator: "/").last?.dropLast(3) ?? "") }
+        if title.isEmpty {
+            let stem = String(path.split(separator: "/").last?.dropLast(3) ?? "")
+            // A file named only by its id — a new note, not yet titled — is Untitled.
+            let isID = stem.range(of: #"^[0-7][0-9a-hjkmnp-tv-z]{25}$"#, options: [.regularExpression, .caseInsensitive]) != nil
+            title = day?.description ?? (isID ? "Untitled" : stem)
+        }
 
         var aliases = frontmatter.list("aliases")
         var keys = Set(aliases.map(foldKey))
