@@ -83,6 +83,7 @@ final class OutlineLayoutManager: NSLayoutManager {
             drawHandle(handle, row: row, paragraph: paragraph, origin: origin, indent: indent)
             drawPictures(in: paragraph, origin: origin)
             drawFilePills(in: paragraph, origin: origin)
+            drawCodeBackgrounds(in: paragraph, origin: origin)
         }
     }
 

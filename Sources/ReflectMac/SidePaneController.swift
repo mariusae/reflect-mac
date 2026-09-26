@@ -44,6 +44,17 @@ final class SidePaneController: NSViewController {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 600))
         content.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(content)
+        // Its edge, drawn: the split view's own hairline all but vanishes
+        // between two notes alike, in the dark.
+        let edge = EdgeLine()
+        edge.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(edge)
+        NSLayoutConstraint.activate([
+            edge.topAnchor.constraint(equalTo: container.topAnchor),
+            edge.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            edge.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            edge.widthAnchor.constraint(equalToConstant: 1),
+        ])
         // Its way back and forward, title and close are in the window's
         // toolbar, over the pane: the note starts under it.
         NSLayoutConstraint.activate([
@@ -138,4 +149,19 @@ final class SidePaneController: NSViewController {
         guard let responder = view.window?.firstResponder as? NSView else { return false }
         return responder.isDescendant(of: view)
     }
+}
+
+/// A pane's edge: a line in the separator colour.
+private final class EdgeLine: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() { layer?.backgroundColor = NSColor.separatorColor.cgColor }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

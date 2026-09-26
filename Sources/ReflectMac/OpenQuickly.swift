@@ -69,6 +69,7 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
             panel.standardWindowButton(button)?.isHidden = true
         }
         panel.onResign = { [weak self] in self?.close() }
+        panel.onCommandReturn = { [weak self] in self?.openSelected(inSplit: true) }
 
         let background = NSVisualEffectView()
         background.material = .popover
@@ -404,6 +405,17 @@ final class ChooserCell: NSTableCellView {
 /// take the keyboard and gives it back when it loses it.
 final class ChooserPanel: NSPanel {
     var onResign: (() -> Void)?
+    /// ⌘Return: a key equivalent, so the field never sees it as a Return.
+    var onCommandReturn: (() -> Void)?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.type == .keyDown, event.keyCode == 36 || event.keyCode == 76,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command, let onCommandReturn {
+            onCommandReturn()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
     override var canBecomeKey: Bool { true }
     override func resignKey() {
         super.resignKey()

@@ -54,6 +54,8 @@ extension NSAttributedString.Key {
     /// On the hidden character laid out as room for the pill's icon, or its size.
     static let outlineFileLead = NSAttributedString.Key("ReflectOutlineFileLead")
     static let outlineFileTail = NSAttributedString.Key("ReflectOutlineFileTail")
+    /// Over inline code: its background, drawn round each line of it.
+    static let outlineCode = NSAttributedString.Key("ReflectOutlineCode")
 }
 
 extension ImageStore {
@@ -74,6 +76,33 @@ extension ImageStore {
 }
 
 extension OutlineLayoutManager {
+    /// Draws the backgrounds of inline code in some characters: on each line
+    /// the code runs across, a rounded rectangle round just its characters
+    /// there — never out to the line's edges, nor into the row's indent.
+    func drawCodeBackgrounds(in characters: NSRange, origin: NSPoint) {
+        guard let storage = textStorage, let container = textContainers.first, characters.length > 0 else { return }
+        NSColor.quaternaryLabelColor.withAlphaComponent(0.15).setFill()
+        storage.enumerateAttribute(.outlineCode, in: characters) { value, range, _ in
+            guard value != nil else { return }
+            let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont ?? .monospacedSystemFont(ofSize: 13, weight: .regular)
+            let ascent = ceil(font.ascender), descent = ceil(-font.descender)
+            var at = glyphs.location
+            while at < NSMaxRange(glyphs) {
+                var line = NSRange()
+                let fragment = lineFragmentRect(forGlyphAt: at, effectiveRange: &line)
+                let piece = NSIntersectionRange(line, glyphs)
+                guard piece.length > 0 else { break }
+                let box = boundingRect(forGlyphRange: piece, in: container)
+                let baseline = fragment.minY + location(forGlyphAt: piece.location).y
+                let rect = NSRect(x: box.minX - 2 + origin.x, y: baseline - ascent - 2 + origin.y,
+                                  width: box.width + 4, height: ascent + descent + 4)
+                NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
+                at = NSMaxRange(line)
+            }
+        }
+    }
+
     /// Draws the pills of the file links in some characters.
     func drawFilePills(in characters: NSRange, origin: NSPoint) {
         guard let storage = textStorage, let container = textContainers.first, characters.length > 0 else { return }

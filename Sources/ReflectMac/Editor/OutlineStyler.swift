@@ -204,7 +204,8 @@ enum InlineMarkdown {
             case .code:
                 storage.addAttributes([
                     .font: NSFont.monospacedSystemFont(ofSize: round(base.pointSize * 0.9), weight: .regular),
-                    .backgroundColor: NSColor.quaternaryLabelColor.withAlphaComponent(0.15),
+                    // Its background is drawn line by line, in the row's own column.
+                    .outlineCode: true,
                 ], range: content)
             case .link(let target):
                 if let url = URL(string: target) {

@@ -250,6 +250,17 @@ enum Script {
                 controller.workspace.main?.scrollToEnd()
                 print("note-end backlinks \(controller.workspace.main?.showsBacklinks ?? false)")
                 fflush(stdout)
+            case "post-return":
+                // post-return [cmd|opt]: a real Return press, to whatever window is key.
+                // As the app hands a key press on: a key equivalent first, then to the window.
+                if let window = NSApp.windows.first(where: { $0 is ChooserPanel && $0.isVisible }) ?? NSApp.keyWindow ?? controller.window {
+                    let flags: NSEvent.ModifierFlags = argument == "cmd" ? .command : argument == "opt" ? .option : []
+                    if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                                    windowNumber: window.windowNumber, context: nil, characters: "\r",
+                                                    charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36) {
+                        if flags.isEmpty || !window.performKeyEquivalent(with: event) { window.sendEvent(event) }
+                    }
+                }
             case "snap-popover":
                 for window in NSApp.windows where window.isVisible && String(describing: type(of: window)).contains("Popover") {
                     write(window, name: argument)
