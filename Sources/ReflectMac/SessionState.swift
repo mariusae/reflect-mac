@@ -39,6 +39,8 @@ final class SessionState {
         var splitNote: String?
         /// What the sidebar searches for.
         var search: String?
+        /// The notes open in windows of their own.
+        var noteWindows: [String]?
     }
 
     private var graphs: [String: Graph] = [:]
@@ -77,6 +79,7 @@ final class SessionState {
             if let marks = state.folds.removeValue(forKey: old.stateKey) { state.folds[new.stateKey] = marks }
             if state.mainNote == old.path { state.mainNote = new.path }
             if state.splitNote == old.path { state.splitNote = new.path }
+            state.noteWindows = state.noteWindows?.map { $0 == old.path ? new.path : $0 }
         }
     }
 

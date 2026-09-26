@@ -40,6 +40,8 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     var onOpen: ((OpenQuickly.Target, _ inSplit: Bool, _ found: OutlineTextView.Found?) -> Void)?
     /// Told to pin a note, or take its pin away.
     var onPin: ((_ path: String, _ pinned: Bool) -> Void)?
+    /// Told to open a note in a window of its own.
+    var onOpenInWindow: ((String) -> Void)?
     /// Told to move a note to the Trash, once asked.
     var onTrash: ((String) -> Void)?
     /// Told to give pinned notes new numbers, to put the shelf in a new order.
@@ -136,6 +138,8 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         table.delegate = self
         table.target = self
         table.action = #selector(clicked(_:))
+        // Double-clicked, as in Mail or the Finder: a window of its own.
+        table.doubleAction = #selector(doubleClicked(_:))
         table.registerForDraggedTypes([Self.pinType])
         table.setDraggingSourceOperationMask(.move, forLocal: true)
         table.draggingDestinationFeedbackStyle = .gap
@@ -389,6 +393,26 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         open(rows[table.clickedRow], inSplit: NSApp.currentEvent?.modifierFlags.contains(.command) == true)
     }
 
+    @objc private func doubleClicked(_ sender: Any?) {
+        guard table.clickedRow >= 0, table.clickedRow < rows.count, let path = path(of: rows[table.clickedRow]) else { return }
+        onOpenInWindow?(path)
+    }
+
+    /// The note a row is of, if any.
+    private func path(of row: Row) -> String? {
+        switch row {
+        case .pinned(let entry), .recent(let entry), .source(let entry): return entry.path
+        case .backlink(let source, _): return source
+        case .result(let item):
+            switch item.target {
+            case .note(let note): return note
+            case .day(let day): return GraphPaths.dailyPath(for: day)
+            case .create: return nil
+            }
+        default: return nil
+        }
+    }
+
     private func openSelected(inSplit: Bool) {
         guard table.selectedRow >= 0, table.selectedRow < rows.count else { return }
         open(rows[table.selectedRow], inSplit: inSplit)
@@ -439,6 +463,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         guard let path else { return }
         menu.addItem(ClosureMenuItem(title: "Open") { [weak self] in self?.open(row, inSplit: false) })
         menu.addItem(ClosureMenuItem(title: "Open in Split View") { [weak self] in self?.open(row, inSplit: true) })
+        menu.addItem(ClosureMenuItem(title: "Open in New Window") { [weak self] in self?.onOpenInWindow?(path) })
         menu.addItem(.separator())
         let isPinned = index.entry(path)?.pin != nil
         menu.addItem(ClosureMenuItem(title: isPinned ? "Unpin" : "Pin") { [weak self] in self?.onPin?(path, !isPinned) })

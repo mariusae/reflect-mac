@@ -296,6 +296,23 @@ enum Script {
                 default: break
                 }
                 Typography.current = typography
+            case "open-window":
+                controller.openInWindow(argument)
+            case "note-windows":
+                print("note-windows: " + controller.noteWindows.map { "\($0.key) “\($0.value.window?.title ?? "")” key=\($0.value.window?.isKeyWindow == true)" }.sorted().joined(separator: " | "))
+                fflush(stdout)
+            case "window-type":
+                // window-type <text>: typed at the end of the note in the window of its own that is in front.
+                if let note = controller.noteWindows.values.first(where: { $0.window?.isKeyWindow == true }) ?? controller.noteWindows.values.first {
+                    let editor = note.pane.noteView.editor
+                    editor.window?.makeFirstResponder(editor)
+                    editor.setSelectedRange(NSRange(location: max(0, (editor.textStorage?.length ?? 1) - 1), length: 0))
+                    editor.insertText(argument, replacementRange: editor.selectedRange())
+                }
+            case "snap-note-window":
+                if let note = controller.noteWindows.values.first, let window = note.window { write(window, name: argument) }
+            case "close-note-windows":
+                for note in controller.noteWindows.values { note.close() }
             case "rows":
                 // rows: the rows of the note the keyboard is in, as the editor holds them.
                 if let editor = controller.window?.firstResponder as? OutlineTextView {

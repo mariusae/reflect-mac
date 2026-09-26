@@ -95,6 +95,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sidebar.onPin = { [weak self] path, pinned in self?.setPinned(path, pinned) }
         sidebar.onReorder = { [weak self] pins in self?.renumberPins(pins) }
         NotificationCenter.default.addObserver(self, selector: #selector(typographyChanged(_:)), name: Typography.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appWillTerminate(_:)), name: NSApplication.willTerminateNotification, object: nil)
         NotePaneController.index = index
         NotePaneController.onRetitle = { [weak self] ref, from, to in self?.retitle(ref, from: from, to: to) }
         NotePaneController.onLeave = { [weak self] ref, text in self?.leftBlank(ref, text) }
@@ -102,6 +103,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             self?.workspace.open(OpenQuickly.target(for: path), inSplit: inSplit, found: link.map { .words([$0]) })
         }
         sidebar.onTrash = { [weak self] path in self?.confirmTrash(path) }
+        sidebar.onOpenInWindow = { [weak self] path in self?.openInWindow(path) }
         timeline.onSave = saved
         workspace.onSave = saved
         workspace.onChange = { [weak self] in
@@ -110,7 +112,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             self?.followFocus()
             self?.noteState()
         }
-        sync.flush = { [weak workspace] in workspace?.saveAll() }
+        sync.flush = { [weak self] in self?.saveAll() }
         sync.onPulled = { [weak self] _ in self?.reloadFromDisk() }
         sync.onStatus = { [weak self] status in
             if case .synced = status { self?.refreshReview() }
@@ -156,7 +158,75 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// Takes in what changed on disk: notes on screen, and names.
     func reloadFromDisk() {
         workspace.reloadFromDisk()
+        for window in noteWindows.values { window.reloadFromDisk() }
         rescan()
+    }
+
+    /// Everything open written: the window's notes, and those in windows of their own.
+    func saveAll() {
+        workspace.saveAll()
+        for window in noteWindows.values { window.save() }
+    }
+
+    // MARK: Notes in windows of their own
+
+    /// The notes open in windows of their own, by path.
+    private(set) var noteWindows: [String: NoteWindowController] = [:]
+
+    /// File ▸ Open in New Window: the note the keyboard is in.
+    @objc func openNoteInNewWindow(_ sender: Any?) {
+        guard let path = focusedNotePath else { NSSound.beep(); return }
+        openInWindow(path)
+    }
+
+    /// A note in a window of its own — the one it is in already, if any.
+    func openInWindow(_ path: String) {
+        if let open = noteWindows[path] {
+            open.show()
+            return
+        }
+        let controller = NoteWindowController(ref: NoteRef(path: path), graph: graph, images: timeline.images, metrics: workspace.metrics)
+        controller.onOpen = { [weak self] url, inSplit in
+            guard let self else { return }
+            window?.makeKeyAndOrderFront(nil)
+            workspace.open(url, inSplit: inSplit)
+        }
+        controller.onSave = { [weak self] ref in
+            guard let self else { return }
+            sync.noteChanged()
+            index.refresh(ref.path)
+            sidebarNeedsReload()
+            // The same note, open here too, catches up.
+            workspace.reloadFromDisk()
+        }
+        controller.onClose = { [weak self] closed in
+            guard let self, noteWindows[closed.ref.path] === closed else { return }
+            noteWindows[closed.ref.path] = nil
+            if !terminating { rememberNoteWindows() }
+        }
+        noteWindows[path] = controller
+        controller.show()
+        rememberNoteWindows()
+    }
+
+    private var terminating = false
+
+    @objc private func appWillTerminate(_ notification: Notification) {
+        terminating = true
+        saveAll()
+    }
+
+    private func rememberNoteWindows() {
+        let paths = noteWindows.keys.sorted()
+        SessionState.shared.update(graph.root) { $0.noteWindows = paths }
+    }
+
+    /// A note moved — renamed — followed in its window.
+    private func noteWindowMoved(from old: String, to new: String) {
+        guard let window = noteWindows.removeValue(forKey: old) else { return }
+        noteWindows[new] = window
+        window.moved(to: NoteRef(path: new))
+        rememberNoteWindows()
     }
 
     // MARK: The sidebar
@@ -250,8 +320,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     }
 
     func trash(_ path: String) {
-        workspace.saveAll()
+        saveAll()
         workspace.forget(path)
+        noteWindows[path]?.closeDiscarding()
         do {
             try FileManager.default.trashItem(at: graph.root.appendingPathComponent(path), resultingItemURL: nil)
         } catch {
@@ -312,7 +383,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     func retitle(_ ref: NoteRef, from: String?, to: String) {
         // Named, a new note is kept.
         blankNotes.remove(ref.path)
-        workspace.saveAll()
+        saveAll()
         var path = ref.path
         guard graph.exists(path: path) else { return }
         var changed = false
@@ -362,6 +433,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                     SessionState.shared.moved(graph.root, from: NoteRef(path: path), to: NoteRef(path: destination))
                     if let chain = renameChains.removeValue(forKey: path) { renameChains[destination] = chain }
                     workspace.moved(from: path, to: destination)
+                    noteWindowMoved(from: path, to: destination)
                     path = destination
                     changed = true
                 } catch {
@@ -386,7 +458,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// Sets or takes away a frontmatter key of a note, and has everything
     /// that shows it catch up.
     private func setFrontmatter(_ path: String, _ key: String, _ value: String?, verb: String) {
-        workspace.saveAll()
+        saveAll()
         guard let source = graph.read(path: path) else { NSSound.beep(); return }
         let updated = Frontmatter.setting(key, to: value, in: source)
         guard updated != source else { return }
@@ -407,7 +479,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// Pins a note, after every other, as Reflect does — `pinned:` in its
     /// frontmatter — or takes its pin away.
     func setPinned(_ path: String, _ pinned: Bool) {
-        workspace.saveAll()
+        saveAll()
         guard let source = graph.read(path: path) else { NSSound.beep(); return }
         let updated = Frontmatter.setting("pinned", to: pinned ? String(index.nextPinOrder) : nil, in: source)
         guard updated != source else { return }
@@ -428,7 +500,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// Gives pinned notes new numbers — `pinned:` in each — putting the
     /// shelf in a new order, as Reflect's sidebar does when one is dragged.
     func renumberPins(_ pins: [PinOrder.Pin]) {
-        workspace.saveAll()
+        saveAll()
         for pin in pins {
             guard let order = pin.order, let source = graph.read(path: pin.path) else { continue }
             let updated = Frontmatter.setting("pinned", to: String(order), in: source)
@@ -470,6 +542,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 // The window's saved layout may have the pane open, with nothing for it.
                 workspace.sideItem.isCollapsed = true
             }
+            // The notes that were open in windows of their own.
+            for path in state.noteWindows ?? [] where graph.exists(path: path) { openInWindow(path) }
+            window?.makeKeyAndOrderFront(nil)
             if state.consoleOpen == true { ConsoleWindowController.shared.show(); window?.makeKeyAndOrderFront(nil) }
             timeline.onScroll = { [weak self] in self?.noteState() }
             NotificationCenter.default.addObserver(self, selector: #selector(selectionChanged(_:)),
@@ -598,7 +673,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     @objc func showConsole(_ sender: Any?) { ConsoleWindowController.shared.show() }
 
     @objc func saveDocument(_ sender: Any?) {
-        workspace.saveAll()
+        saveAll()
         sync.commitAndPush()
     }
 
@@ -691,6 +766,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         if item.action == #selector(toggleSidebar(_:)) {
             item.title = sidebarItem.isCollapsed ? "Show Sidebar" : "Hide Sidebar"
         }
+        if item.action == #selector(openNoteInNewWindow(_:)) {
+            return focusedNotePath.map(graph.exists(path:)) ?? false
+        }
         if item.action == #selector(revealNoteInFinder(_:)) {
             return focusedNotePath.map(graph.exists(path:)) ?? false
         }
@@ -738,6 +816,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     @objc private func typographyChanged(_ notification: Notification) {
         workspace.metrics = OutlineMetrics(typography: .current)
+        for window in noteWindows.values { window.metrics = workspace.metrics }
     }
 
     @objc func revealInFinder(_ sender: Any?) {
@@ -761,7 +840,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     }
 
     func windowDidResignKey(_ notification: Notification) {
-        workspace.saveAll()
+        saveAll()
     }
 
     // MARK: NSToolbarDelegate
@@ -813,6 +892,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             let menu = NSMenu()
             menu.addItem(withTitle: "Pin Note", action: #selector(togglePinned(_:)), keyEquivalent: "")
             menu.addItem(withTitle: "Topic Note", action: #selector(toggleTopic(_:)), keyEquivalent: "")
+            menu.addItem(withTitle: "Open in New Window", action: #selector(openNoteInNewWindow(_:)), keyEquivalent: "")
             menu.addItem(withTitle: "Show in Finder", action: #selector(revealNoteInFinder(_:)), keyEquivalent: "")
             menu.addItem(.separator())
             menu.addItem(withTitle: "Move Note to Trash…", action: #selector(trashNote(_:)), keyEquivalent: "")

@@ -27,6 +27,7 @@ enum MainMenu {
         main.addItem(submenu("File", [
             item("New Note", #selector(MainWindowController.newNote(_:)), "n"),
             item("Open…", #selector(MainWindowController.openQuickly(_:)), "o"),
+            item("Open in New Window", #selector(MainWindowController.openNoteInNewWindow(_:)), "o", [.command, .option]),
             item("Open Graph…", #selector(AppDelegate.openGraph(_:)), "o", [.command, .shift]),
             .separator(),
             item("Save", #selector(MainWindowController.saveDocument(_:)), "s"),
