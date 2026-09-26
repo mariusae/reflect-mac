@@ -74,7 +74,7 @@ final class ImageStore: @unchecked Sendable {
             return nil
         }
         let cached = Self.cacheURL(for: source)
-        if FileManager.default.fileExists(atPath: cached.path + ".none") {
+        if FileManager.default.fileExists(atPath: cached.path + ".gone") {
             sizes[source] = .some(nil)
             return nil
         }
@@ -106,7 +106,7 @@ final class ImageStore: @unchecked Sendable {
     private func tweet(_ source: String, id: String) -> Tweet? {
         if let known = tweets[source] { return known }
         let cached = Self.cacheDirectory.appendingPathComponent("tweet-\(id).json")
-        if FileManager.default.fileExists(atPath: cached.path + ".none") {
+        if FileManager.default.fileExists(atPath: cached.path + ".gone") {
             tweets[source] = .some(nil)
             return nil
         }
@@ -126,7 +126,7 @@ final class ImageStore: @unchecked Sendable {
                     found = (try? data.write(to: cached, options: .atomic)) != nil
                 } else if (200..<300).contains(status) || status == 404 {
                     // Deleted, private, or not a post: shown as the link it is.
-                    FileManager.default.createFile(atPath: cached.path + ".none", contents: nil)
+                    FileManager.default.createFile(atPath: cached.path + ".gone", contents: nil)
                     Log.shared.info("images", "No post at \(source)")
                 }
             } else {
@@ -221,7 +221,7 @@ final class ImageStore: @unchecked Sendable {
                     // remembered, so it is not asked for again. A server
                     // having a bad day, or no network, is asked again next
                     // time.
-                    FileManager.default.createFile(atPath: cached.path + ".none", contents: nil)
+                    FileManager.default.createFile(atPath: cached.path + ".gone", contents: nil)
                 }
             }
             let arrived = isImage
