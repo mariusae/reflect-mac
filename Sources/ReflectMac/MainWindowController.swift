@@ -494,6 +494,42 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     @objc func goToToday(_ sender: Any?) { workspace.showToday() }
 
+    // MARK: The calendar
+
+    private weak var calendarItem: NSToolbarItem?
+    private var calendarPopover: NSPopover?
+
+    /// Go ▸ Go to Date…, and the toolbar's calendar: a month dropped down,
+    /// the days with notes dotted; a day picked is gone to.
+    @objc func showCalendar(_ sender: Any?) {
+        if let open = calendarPopover, open.isShown {
+            open.performClose(sender)
+            return
+        }
+        let current = workspace.current?.day ?? timeline.currentDay
+        let picker = CalendarPickerView(selected: current)
+        picker.marked = Set(index.all.compactMap(\.day))
+        let controller = NSViewController()
+        controller.view = picker
+        let popover = NSPopover()
+        popover.contentViewController = controller
+        popover.contentSize = CalendarPickerView.size
+        popover.behavior = .transient
+        popover.animates = true
+        picker.onPick = { [weak self, weak popover] day, inSplit in
+            popover?.performClose(nil)
+            self?.workspace.show(.day(day), inSplit: inSplit)
+        }
+        calendarPopover = popover
+        if let item = calendarItem, window?.toolbar?.isVisible == true, window?.toolbar?.items.contains(item) == true {
+            popover.show(relativeTo: item)
+        } else if let view = window?.contentView {
+            // No calendar in the toolbar: from the top of the window.
+            popover.show(relativeTo: NSRect(x: view.bounds.midX, y: view.bounds.maxY - 60, width: 1, height: 1), of: view, preferredEdge: .minY)
+        }
+        popover.contentViewController?.view.window?.makeFirstResponder(picker)
+    }
+
     /// File ▸ Open: the chooser.
     @objc func openQuickly(_ sender: Any?) { chooser.show(over: window) }
 
@@ -709,10 +745,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             item.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Open")
             item.action = #selector(openQuickly(_:))
         case Self.todayItem:
-            item.label = "Today"
-            item.toolTip = "Go to Today"
-            item.image = NSImage(systemSymbolName: "calendar", accessibilityDescription: "Today")
-            item.action = #selector(goToToday(_:))
+            item.label = "Calendar"
+            item.toolTip = "Go to a Day (⇧⌘T)"
+            item.image = NSImage(systemSymbolName: "calendar", accessibilityDescription: "Calendar")
+            item.action = #selector(showCalendar(_:))
+            calendarItem = item
         case Self.syncItemIdentifier:
             item.label = "Sync"
             item.toolTip = "Sync Now"

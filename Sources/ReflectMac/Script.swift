@@ -250,6 +250,16 @@ enum Script {
                 controller.workspace.main?.scrollToEnd()
                 print("note-end backlinks \(controller.workspace.main?.showsBacklinks ?? false)")
                 fflush(stdout)
+            case "snap-popover":
+                for window in NSApp.windows where window.isVisible && String(describing: type(of: window)).contains("Popover") {
+                    write(window, name: argument)
+                }
+            case "calendar-pick":
+                // calendar-pick <yyyy-mm-dd>: that day, picked in the open calendar.
+                if let day = Day(argument),
+                   let picker = NSApp.windows.compactMap({ $0.contentView?.firstDescendant(of: CalendarPickerView.self) }).first {
+                    picker.onPick?(day, false)
+                }
             case "topic":
                 controller.toggleTopic(nil)
             case "pin":
@@ -565,4 +575,13 @@ final class FakeDrag: NSObject, NSDraggingInfo {
                                 using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
     var springLoadingHighlight: NSSpringLoadingHighlight { .none }
     func resetSpringLoading() {}
+}
+
+extension NSView {
+    /// The first view of a kind in this one, itself included.
+    func firstDescendant<T: NSView>(of kind: T.Type) -> T? {
+        if let found = self as? T { return found }
+        for view in subviews { if let found = view.firstDescendant(of: kind) { return found } }
+        return nil
+    }
 }
