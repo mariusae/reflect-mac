@@ -230,6 +230,47 @@ public enum OutlineEditing {
 
     /// Checks the rows off, or, when all are done, unchecks them. Rows
     /// without a checkbox are left alone, unless none has one.
+    /// Reflect's two checkbox items: a task, `+ [ ]`, drawn round and
+    /// gathered into its Tasks; and a checklist item, `- [ ]`, drawn square
+    /// and not gathered.
+    public enum Checkbox {
+        case task, checklist
+
+        /// Whether a row is one.
+        func holds(_ row: Row) -> Bool {
+            guard row.task != nil, row.kind == .bullet else { return false }
+            return (row.marker == "+") == (self == .task)
+        }
+    }
+
+    /// Cycles rows as Reflect's ⌘Return (checklist) and ⇧⌘Return (task) do:
+    /// anything else becomes an open one, an open one is checked, a
+    /// checked one becomes a plain bullet — the first row deciding for all.
+    public static func cycle(_ checkbox: Checkbox, _ rows: inout [Row], _ selection: Range<Int>) {
+        guard let first = selection.first else { return }
+        let lead = rows[first]
+        let next: Row.Task?
+        if checkbox.holds(lead) {
+            next = lead.task?.isDone == true ? nil : .done("x")
+        } else {
+            next = .open
+        }
+        for index in selection {
+            var row = rows[index]
+            guard row.kind != .code, row.kind != .rule else { continue }
+            if case .heading = row.kind { continue }
+            row.kind = .bullet
+            row.spacing = 1
+            row.task = next
+            switch (next, checkbox) {
+            case (nil, _): row.marker = "-"
+            case (_, .task): row.marker = "+"
+            case (_, .checklist): row.marker = row.marker == "*" ? "*" : "-"
+            }
+            rows[index] = row
+        }
+    }
+
     public static func toggleDone(_ rows: inout [Row], _ selection: Range<Int>) {
         let tasks = selection.filter { rows[$0].task != nil }
         if tasks.isEmpty {

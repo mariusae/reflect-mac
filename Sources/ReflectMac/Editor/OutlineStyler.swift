@@ -140,7 +140,9 @@ final class OutlineStyler: NSObject, NSTextStorageDelegate {
             let style = storage.attribute(.outlineRow, at: paragraph.location, effectiveRange: nil) as Any
             storage.setAttributes(attributes(for: row, after: previous), range: paragraph)
             storage.addAttribute(.outlineRow, value: style, range: paragraph)
-            if case .code = row.kind {} else if case .rule = row.kind {} else {
+            if case .code = row.kind {
+                CodeBlock.dimFences(storage, in: paragraph)
+            } else if case .rule = row.kind {} else {
                 InlineMarkdown.style(storage, in: paragraph, base: metrics.font(for: row), done: row.task?.isDone == true, images: images)
             }
             // A character the font set here lacks still needs a font that has it.
@@ -197,6 +199,37 @@ final class OutlineStyler: NSObject, NSTextStorageDelegate {
 extension NSAttributedString.Key {
     /// Markup not shown: its characters are kept, but draw nothing.
     static let outlineHidden = NSAttributedString.Key("ReflectOutlineHidden")
+}
+
+/// A code block's fences: the lines that open and close it, there to be
+/// edited but not to be read.
+enum CodeBlock {
+    static func dimFences(_ storage: NSTextStorage, in paragraph: NSRange) {
+        let text = storage.string as NSString
+        let body = NSRange(location: paragraph.location, length: max(0, paragraph.length - 1))
+        var lines: [NSRange] = []
+        var start = body.location
+        while start <= NSMaxRange(body) {
+            let rest = NSRange(location: start, length: NSMaxRange(body) - start)
+            let found = text.range(of: OutlineText.lineSeparator, options: .literal, range: rest)
+            let end = found.location == NSNotFound ? NSMaxRange(body) : found.location
+            lines.append(NSRange(location: start, length: end - start))
+            if found.location == NSNotFound { break }
+            start = found.location + found.length
+        }
+        for line in [lines.first, lines.count > 1 ? lines.last : nil].compactMap({ $0 })
+        where OutlineTextView.isFence(text.substring(with: line)) {
+            storage.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: line)
+        }
+    }
+
+    /// The language a block's opening fence names, if any.
+    static func language(of text: String) -> String? {
+        guard let first = text.components(separatedBy: CharacterSet(charactersIn: "\n\u{2028}")).first,
+              OutlineTextView.isFence(first) else { return nil }
+        let name = first.trimmingCharacters(in: .whitespaces).drop(while: { $0 == "`" || $0 == "~" })
+        return name.isEmpty ? nil : String(name)
+    }
 }
 
 /// Inline Markdown, shown as what it means, its markup hidden.

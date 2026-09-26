@@ -107,6 +107,7 @@ enum MainMenu {
             tagged(item("Heading 2", #selector(OutlineTextView.setRowType(_:))), 2),
             tagged(item("Heading 3", #selector(OutlineTextView.setRowType(_:))), 3),
             tagged(item("Task", #selector(OutlineTextView.setRowType(_:))), 10),
+            tagged(item("Checklist Item", #selector(OutlineTextView.setRowType(_:))), 14),
             tagged(item("Ordered", #selector(OutlineTextView.setRowType(_:))), 11),
             tagged(item("Quote", #selector(OutlineTextView.setRowType(_:))), 12),
             tagged(item("Paragraph", #selector(OutlineTextView.setRowType(_:))), 13),
@@ -119,7 +120,10 @@ enum MainMenu {
             item("Link…", #selector(OutlineTextView.addLink(_:)), "k"),
             .separator(),
             item("Bullet", #selector(OutlineTextView.toggleBullet(_:)), "8", [.command, .shift]),
+            item("Checklist Item", #selector(OutlineTextView.cycleChecklist(_:)), "\r"),
+            item("Task", #selector(OutlineTextView.cycleTask(_:)), "\r", [.command, .shift]),
             item("Horizontal Line", #selector(OutlineTextView.insertHorizontalRule(_:)), "-", [.command, .option]),
+            item("Code Block", #selector(OutlineTextView.toggleCodeBlock(_:)), "c", [.command, .option]),
             rowType,
         ]))
 
@@ -153,6 +157,7 @@ enum MainMenu {
             tagged(item("Search", #selector(MainWindowController.showSidebarMode(_:)), "2"), 1),
             tagged(item("Tags", #selector(MainWindowController.showSidebarMode(_:)), "3"), 2),
             tagged(item("Backlinks", #selector(MainWindowController.showSidebarMode(_:)), "4"), 3),
+            tagged(item("Tasks", #selector(MainWindowController.showSidebarMode(_:)), "5"), 4),
             .separator(),
             item("Close Split View", #selector(MainWindowController.closeSplitView(_:))),
             .separator(),

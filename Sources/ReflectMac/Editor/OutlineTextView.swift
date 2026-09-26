@@ -1085,6 +1085,11 @@ final class OutlineTextView: NSTextView {
             if linkCompletion.hasChoice { acceptLinkCompletion(); return }
             endLinkCompletion()
         }
+        // In code, a tab is spaces, not a deeper row.
+        if selectedRows == nil, case .code = row(at: rowIndex(at: selectedRange().location)).kind {
+            insertText("    ", replacementRange: selectedRange())
+            return
+        }
         indentRows(sender)
     }
     override func insertBacktab(_ sender: Any?) { outdentRows(sender) }
@@ -1107,6 +1112,12 @@ final class OutlineTextView: NSTextView {
         // `---`, `***` or `___` alone on a row, then Return: a line across.
         let index = rowIndex(at: selectedRange().location)
         let current = row(at: index)
+        // A fence alone on a row, then Return: a code block.
+        let typed = ruleText(ofRowAt: selectedRange().location)
+        if selectedRange().length == 0, current.task == nil, current.kind == .bullet || current.kind == .paragraph,
+           Self.isFence(typed), makeCodeBlock(at: index, fence: typed) {
+            return
+        }
         if selectedRange().length == 0, current.task == nil, current.kind == .bullet || current.kind == .paragraph,
            Self.ruleMarks.contains(ruleText(ofRowAt: selectedRange().location)) {
             makeRule(at: index)

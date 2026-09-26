@@ -178,3 +178,35 @@ private func shape(_ rows: [Row]) -> String {
         #expect(OutlineFolds.apply([.init(index: 0, text: "a")], to: rows) == rows)
     }
 }
+
+/// Reflect's two checkboxes: ⌘Return's square checklist item and ⇧⌘Return's
+/// round task, each cycling open → checked → bullet.
+@Suite struct CheckboxTests {
+    func cycled(_ source: String, _ checkbox: OutlineEditing.Checkbox, times: Int = 1) -> String {
+        var outline = OutlineMarkdown.parse(source)
+        for _ in 0..<times { OutlineEditing.cycle(checkbox, &outline.rows, 0..<1) }
+        return OutlineMarkdown.serialize(outline)
+    }
+
+    @Test func checklistItemsCycle() {
+        #expect(cycled("- thing\n", .checklist) == "- [ ] thing\n")
+        #expect(cycled("- thing\n", .checklist, times: 2) == "- [x] thing\n")
+        #expect(cycled("- thing\n", .checklist, times: 3) == "- thing\n")
+        #expect(cycled("* thing\n", .checklist) == "* [ ] thing\n")
+        #expect(cycled("plain text\n", .checklist) == "- [ ] plain text\n")
+    }
+
+    @Test func tasksCycle() {
+        #expect(cycled("- thing\n", .task) == "+ [ ] thing\n")
+        #expect(cycled("- thing\n", .task, times: 2) == "+ [x] thing\n")
+        #expect(cycled("- thing\n", .task, times: 3) == "- thing\n")
+    }
+
+    @Test func oneKindBecomesTheOther() {
+        // A checked checklist item made a task starts open, round.
+        #expect(cycled("- [x] thing\n", .task) == "+ [ ] thing\n")
+        #expect(cycled("+ [ ] thing\n", .checklist) == "- [ ] thing\n")
+        // Headings stay headings.
+        #expect(cycled("# Title\n", .task) == "# Title\n")
+    }
+}

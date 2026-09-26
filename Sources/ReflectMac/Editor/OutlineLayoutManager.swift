@@ -65,6 +65,14 @@ final class OutlineLayoutManager: NSLayoutManager {
                 NSColor.quaternaryLabelColor.withAlphaComponent(0.12).setFill()
                 let rect = NSRect(x: indent - 6, y: frame.minY - 2, width: origin.x + width - indent + 6, height: frame.height + 4)
                 NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
+                // Its language, in its corner.
+                if let language = CodeBlock.language(of: (storage.string as NSString).substring(with: paragraph)) {
+                    let label = NSAttributedString(string: language, attributes: [
+                        .font: NSFont.systemFont(ofSize: round(metrics.fontSize * 0.72), weight: .medium),
+                        .foregroundColor: NSColor.tertiaryLabelColor])
+                    let size = label.size()
+                    label.draw(at: NSPoint(x: rect.maxX - size.width - 8, y: rect.minY + 5))
+                }
             case .quote:
                 NSColor.tertiaryLabelColor.setFill()
                 NSBezierPath(roundedRect: NSRect(x: indent - metrics.indent / 2 - 1.5, y: frame.minY, width: 3, height: frame.height),
@@ -181,7 +189,8 @@ final class OutlineLayoutManager: NSLayoutManager {
         case .task(let done, let round):
             let name = round ? (done ? "checkmark.circle.fill" : "circle") : (done ? "checkmark.square.fill" : "square")
             let configuration = NSImage.SymbolConfiguration(pointSize: font.pointSize * 0.95, weight: .regular)
-                .applying(.init(paletteColors: [done ? .controlAccentColor : .secondaryLabelColor]))
+                // Checked: a white tick on the accent colour.
+                .applying(.init(paletteColors: done ? [.white, .controlAccentColor] : [.secondaryLabelColor]))
             guard let image = NSImage(systemSymbolName: name, accessibilityDescription: done ? "Done" : "To do")?
                 .withSymbolConfiguration(configuration) else { return }
             let size = image.size

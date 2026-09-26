@@ -10,11 +10,12 @@ import ReflectCore
 final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate,
     NSMenuDelegate {
     enum Mode: Int, CaseIterable {
-        case notes, search, tags, backlinks
+        case notes, search, tags, backlinks, tasks
 
-        var title: String { ["Notes", "Search", "Tags", "Backlinks"][rawValue] }
-        /// What its segment says: short, so four fit the narrowest sidebar.
-        var label: String { ["Notes", "Search", "Tags", "Links"][rawValue] }
+        var title: String { ["Notes", "Search", "Tags", "Backlinks", "Tasks"][rawValue] }
+        /// What its segment shows: a symbol, so five fit the narrowest sidebar.
+        var symbol: String { ["doc.text", "magnifyingglass", "number", "link", "checklist"][rawValue] }
+        var label: String { ["Notes", "Search", "Tags", "Links", "Tasks"][rawValue] }
     }
 
     /// A row: something to open, a section's heading, or words in place of rows.
@@ -28,6 +29,9 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         /// A note linking to the one shown, and a link's context in it.
         case source(NoteEntry)
         case backlink(path: String, BacklinkContext)
+        /// A run of tasks' parents, and a task.
+        case taskContext([String])
+        case task(NoteTask)
         case hint(String)
     }
 
@@ -59,7 +63,22 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     private static let recentCount = 60
     private(set) var tagOrder: TagOrder = TagOrder(rawValue: UserDefaults.standard.integer(forKey: SidebarViewController.tagOrderKey)) ?? .name
     private let tagSort = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let modes = NSSegmentedControl(labels: Mode.allCases.map(\.label), trackingMode: .selectOne, target: nil, action: nil)
+    private let modes: NSSegmentedControl = {
+        let control = NSSegmentedControl(images: Mode.allCases.map { mode in
+            NSImage(systemSymbolName: mode.symbol, accessibilityDescription: mode.title) ?? NSImage()
+        }, trackingMode: .selectOne, target: nil, action: nil)
+        return control
+    }()
+    /// Told to tick a task, or untick it, in its note.
+    var onSetTask: ((NoteTask, _ done: Bool) -> Void)?
+    /// The tasks as last found, and what of them is shown.
+    private var taskRows: [Row] = []
+    private var taskGeneration = 0
+    /// Tasks ticked here: shown, struck, until the mode is left.
+    private var justDone: Set<String> = []
+    private let taskFilter = NSPopUpButton(frame: .zero, pullsDown: true)
+    private static let hiddenGroupsKey = "SidebarHiddenTaskGroups"
+    private var hiddenGroups: Set<String> = Set(UserDefaults.standard.stringArray(forKey: SidebarViewController.hiddenGroupsKey) ?? ["completed"])
     private let field = NSSearchField()
     private let table = SidebarTableView()
     private let scroll = NSScrollView()
@@ -128,6 +147,14 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         tagSort.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(tagSort)
 
+        taskFilter.controlSize = .small
+        taskFilter.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        taskFilter.isBordered = false
+        taskFilter.menu?.delegate = self
+        taskFilter.addItem(withTitle: "Task Filters")
+        taskFilter.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(taskFilter)
+
         table.addTableColumn(NSTableColumn(identifier: .init("main")))
         table.headerView = nil
         table.style = .sourceList
@@ -159,6 +186,8 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         NSLayoutConstraint.activate([
             tagSort.topAnchor.constraint(equalTo: modes.bottomAnchor, constant: 6),
             tagSort.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            taskFilter.topAnchor.constraint(equalTo: modes.bottomAnchor, constant: 6),
+            taskFilter.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
             modes.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 6),
             modes.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
             modes.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
@@ -188,9 +217,11 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         self.mode = mode
         UserDefaults.standard.set(mode.rawValue, forKey: Self.modeKey)
         modes.selectedSegment = mode.rawValue
-        let searching = mode == .search, tagging = mode == .tags
+        let searching = mode == .search, tagging = mode == .tags || mode == .tasks
+        taskFilter.isHidden = mode != .tasks
+        if mode != .tasks { justDone.removeAll() }
         field.isHidden = !searching
-        tagSort.isHidden = !tagging
+        tagSort.isHidden = mode != .tags
         underModes.isActive = false
         underField.isActive = false
         underSort.isActive = false
@@ -218,6 +249,9 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
             rows = found
         case .backlinks:
             rows = backlinks
+        case .tasks:
+            rows = taskRows
+            refreshTasks()
         case .tags:
             var tags = index.tags
             if tagOrder == .count {
@@ -234,6 +268,99 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     private var query: String { field.stringValue.trimmingCharacters(in: .whitespaces) }
+
+    // MARK: Tasks
+
+    /// The groups the filters can hide, as Reflect's Task filters name them.
+    private static let taskGroups: [(key: String, title: String)] = [
+        ("current", "Current Tasks"), ("overdue", "Overdue Tasks"), ("upcoming", "Upcoming Tasks"), ("other", "Other Tasks"),
+    ]
+
+    nonisolated private static func key(_ task: NoteTask) -> String { "\(task.notePath)#\(task.ordinal)" }
+
+    /// Finds the graph's tasks again, in the background, and shows them —
+    /// grouped as Reflect's Tasks view groups them.
+    func refreshTasks() {
+        taskGeneration += 1
+        let generation = taskGeneration
+        let index = index
+        let showDone = !hiddenGroups.contains("completed")
+        let justDone = justDone
+        let hidden = hiddenGroups
+        DispatchQueue.global(qos: .userInitiated).async {
+            let tasks = index.tasks(includingDone: true).filter { !$0.done || showDone || justDone.contains(Self.key($0)) }
+            let groups = Tasks.group(tasks, today: .today)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { [weak self] in
+                    guard let self, generation == taskGeneration else { return }
+                    var rows: [Row] = []
+                    for group in groups {
+                        let key = switch group.kind {
+                        case .current: "current"
+                        case .overdue: "overdue"
+                        case .upcoming: "upcoming"
+                        case .note: "other"
+                        }
+                        guard !hidden.contains(key) else { continue }
+                        let title = group.kind == .note ? (group.notePath.flatMap { index.entry($0) }.map { $0.day.map(OpenQuickly.dayTitle) ?? $0.title } ?? group.label) : group.label
+                        rows.append(.header("\(title)  \(group.tasks.filter { !$0.done }.count)"))
+                        var context: [String]?
+                        for task in group.tasks {
+                            let crumbs = Tasks.visibleBreadcrumbs(task.breadcrumbs)
+                            if crumbs != context {
+                                if !crumbs.isEmpty { rows.append(.taskContext(crumbs)) }
+                                context = crumbs
+                            }
+                            rows.append(.task(task))
+                        }
+                    }
+                    taskRows = rows.isEmpty ? [.hint(hidden.isEmpty ? "No tasks. Make one with ⇧⌘Return." : "No tasks to show")] : rows
+                    if mode == .tasks {
+                        self.rows = taskRows
+                        let selected = table.selectedRow
+                        table.reloadData()
+                        if selected >= 0, selected < self.rows.count { table.selectRowIndexes([selected], byExtendingSelection: false) }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A task's checkbox clicked: ticked in its note — and, ticked, kept in
+    /// sight, struck, until the mode is left.
+    fileprivate func toggle(_ task: NoteTask) {
+        if !task.done { justDone.insert(Self.key(task)) }
+        onSetTask?(task, !task.done)
+    }
+
+    /// Ticks a task shown, by what it says. For scripts.
+    func tickTask(containing text: String) {
+        for case .task(let task) in rows where task.text.contains(text) {
+            toggle(task)
+            return
+        }
+        print("script: no task with \(text)")
+    }
+
+    private func filterMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        menu.addItem(withTitle: "Task Filters", action: nil, keyEquivalent: "")
+        for group in Self.taskGroups {
+            let item = ClosureMenuItem(title: group.title) { [weak self] in self?.flip(group.key) }
+            item.state = hiddenGroups.contains(group.key) ? .off : .on
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let done = ClosureMenuItem(title: "Show Completed Tasks") { [weak self] in self?.flip("completed") }
+        done.state = hiddenGroups.contains("completed") ? .off : .on
+        menu.addItem(done)
+    }
+
+    private func flip(_ key: String) {
+        if hiddenGroups.contains(key) { hiddenGroups.remove(key) } else { hiddenGroups.insert(key) }
+        UserDefaults.standard.set(Array(hiddenGroups).sorted(), forKey: Self.hiddenGroupsKey)
+        refreshTasks()
+    }
 
     // MARK: Backlinks
 
@@ -357,6 +484,8 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
             case .header(let title): "[\(title)]"
             case .pinned(let entry): "pin " + entry.title
             case .source(let entry): "source " + entry.title
+            case .taskContext(let crumbs): "  (" + crumbs.joined(separator: " › ") + ")"
+            case .task(let task): "task \(task.done ? "[x]" : "[ ]") " + task.text
             case .backlink(_, let context): "  " + context.rows.map(\.text).joined(separator: " / ")
             case .recent(let entry): "recent " + entry.title
             case .result(let item): "result " + item.title + (item.detail.map { " — " + $0.string.prefix(40) } ?? "")
@@ -373,6 +502,8 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
             switch row {
             case .pinned(let entry), .recent(let entry), .source(let entry): title = entry.title
             case .backlink(_, let context): title = context.rows.map(\.text).joined(separator: " ")
+            case .task(let task): title = task.text
+            case .taskContext: continue
             case .result(let item): title = item.title
             case .tag(let name, _): title = "#" + name
             case .hint, .header: continue
@@ -403,6 +534,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         switch row {
         case .pinned(let entry), .recent(let entry), .source(let entry): return entry.path
         case .backlink(let source, _): return source
+        case .task(let task): return task.notePath
         case .result(let item):
             switch item.target {
             case .note(let note): return note
@@ -425,6 +557,10 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         case .backlink(let path, let context):
             // To the note, at the link.
             onOpen?(OpenQuickly.target(for: path), inSplit, .words([context.link]))
+        case .task(let task):
+            onOpen?(OpenQuickly.target(for: task.notePath), inSplit, .words([task.text]))
+        case .taskContext:
+            break
         case .result(let item):
             onOpen?(item.target, inSplit, item.found)
         case .tag(let name, _):
@@ -437,6 +573,10 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     // MARK: Menu
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === taskFilter.menu {
+            filterMenu(menu)
+            return
+        }
         menu.removeAllItems()
         if mode == .tags {
             for order in TagOrder.allCases {
@@ -452,6 +592,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         switch row {
         case .pinned(let entry), .recent(let entry), .source(let entry): path = entry.path
         case .backlink(let source, _): path = source
+        case .task(let task): path = task.notePath
         case .result(let item):
             switch item.target {
             case .note(let note): path = note
@@ -479,7 +620,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
         switch rows[row] {
-        case .hint, .header: false
+        case .hint, .header, .taskContext: false
         default: true
         }
     }
@@ -499,6 +640,20 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
             let cell = tableView.makeView(withIdentifier: RowCell.identifier, owner: nil) as? RowCell ?? RowCell()
             cell.show(title: entry.day.map(OpenQuickly.dayTitle) ?? entry.title, detail: nil,
                       symbol: entry.day == nil ? "pin" : "calendar", badge: nil)
+            return cell
+        case .taskContext(let crumbs):
+            let cell = tableView.makeView(withIdentifier: .init("hint"), owner: nil) as? HintCell ?? HintCell()
+            cell.textField?.stringValue = crumbs.joined(separator: " › ")
+            return cell
+        case .task(let task):
+            let cell = tableView.makeView(withIdentifier: TaskCell.identifier, owner: nil) as? TaskCell ?? TaskCell()
+            let struck = task.done || justDone.contains(Self.key(task))
+            let group = rows[..<row].last { if case .header = $0 { true } else { false } }
+            let inNoteGroup = group.map { if case .header(let label) = $0 { !["Current", "Overdue", "Upcoming"].contains { label.hasPrefix($0 + "  ") } } else { false } } ?? false
+            // Where it is, when the group does not say: its day, or its note.
+            var detail = inNoteGroup ? "" : (task.day.map(OpenQuickly.dayTitle) ?? task.noteTitle)
+            if let due = task.dueDate, due != task.day { detail += (detail.isEmpty ? "" : " · ") + "due " + OpenQuickly.dayTitle(due) }
+            cell.show(task, done: struck, detail: detail) { [weak self] in self?.toggle(task) }
             return cell
         case .source(let entry):
             let cell = tableView.makeView(withIdentifier: RowCell.identifier, owner: nil) as? RowCell ?? RowCell()
@@ -597,6 +752,8 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         case .recent(let entry): "recent:" + entry.path
         case .source(let entry): "source:" + entry.path
         case .backlink(let path, let context): "backlink:" + path + ":" + context.link + ":\(context.rows.first?.text ?? "")"
+        case .task(let task): "task:" + Self.key(task)
+        case .taskContext: nil
         case .result(let item): "result:\(item.target)"
         case .tag(let name, _): "tag:" + name
         case .hint, .header: nil
@@ -615,6 +772,75 @@ final class SidebarTableView: NSTableView {
             super.keyDown(with: event)
         }
     }
+}
+
+/// A task: its round checkbox, to tick, and what it says — and where it is.
+private final class TaskCell: NSTableCellView {
+    static let identifier = NSUserInterfaceItemIdentifier("task")
+    private let box = NSButton()
+    private let label = NSTextField(wrappingLabelWithString: "")
+    private let where_ = NSTextField(labelWithString: "")
+    private var onToggle: (() -> Void)?
+
+    init() {
+        super.init(frame: .zero)
+        identifier = Self.identifier
+        box.isBordered = false
+        box.setButtonType(.momentaryChange)
+        box.target = self
+        box.action = #selector(ticked(_:))
+        label.isSelectable = false
+        label.maximumNumberOfLines = 4
+        label.lineBreakMode = .byTruncatingTail
+        where_.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        where_.textColor = .tertiaryLabelColor
+        where_.lineBreakMode = .byTruncatingTail
+        for view in [box, label, where_] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        where_.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        NSLayoutConstraint.activate([
+            box.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            box.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            box.widthAnchor.constraint(equalToConstant: 18),
+            box.heightAnchor.constraint(equalToConstant: 18),
+            label.leadingAnchor.constraint(equalTo: box.trailingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            where_.leadingAnchor.constraint(equalTo: label.leadingAnchor),
+            where_.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            where_.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 1),
+            where_.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    func show(_ task: NoteTask, done: Bool, detail: String, onToggle: @escaping () -> Void) {
+        self.onToggle = onToggle
+        box.image = NSImage(systemSymbolName: done ? "checkmark.circle.fill" : "circle", accessibilityDescription: done ? "Done" : "To do")?
+            .withSymbolConfiguration(.init(pointSize: 14, weight: .regular)
+                .applying(.init(paletteColors: done ? [.white, .controlAccentColor] : [.secondaryLabelColor])))
+        let context = BacklinkContext(rows: [Row(kind: .paragraph, text: task.text)], link: "")
+        let text = NSMutableAttributedString(attributedString: BacklinkText.attributed(context, size: NSFont.systemFontSize))
+        if done {
+            text.addAttributes([.strikethroughStyle: NSUnderlineStyle.single.rawValue, .foregroundColor: NSColor.secondaryLabelColor],
+                               range: NSRange(location: 0, length: text.length))
+        }
+        label.attributedStringValue = text
+        where_.stringValue = detail
+        where_.isHidden = detail.isEmpty
+    }
+
+    override func layout() {
+        super.layout()
+        label.preferredMaxLayoutWidth = max(0, bounds.width - 36)
+    }
+
+    @objc private func ticked(_ sender: Any?) { onToggle?() }
 }
 
 /// A link's context: a little outline, read-only, under its note.

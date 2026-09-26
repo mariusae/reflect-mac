@@ -239,6 +239,9 @@ enum Script {
             case "backlinks-of":
                 // backlinks-of <path>: the sidebar's backlinks, as if the keyboard were there.
                 controller.sidebar.follow(argument)
+            case "tick-task":
+                // tick-task <text>: the task's checkbox in the Tasks list clicked.
+                controller.sidebar.tickTask(containing: argument)
             case "sort-tags":
                 controller.sidebar.sort(tagsBy: argument == "count" ? .count : .name)
             case "move-pinned":
@@ -296,6 +299,41 @@ enum Script {
                 default: break
                 }
                 Typography.current = typography
+            case "caret-row":
+                // caret-row <n>: the caret at the end of row n of the note the keyboard is in.
+                if let editor = controller.window?.firstResponder as? OutlineTextView, let n = Int(argument), n < editor.paragraphRanges.count {
+                    let paragraph = editor.paragraphRanges[n]
+                    editor.setSelectedRange(NSRange(location: paragraph.location + paragraph.length - 1, length: 0))
+                }
+            case "toolbar":
+                if let toolbar = controller.window?.toolbar {
+                    let visible = Set((toolbar.visibleItems ?? []).map(\.itemIdentifier.rawValue))
+                    print("toolbar: " + toolbar.items.map { item in
+                        let frame = item.view.map { $0.convert($0.bounds, to: nil) }
+                        return "\(item.itemIdentifier.rawValue)\(visible.contains(item.itemIdentifier.rawValue) ? "" : " (overflow)")\(frame.map { " @\(Int($0.minX))-\(Int($0.maxX))" } ?? "")"
+                    }.joined(separator: " | ") + " window \(Int(controller.window?.frame.width ?? 0))")
+                    fflush(stdout)
+                }
+            case "titlebar-views":
+                // The title bar's views, where they are: to see what a snapshot may not.
+                if let root = controller.window?.standardWindowButton(.closeButton)?.superview?.superview {
+                    func walk(_ view: NSView, _ depth: Int) {
+                        let name = String(describing: type(of: view))
+                        if name.contains("ItemViewer") || name.contains("Glass") || name.contains("Group") || name.contains("Platter") || view is ProgressRingButton {
+                            let frame = view.convert(view.bounds, to: nil)
+                            print("titlebar: \(String(repeating: " ", count: depth))\(name) \(Int(frame.minX))-\(Int(frame.maxX))\(view.isHidden ? " hidden" : "")")
+                        }
+                        for sub in view.subviews { walk(sub, depth + 1) }
+                    }
+                    walk(root, 0)
+                    fflush(stdout)
+                }
+            case "next-unfinished":
+                controller.goToNextUnfinished(nil)
+                if let editor = controller.window?.firstResponder as? OutlineTextView {
+                    print("next-unfinished row \(editor.rowIndex(at: editor.selectedRange().location)) of \(editor.paragraphRanges.count): \(editor.checkboxProgress.map { "\($0.done)/\($0.total)" } ?? "none")")
+                    fflush(stdout)
+                }
             case "open-window":
                 controller.openInWindow(argument)
             case "note-windows":

@@ -95,6 +95,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sidebar.onPin = { [weak self] path, pinned in self?.setPinned(path, pinned) }
         sidebar.onReorder = { [weak self] pins in self?.renumberPins(pins) }
         NotificationCenter.default.addObserver(self, selector: #selector(typographyChanged(_:)), name: Typography.didChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(textChanged(_:)), name: NSText.didChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appWillTerminate(_:)), name: NSApplication.willTerminateNotification, object: nil)
         NotePaneController.index = index
         NotePaneController.onRetitle = { [weak self] ref, from, to in self?.retitle(ref, from: from, to: to) }
@@ -104,6 +105,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         }
         sidebar.onTrash = { [weak self] path in self?.confirmTrash(path) }
         sidebar.onOpenInWindow = { [weak self] path in self?.openInWindow(path) }
+        sidebar.onSetTask = { [weak self] task, done in self?.setTask(task, done: done) }
         timeline.onSave = saved
         workspace.onSave = saved
         workspace.onChange = { [weak self] in
@@ -265,6 +267,40 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             sidebarItem.animator().isCollapsed = false
         }
         sidebar.focusSearch()
+    }
+
+    // MARK: Progress
+
+    /// The ring for a note's tasks and checklist items: shown when it has
+    /// some, filled with the share done.
+    func showProgress(of editor: OutlineTextView?) {
+        progressEditor = editor
+        let progress = editor?.checkboxProgress
+        if let progress { progressRing.progress = progress }
+        // In the toolbar only when there is progress to show — in a capsule
+        // of its own, before the note's tools: a capsule is measured when it
+        // is made, and does not grow for an item put into it afterwards.
+        guard let toolbar = window?.toolbar else { return }
+        let shown = toolbar.items.firstIndex { $0.itemIdentifier == Self.progressItem }
+        if progress != nil, shown == nil, let note = toolbar.items.firstIndex(where: { $0.itemIdentifier == Self.noteItem }) {
+            toolbar.insertItem(withItemIdentifier: .space, at: note)
+            toolbar.insertItem(withItemIdentifier: Self.progressItem, at: note)
+        } else if progress == nil, let shown {
+            toolbar.removeItem(at: shown)
+            if shown < toolbar.items.count, toolbar.items[shown].itemIdentifier == .space { toolbar.removeItem(at: shown) }
+        }
+    }
+
+    @objc private func textChanged(_ notification: Notification) {
+        guard let editor = notification.object as? OutlineTextView, editor.window === window else { return }
+        showProgress(of: editor)
+    }
+
+    /// The ring clicked: the next task or checklist item not done.
+    @objc func goToNextUnfinished(_ sender: Any?) {
+        guard let editor = progressEditor ?? window?.firstResponder as? OutlineTextView else { NSSound.beep(); return }
+        window?.makeFirstResponder(editor)
+        if !editor.goToNextUnfinished() { NSSound.beep() }
     }
 
     /// The sidebar's backlinks follow the note the keyboard is in.
@@ -447,6 +483,26 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sidebarNeedsReload()
     }
 
+    /// A task ticked, or unticked, from the Tasks list: written in its note,
+    /// and everything showing the note caught up.
+    func setTask(_ task: NoteTask, done: Bool) {
+        saveAll()
+        guard let source = graph.read(path: task.notePath),
+              let updated = Tasks.setting(done: done, ordinal: task.ordinal, in: source) else { NSSound.beep(); return }
+        do {
+            try graph.write(updated, path: task.notePath)
+        } catch {
+            Log.shared.error("files", "Could not tick a task in \(task.notePath)", detail: error.localizedDescription)
+            presentError(error)
+            return
+        }
+        index.refresh(task.notePath)
+        workspace.reloadFromDisk()
+        for window in noteWindows.values { window.reloadFromDisk() }
+        sync.noteChanged()
+        sidebar.refreshTasks()
+    }
+
     /// File ▸ Topic Note: makes the note the keyboard is in a topic —
     /// `topic: true`, its backlinks shown after it — or no longer one.
     @objc func toggleTopic(_ sender: Any?) {
@@ -554,6 +610,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     @objc private func selectionChanged(_ notification: Notification) {
         guard (notification.object as? NSView)?.window === window else { return }
+        if let editor = notification.object as? OutlineTextView { showProgress(of: editor) }
         noteState()
         followFocus()
     }
@@ -865,6 +922,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private static let forwardItem = NSToolbarItem.Identifier("Forward")
     private static let openItem = NSToolbarItem.Identifier("Open")
     private static let noteItem = NSToolbarItem.Identifier("Note")
+    private static let progressItem = NSToolbarItem.Identifier("Progress")
+    private let progressRing = ProgressRingButton()
+    /// The editor last written in: the note the progress is of.
+    private weak var progressEditor: OutlineTextView?
     /// Where the toolbar parts, over the split view's dividers — the
     /// sidebar's and the pane's — tied to them, so they move together.
     private static let sidebarSeparator = NSToolbarItem.Identifier("SidebarSeparator")
@@ -883,7 +944,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, Self.sidebarSeparator, Self.backItem, Self.forwardItem, .flexibleSpace, .space, Self.noteItem, Self.openItem,
+        [.toggleSidebar, Self.sidebarSeparator, Self.backItem, Self.forwardItem, .flexibleSpace, .space, Self.progressItem, Self.noteItem, Self.openItem,
          Self.todayItem, Self.syncItemIdentifier, Self.sideSeparator] + Self.sideItems
     }
 
@@ -892,6 +953,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         if identifier == Self.sidebarSeparator || identifier == Self.sideSeparator {
             return NSTrackingSeparatorToolbarItem(identifier: identifier, splitView: split.splitView,
                                                   dividerIndex: identifier == Self.sidebarSeparator ? 0 : 1)
+        }
+        if identifier == Self.progressItem {
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.label = "Progress"
+            item.view = progressRing
+            progressRing.target = self
+            progressRing.action = #selector(goToNextUnfinished(_:))
+            item.isBordered = true
+            item.visibilityPriority = .high
+            return item
         }
         if identifier == Self.noteItem {
             // What can be done to the note the keyboard is in.

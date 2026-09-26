@@ -20,6 +20,8 @@ import Testing
         for path in ["notes/links.md", "notes/zachary-devito.md", "daily/2026-09-24.md"] {
             time("backlinks \(path)") { index.backlinks(to: path).reduce(0) { $0 + $1.contexts.count } }
         }
+        time("tasks, open") { index.tasks().count }
+        time("tasks, grouped") { Tasks.group(index.tasks(), today: .today).count }
         for query in ["k", "ko", "kod", "the", "a b"] {
             print("— \(query)")
             time("date detector") {

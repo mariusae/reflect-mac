@@ -87,6 +87,25 @@ public enum InlineMarkup {
     private static let emphasis = try! NSRegularExpression(pattern: #"(?<![*_\w])([*_])(?=[^\s*_])(.+?)(?<=[^\s*_])\1(?![*_\w])"#)
 
     /// The spans in a range of text, outermost first where they nest.
+    /// Text with its Markdown taken out: what it says, as it is shown —
+    /// links by their text, emphasis without its marks, pictures left out.
+    public static func plainText(_ text: String) -> String {
+        let ns = text as NSString
+        let spans = spans(in: ns, range: NSRange(location: 0, length: ns.length))
+        var edits: [(NSRange, String)] = []
+        for span in spans where !spans.contains(where: { $0 != span && NSLocationInRange(span.range.location, $0.range) && $0.range.length > span.range.length && ($0.isImage || $0.kind == .comment) }) {
+            switch span.kind {
+            case .image, .comment: edits.append((span.range, ""))
+            default: edits.append(contentsOf: span.markup.map { ($0, "") })
+            }
+        }
+        let result = NSMutableString(string: text)
+        for (range, replacement) in edits.sorted(by: { $0.0.location > $1.0.location }) where NSMaxRange(range) <= result.length {
+            result.replaceCharacters(in: range, with: replacement)
+        }
+        return (result as String).replacingOccurrences(of: "\\", with: "").trimmingCharacters(in: .whitespaces)
+    }
+
     public static func spans(in text: NSString, range: NSRange) -> [InlineSpan] {
         var spans: [InlineSpan] = []
         let string = text as String

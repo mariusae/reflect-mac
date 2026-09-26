@@ -28,6 +28,11 @@ public struct BacklinkContext: Sendable, Equatable {
     public var rows: [Row]
     /// How the link was written, `[[…]]` and all, to find it again.
     public var link: String
+
+    public init(rows: [Row], link: String) {
+        self.rows = rows
+        self.link = link
+    }
 }
 
 public enum Backlinks {

@@ -43,7 +43,7 @@ extension OutlineTextView {
         let before = all
         let row = all[index]
         if row.kind == .code {
-            super.insertLineBreak(nil)
+            if !leaveCodeBlock(at: index, offset: location - paragraph.location) { super.insertLineBreak(nil) }
             return
         }
         let offset = location - paragraph.location
@@ -122,14 +122,15 @@ extension OutlineTextView {
             row.kind = .heading(prefix.count)
         case ">":
             row.kind = .quote
-        case "[]", "[ ]":
-            // Reflect counts `+ [ ]` as a task.
+        case "[]", "[ ]", "[x]", "[X]", "-[]", "-[ ]":
+            // As Reflect's editor reads them: a square checklist item.
+            row.kind = .bullet
+            row.marker = row.marker == "*" ? "*" : "-"
+            row.task = prefix.lowercased() == "[x]" ? .done(prefix.contains("X") ? "X" : "x") : .open
+        case "+":
+            // `+`: one of Reflect's Tasks, round.
             row.kind = .bullet
             row.marker = "+"
-            row.task = .open
-        case "-[]", "-[ ]":
-            row.kind = .bullet
-            row.marker = "-"
             row.task = .open
         case _ where ["-", "*", "+"].contains(prefix) && row.kind == .paragraph:
             row.kind = .bullet
@@ -183,6 +184,24 @@ extension OutlineTextView {
 
     @objc func duplicateRows(_ sender: Any?) {
         perform("Duplicate") { rows, selection in OutlineEditing.duplicate(&rows, selection) }
+    }
+
+    /// Format ▸ Checklist Item (⌘Return): a square checkbox — open, checked,
+    /// then a bullet again.
+    @objc func cycleChecklist(_ sender: Any?) {
+        perform("Checklist Item") { rows, selection in
+            OutlineEditing.cycle(.checklist, &rows, selection)
+            return selection
+        }
+    }
+
+    /// Format ▸ Task (⇧⌘Return): a round checkbox, one of Reflect's Tasks —
+    /// open, checked, then a bullet again.
+    @objc func cycleTask(_ sender: Any?) {
+        perform("Task") { rows, selection in
+            OutlineEditing.cycle(.task, &rows, selection)
+            return selection
+        }
     }
 
     @objc func toggleDone(_ sender: Any?) {
@@ -295,6 +314,7 @@ extension OutlineTextView {
                 case 0: row.kind = .bullet; row.task = nil; row.marker = "-"
                 case 1...6: row.kind = .heading(sender.tag); row.task = nil
                 case 10: row.kind = .bullet; row.marker = "+"; row.task = row.task ?? .open
+                case 14: row.kind = .bullet; row.marker = "-"; row.task = row.task ?? .open
                 case 11: row.kind = .ordered; row.marker = "."; row.task = nil
                 case 12: row.kind = .quote; row.task = nil
                 case 13: row.kind = .paragraph; row.task = nil
@@ -381,6 +401,80 @@ extension OutlineTextView {
         restoreCaret(CaretPosition(row: index + 1, offset: 0))
     }
 
+    // MARK: Code blocks
+
+    /// Whether a line is a code fence: three backticks or tildes, and
+    /// perhaps a language.
+    static func isFence(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return trimmed.range(of: #"^(```+|~~~+)[\w+#.-]*$"#, options: .regularExpression) != nil
+    }
+
+    /// Return on a code block's last, empty line, or on its closing fence:
+    /// out of the block, into a new row after it. Says whether it left.
+    func leaveCodeBlock(at index: Int, offset: Int) -> Bool {
+        var all = rows
+        let before = all
+        let row = all[index]
+        var lines = row.text.components(separatedBy: "\n")
+        guard lines.count >= 2, let last = lines.last, Self.isFence(last) else { return false }
+        let line = (row.text as NSString).substring(to: min(offset, (row.text as NSString).length)).components(separatedBy: "\n").count - 1
+        if line == lines.count - 2, lines[line].trimmingCharacters(in: .whitespaces).isEmpty, lines.count > 2 {
+            lines.remove(at: line)
+        } else if line != lines.count - 1 {
+            return false
+        }
+        all[index].text = lines.joined(separator: "\n")
+        all.insert(Row(kind: .bullet, depth: row.depth), at: index + 1)
+        OutlineEditing.normalize(&all)
+        replace(before, with: all, actionName: "New Row")
+        restoreCaret(CaretPosition(row: index + 1, offset: 0))
+        return true
+    }
+
+    /// A row that says only a fence — ```` ``` ````, perhaps with a
+    /// language — then Return: a code block, the caret inside it.
+    func makeCodeBlock(at index: Int, fence: String) -> Bool {
+        var all = rows
+        let before = all
+        let row = all[index]
+        let opening = fence.trimmingCharacters(in: .whitespaces)
+        let closing = String(opening.prefix(while: { $0 == "`" || $0 == "~" }))
+        var code = Row(kind: .code, depth: row.depth, text: opening + "\n\n" + closing)
+        code.gap = row.gap
+        all[index] = code
+        OutlineEditing.normalize(&all)
+        replace(before, with: all, actionName: "Code Block")
+        restoreCaret(CaretPosition(row: index, offset: (opening as NSString).length + 1))
+        return true
+    }
+
+    /// Format ▸ Code Block: the rows chosen, their text, as one code block —
+    /// or a code block back into rows, a line to a row.
+    @objc func toggleCodeBlock(_ sender: Any?) {
+        perform("Code Block") { rows, selection in
+            let first = rows[selection.lowerBound]
+            if first.kind == .code {
+                var lines = first.text.components(separatedBy: "\n")
+                if let opening = lines.first, Self.isFence(opening) { lines.removeFirst() }
+                if let closing = lines.last, Self.isFence(closing) { lines.removeLast() }
+                if lines.isEmpty { lines = [""] }
+                let unfolded = lines.map { Row(kind: .bullet, depth: first.depth, text: $0.trimmingCharacters(in: .whitespaces)) }
+                rows.replaceSubrange(selection.lowerBound..<(selection.lowerBound + 1), with: unfolded)
+                OutlineEditing.normalize(&rows)
+                return selection.lowerBound..<(selection.lowerBound + unfolded.count)
+            }
+            // Each row's text, indented by its depth under the first.
+            let base = first.depth
+            let lines = rows[selection].map { String(repeating: "  ", count: max(0, $0.depth - base)) + $0.text }
+            var code = Row(kind: .code, depth: base, text: "```\n" + lines.joined(separator: "\n") + "\n```")
+            code.gap = first.gap
+            rows.replaceSubrange(selection, with: [code])
+            OutlineEditing.normalize(&rows)
+            return selection.lowerBound..<(selection.lowerBound + 1)
+        }
+    }
+
     // MARK: Inline formatting
 
     @objc func toggleBold(_ sender: Any?) { wrapSelection("**") }
@@ -465,7 +559,8 @@ extension OutlineTextView {
         case #selector(indentRows(_:)), #selector(outdentRows(_:)), #selector(moveRowsUp(_:)),
              #selector(moveRowsDown(_:)), #selector(deleteRows(_:)), #selector(duplicateRows(_:)),
              #selector(toggleDone(_:)), #selector(newRow(_:)), #selector(setRowType(_:)), #selector(toggleBullet(_:)),
-             #selector(insertHorizontalRule(_:)):
+             #selector(insertHorizontalRule(_:)), #selector(toggleCodeBlock(_:)),
+             #selector(cycleChecklist(_:)), #selector(cycleTask(_:)):
             return isEditable
         default:
             return super.validateUserInterfaceItem(item)
