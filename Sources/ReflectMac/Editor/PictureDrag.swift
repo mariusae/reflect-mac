@@ -57,6 +57,8 @@ extension OutlineTextView {
             NSGraphicsContext.current?.cgContext.setAlpha(0.8)
             if let tweet = images.tweet(picture.source) {
                 TweetCard.draw(tweet, in: rect, images: images)
+            } else if let video = images.video(picture.source) {
+                VideoCard.draw(video, in: rect, images: images)
             } else {
                 images.image(picture.source)?.draw(in: rect)
             }

@@ -243,8 +243,8 @@ enum InlineMarkdown {
                 if let url = URL(string: target) {
                     storage.addAttributes([.link: url, .foregroundColor: NSColor.linkColor], range: content)
                 }
-                // A post's bare link shows its card too, below the link.
-                if Tweet.id(from: target) != nil, let size = images?.naturalSize(target) {
+                // A post's or a video's bare link shows its card too, below the link.
+                if Tweet.id(from: target) != nil || Video.id(from: target) != nil, let size = images?.naturalSize(target) {
                     storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: size),
                                          range: NSRange(location: span.range.location, length: 1))
                 }

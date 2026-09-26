@@ -23,6 +23,7 @@ final class ImageStore: @unchecked Sendable {
     private var fetching: Set<String> = []
     /// Posts, by the source that links them; nil for one that is gone.
     private var tweets: [String: Tweet?] = [:]
+    private var videos: [String: Video?] = [:]
     /// The pills of files linked from notes, by source.
     var pills: [String: FilePill] = [:]
     /// The pictures a post's card shows, and the post's source: when one
@@ -49,7 +50,7 @@ final class ImageStore: @unchecked Sendable {
     /// the size the note gives, or its own.
     func size(of reference: ImageReference) -> CGSize? {
         // A post is the card's size, whatever the note says.
-        if Tweet.id(from: reference.source) != nil { return naturalSize(reference.source) }
+        if Tweet.id(from: reference.source) != nil || Video.id(from: reference.source) != nil { return naturalSize(reference.source) }
         guard let natural = naturalSize(reference.source), natural.width > 0, natural.height > 0 else { return nil }
         switch (reference.width, reference.height) {
         case let (width?, height?): return CGSize(width: width, height: height)
@@ -63,6 +64,7 @@ final class ImageStore: @unchecked Sendable {
     /// here yet, in which case it is sent for.
     func naturalSize(_ source: String) -> CGSize? {
         if let id = Tweet.id(from: source) { return tweet(source, id: id).map(TweetCard.size(of:)) }
+        if let id = Video.id(from: source) { return video(source, id: id).map(VideoCard.size(of:)) }
         if let known = sizes[source] { return known }
         if let file = assetURL(source) {
             let size = Self.pointSize(of: CGImageSourceCreateWithURL(file as CFURL, nil))
@@ -136,6 +138,57 @@ final class ImageStore: @unchecked Sendable {
             await MainActor.run {
                 self.fetching.remove(source)
                 self.tweets[source] = nil
+                if arrived { NotificationCenter.default.post(name: Self.didLoad, object: source) }
+            }
+        }
+        return nil
+    }
+
+    /// Whether a source is shown as a card — a post's or a video's — rather
+    /// than a picture.
+    func isCard(_ source: String) -> Bool { tweet(source) != nil || video(source) != nil }
+
+    /// The video a source links, once it is here; sent for when it is not.
+    func video(_ source: String) -> Video? {
+        Video.id(from: source).flatMap { video(source, id: $0) }
+    }
+
+    private func video(_ source: String, id: String) -> Video? {
+        if let known = videos[source] { return known }
+        let cached = Self.cacheDirectory.appendingPathComponent("youtube-\(id).json")
+        if FileManager.default.fileExists(atPath: cached.path + ".gone") {
+            videos[source] = .some(nil)
+            return nil
+        }
+        if let data = try? Data(contentsOf: cached) {
+            let video = Video(json: data, id: id)
+            videos[source] = video
+            if let thumbnail = video?.thumbnail {
+                dependents[thumbnail, default: []].insert(source)
+                _ = naturalSize(thumbnail)
+            }
+            return video
+        }
+        guard let endpoint = Video.endpoint(for: id), !fetching.contains(source) else { return nil }
+        fetching.insert(source)
+        Task.detached(priority: .utility) {
+            var found = false
+            if let (data, response) = try? await URLSession.shared.data(from: endpoint) {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+                if (200..<300).contains(status), Video(json: data, id: id) != nil {
+                    found = (try? data.write(to: cached, options: .atomic)) != nil
+                } else if [400, 401, 403, 404].contains(status) {
+                    // Private, removed, or not a video: shown as the link it is.
+                    FileManager.default.createFile(atPath: cached.path + ".gone", contents: nil)
+                    Log.shared.info("images", "No video at \(source)")
+                }
+            } else {
+                Log.shared.warning("images", "Could not reach YouTube for \(source)")
+            }
+            let arrived = found
+            await MainActor.run {
+                self.fetching.remove(source)
+                self.videos[source] = nil
                 if arrived { NotificationCenter.default.post(name: Self.didLoad, object: source) }
             }
         }

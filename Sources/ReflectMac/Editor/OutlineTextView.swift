@@ -759,8 +759,8 @@ final class OutlineTextView: NSTextView {
             let item = ClosureMenuItem(title: title, run: run)
             return item
         }
-        if images?.tweet(source) != nil {
-            menu.addItem(item("Open Post") { [weak self] in
+        if images?.isCard(source) == true {
+            menu.addItem(item(images?.video(source) != nil ? "Open Video" : "Open Post") { [weak self] in
                 guard let self, let address else { return }
                 navigator?.outlineView(self, open: address, inSplit: false)
             })
@@ -780,7 +780,7 @@ final class OutlineTextView: NSTextView {
         }
         if isEditable {
             menu.addItem(.separator())
-            menu.addItem(item(images?.tweet(source) != nil ? "Delete Post" : "Delete Image") { [weak self] in
+            menu.addItem(item(images?.video(source) != nil ? "Delete Video" : images?.tweet(source) != nil ? "Delete Post" : "Delete Image") { [weak self] in
                 self?.deletePicture(at: location)
             })
         }

@@ -108,6 +108,10 @@ final class OutlineLayoutManager: NSLayoutManager {
                     TweetCard.draw(tweet, in: rect, images: store)
                     continue
                 }
+                if let video = store.video(box.source) {
+                    VideoCard.draw(video, in: rect, images: store)
+                    continue
+                }
                 NSGraphicsContext.saveGraphicsState()
                 NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).addClip()
                 if let image = store.image(box.source) {
