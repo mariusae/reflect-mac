@@ -170,8 +170,9 @@ final class OutlineLayoutManager: NSLayoutManager {
             ring.stroke()
         case .bullet(let folded):
             if folded {
-                NSColor.tertiaryLabelColor.withAlphaComponent(0.35).setFill()
-                let ring = font.pointSize * 0.95
+                // A soft halo: there to say there is more, not to be looked at.
+                NSColor.quaternaryLabelColor.setFill()
+                let ring = (font.pointSize * 0.72).rounded()
                 NSBezierPath(ovalIn: NSRect(x: center.x - ring / 2, y: center.y - ring / 2, width: ring, height: ring)).fill()
             }
             NSColor.secondaryLabelColor.setFill()

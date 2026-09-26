@@ -724,11 +724,23 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     @objc func sideBack(_ sender: Any?) { workspace.side.goBack(sender) }
     @objc func sideForward(_ sender: Any?) { workspace.side.goForward(sender) }
 
-    /// The pane's items in the toolbar: shown with the pane, titled for its note.
+    /// The pane's part of the toolbar: there with the pane, gone without
+    /// it — its space and all, so the window's own tools keep to the right.
+    private static let sidePart: [NSToolbarItem.Identifier] =
+        [sideSeparator, sideBackItem, sideForwardItem, sideTitleItem, .flexibleSpace, sideCloseItem]
+
     private func showSideItems() {
         let open = workspace.split != nil
-        for item in window?.toolbar?.items ?? [] where Self.sideItems.contains(item.itemIdentifier) {
-            item.isHidden = !open
+        if let toolbar = window?.toolbar {
+            let present = toolbar.items.contains { $0.itemIdentifier == Self.sideSeparator }
+            if open && !present {
+                for identifier in Self.sidePart {
+                    toolbar.insertItem(withItemIdentifier: identifier, at: toolbar.items.count)
+                }
+            } else if !open && present, let start = toolbar.items.firstIndex(where: { $0.itemIdentifier == Self.sideSeparator }) {
+                for index in (start..<toolbar.items.count).reversed() { toolbar.removeItem(at: index) }
+            }
+            for item in toolbar.items where Self.sideItems.contains(item.itemIdentifier) { item.isHidden = !open }
         }
         sideTitle.stringValue = open ? workspace.side.noteTitle : ""
         window?.toolbar?.validateVisibleItems()
@@ -867,8 +879,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, Self.sidebarSeparator, Self.backItem, Self.forwardItem, .flexibleSpace, Self.noteItem, Self.openItem,
-         Self.todayItem, Self.syncItemIdentifier, Self.sideSeparator,
-         Self.sideBackItem, Self.sideForwardItem, Self.sideTitleItem, .flexibleSpace, Self.sideCloseItem]
+         Self.todayItem, Self.syncItemIdentifier]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
