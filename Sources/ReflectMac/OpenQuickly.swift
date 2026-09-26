@@ -113,7 +113,7 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
 
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .tertiaryLabelColor
-        hint.stringValue = "↩ Open    ⌥↩ Open in Split View    ⌘↩ New Note    ⎋ Close"
+        hint.stringValue = "↩ Open    ⌘↩ Open in Split View    ⌥↩ New Note    ⎋ Close"
         hint.alignment = .right
         background.addSubview(hint)
     }
@@ -302,15 +302,15 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
         case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
             let flags = NSApp.currentEvent?.modifierFlags ?? []
             let query = field.stringValue.trimmingCharacters(in: .whitespaces)
-            if flags.contains(.command), !query.isEmpty {
-                // ⌘Return: a note by the name typed — the one there is, or a new one.
+            if flags.contains(.option), !query.isEmpty {
+                // ⌥Return: a note by the name typed — the one there is, or a new one.
                 let key = NoteIndex.foldKey(query)
                 let target = index.matches(query, limit: 1).first
                     .flatMap { NoteIndex.foldKey($0.entry.title) == key ? Target.note($0.entry.path) : nil } ?? .create(query)
                 close()
-                onOpen?(target, flags.contains(.option), nil)
+                onOpen?(target, flags.contains(.command), nil)
             } else {
-                openSelected(inSplit: flags.contains(.option))
+                openSelected(inSplit: flags.contains(.command))
             }
         case #selector(NSResponder.cancelOperation(_:)):
             close()
@@ -330,7 +330,7 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
     @objc private func clicked(_ sender: Any?) {
         guard table.clickedRow >= 0 else { return }
         table.selectRowIndexes([table.clickedRow], byExtendingSelection: false)
-        openSelected(inSplit: NSApp.currentEvent?.modifierFlags.contains(.option) == true)
+        openSelected(inSplit: NSApp.currentEvent?.modifierFlags.contains(.command) == true)
     }
 
     private func openSelected(inSplit: Bool) {

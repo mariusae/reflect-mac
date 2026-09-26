@@ -52,7 +52,7 @@ final class WorkspaceController: NSViewController {
         sideItem.allowsFullHeightLayout = true
         super.init(nibName: nil, bundle: nil)
         timeline.onOpen = { [weak self] url, inSplit in self?.open(url, inSplit: inSplit) }
-        // Links in the pane go on in it; with ⌥, to the main view.
+        // Links in the pane go on in it; with ⌘, to the main view.
         side.onOpen = { [weak self] url, inMain in self?.open(url, inSplit: !inMain) }
         side.onSave = { [weak self] ref in self?.onSave?(ref) }
         side.onClose = { [weak self] in self?.closeSplit() }

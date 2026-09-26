@@ -187,6 +187,39 @@ enum Script {
                 controller.sidebar.search(for: argument)
             case "sidebar-open":
                 controller.sidebar.openRow(containing: argument)
+            case "window-id":
+                print("window-id \(controller.window?.windowNumber ?? 0)")
+                fflush(stdout)
+            case "dividers":
+                // Where the split view's dividers are, and the toolbar's separators, in the window.
+                if let split = controller.window?.contentViewController as? NSSplitViewController, let window = controller.window {
+                    let views = split.splitView.arrangedSubviews
+                    let edges = views.map { view in
+                        let frame = view.convert(view.bounds, to: nil)
+                        return "\(frame.minX)–\(frame.maxX)\(view.isHidden ? " hidden" : "")"
+                    }
+                    print("dividers: subviews " + split.splitView.subviews.map { "\(type(of: $0)) \($0.frame.minX)–\($0.frame.maxX)" }.joined(separator: " | ")
+                          + " vertical \(split.splitView.isVertical) arranges \(split.splitView.arrangesAllSubviews) delegate \(String(describing: split.splitView.delegate))")
+                    print("dividers: panes " + edges.joined(separator: " | ") + " splitView at \(split.splitView.convert(split.splitView.bounds, to: nil).minX) thickness \(split.splitView.dividerThickness)")
+                    for item in window.toolbar?.items ?? [] where item is NSTrackingSeparatorToolbarItem {
+                        let view = item.value(forKey: "_view") as? NSView ?? item.view
+                        let frame = view.map { $0.convert($0.bounds, to: nil) } ?? .zero
+                        print("dividers: separator \(item.itemIdentifier.rawValue) index \((item as! NSTrackingSeparatorToolbarItem).dividerIndex) at \(frame.minX)–\(frame.maxX)")
+                    }
+                    // The toolbar's own view: where its parts are drawn.
+                    if let toolbarView = window.standardWindowButton(.closeButton)?.superview?.superview {
+                        func walk(_ view: NSView, _ depth: Int) {
+                            guard depth < 7 else { return }
+                            let name = String(describing: type(of: view))
+                            if name.contains("Section") || name.contains("Separator") || name.contains("Background") || name.contains("Platter") {
+                                print("dividers: view \(name) at \(view.convert(view.bounds, to: nil).minX)–\(view.convert(view.bounds, to: nil).maxX)")
+                            }
+                            for sub in view.subviews { walk(sub, depth + 1) }
+                        }
+                        walk(toolbarView, 0)
+                    }
+                    fflush(stdout)
+                }
             case "side-state":
                 let item = controller.workspace.sideItem
                 if let split = controller.window?.contentViewController as? NSSplitViewController {
@@ -248,7 +281,7 @@ enum Script {
             case "title":
                 print("title: \(controller.window?.title ?? "")")
                 fflush(stdout)
-            case "click-text", "option-click-text":
+            case "click-text", "option-click-text", "command-click-text":
                 // click-text <text>: a real click, through the window, in the
                 // middle of that text in the note the keyboard is in.
                 if let editor = controller.window?.firstResponder as? OutlineTextView, let window = controller.window,
@@ -259,7 +292,7 @@ enum Script {
                     let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
                         .offsetBy(dx: editor.textContainerOrigin.x, dy: editor.textContainerOrigin.y)
                     let point = editor.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
-                    let flags: NSEvent.ModifierFlags = command == "option-click-text" ? [.option] : []
+                    let flags: NSEvent.ModifierFlags = command == "option-click-text" ? [.option] : command == "command-click-text" ? [.command] : []
                     for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
                         if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: flags,
                                                           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,

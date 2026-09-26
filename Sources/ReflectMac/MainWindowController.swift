@@ -57,7 +57,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sidebar = SidebarViewController(index: index, search: ReflectSearchIndex(root: graph.root),
                                         pictures: pictureText.index, root: graph.root)
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
-        sidebarItem.minimumThickness = 200
+        // Room for its four modes, with their margins.
+        sidebarItem.minimumThickness = 260
         sidebarItem.maximumThickness = 420
         sidebarItem.canCollapse = true
         sidebarItem.allowsFullHeightLayout = true

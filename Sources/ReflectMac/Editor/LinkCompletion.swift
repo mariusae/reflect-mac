@@ -1,9 +1,9 @@
 import AppKit
 import ReflectCore
 
-/// Finishing a `[[link` as it is typed: the chooser's own search, in a list
-/// under the caret, of what the words after `[[` name — a note, a day, or a
-/// note yet to be made.
+/// Finishing a `[[link` as it is typed — or an `@mention`, which becomes one:
+/// the chooser's own search, in a list under the caret, of what the words
+/// after `[[` or `@` name — a note, a day, or a note yet to be made.
 ///
 /// The list never takes the keyboard: typing goes on in the note, and the
 /// list follows it. ↑ and ↓ choose, Return or Tab puts the link in, Escape
@@ -13,8 +13,16 @@ final class LinkCompletion: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// Where to look; the window sets it to where the chooser looks.
     static var sources: SearchSources?
 
+    /// What started it: `[[`, or `@` — easier to type, and put in as a link.
+    enum Trigger {
+        case brackets, at
+
+        var text: String { self == .brackets ? "[[" : "@" }
+    }
+
     private weak var textView: OutlineTextView?
-    /// Where the link's words start: just after `[[`.
+    let trigger: Trigger
+    /// Where the link's words start: just after `[[` or `@`.
     private(set) var start: Int
     private var items: [OpenQuickly.Item] = []
     private let panel: NSPanel
@@ -27,9 +35,10 @@ final class LinkCompletion: NSObject, NSTableViewDataSource, NSTableViewDelegate
     private static let rowHeight: CGFloat = 40
     private static let visibleRows = 7
 
-    init(textView: OutlineTextView, start: Int) {
+    init(textView: OutlineTextView, start: Int, trigger: Trigger = .brackets) {
         self.textView = textView
         self.start = start
+        self.trigger = trigger
         runner = Self.sources.map(SearchRunner.init)
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 100),
                         styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
@@ -63,15 +72,22 @@ final class LinkCompletion: NSObject, NSTableViewDataSource, NSTableViewDelegate
         background.addSubview(scroll)
     }
 
-    /// What has been typed after `[[`, or nil when the caret has left it.
+    /// What has been typed after `[[` or `@`, or nil when the caret has
+    /// left it — or, after `@`, when what is typed is plainly not a name.
     var query: String? {
         guard let textView, let storage = textView.textStorage else { return nil }
         let caret = textView.selectedRange()
         let text = storage.string as NSString
-        guard caret.length == 0, caret.location >= start, start >= 2, start <= text.length,
-              text.substring(with: NSRange(location: start - 2, length: 2)) == "[[" else { return nil }
+        let opener = (trigger.text as NSString).length
+        guard caret.length == 0, caret.location >= start, start >= opener, start <= text.length,
+              text.substring(with: NSRange(location: start - opener, length: opener)) == trigger.text else { return nil }
         let typed = text.substring(with: NSRange(location: start, length: caret.location - start))
         guard !typed.contains("]"), !typed.contains("\n"), !typed.contains("\u{2028}"), typed.count <= 120 else { return nil }
+        if trigger == .at {
+            // A name has spaces in it, but not two together, nor ends a sentence.
+            guard typed.count <= 60, !typed.contains("  "), !typed.hasPrefix(" "),
+                  !(typed.last.map { ".,;:!?)".contains($0) } ?? false) else { return nil }
+        }
         return typed
     }
 
@@ -91,7 +107,9 @@ final class LinkCompletion: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     private func show(_ found: [OpenQuickly.Item], keepingSelection: Bool) {
         let chosen = keepingSelection && table.selectedRow > 0 && table.selectedRow < items.count ? "\(items[table.selectedRow].target)" : nil
-        items = found
+        // An `@` is often just an at: it offers only notes there are, and
+        // with none, shows nothing.
+        items = trigger == .at ? found.filter { if case .create = $0.target { false } else { true } } : found
         table.reloadData()
         if let chosen, let row = items.firstIndex(where: { "\($0.target)" == chosen }) {
             table.selectRowIndexes([row], byExtendingSelection: false)
@@ -101,13 +119,21 @@ final class LinkCompletion: NSObject, NSTableViewDataSource, NSTableViewDelegate
         place()
     }
 
+    /// Whether there is something to put in: Return and Tab take it, else
+    /// they do what they do.
+    var hasChoice: Bool { !items.isEmpty && table.selectedRow >= 0 }
+
     /// Sizes the list to what it holds, under the link being typed.
     private func place() {
         guard let textView, let window = textView.window else { return }
+        if trigger == .at && items.isEmpty {
+            panel.orderOut(nil)
+            return
+        }
         let rows = min(max(items.count, 1), Self.visibleRows)
         let height = CGFloat(rows) * (Self.rowHeight + 3) + 10
         scroll.frame = NSRect(x: 0, y: 0, width: Self.width, height: height)
-        let caret = textView.firstRect(forCharacterRange: NSRange(location: start - 2, length: 0), actualRange: nil)
+        let caret = textView.firstRect(forCharacterRange: NSRange(location: start - (trigger.text as NSString).length, length: 0), actualRange: nil)
         var origin = NSPoint(x: caret.minX - 20, y: caret.minY - height - 4)
         if let screen = window.screen?.visibleFrame, origin.y < screen.minY {
             origin.y = caret.maxY + 4
@@ -142,6 +168,11 @@ final class LinkCompletion: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let name = items[table.selectedRow].name
         let caret = textView.selectedRange().location
         let text = storage.string as NSString
+        if trigger == .at {
+            // `@name` becomes the link it stood for.
+            textView.insertText("[[" + name + "]]", replacementRange: NSRange(location: start - 1, length: caret - start + 1))
+            return
+        }
         let closing = caret + 2 <= text.length && text.substring(with: NSRange(location: caret, length: 2)) == "]]"
         let range = NSRange(location: start, length: caret - start + (closing ? 2 : 0))
         textView.insertText(name + "]]", replacementRange: range)

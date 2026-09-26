@@ -96,7 +96,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         modes.target = self
         modes.action = #selector(modeChanged(_:))
         modes.segmentDistribution = .fillEqually
-        modes.controlSize = .large
+        modes.controlSize = .regular
         for mode in Mode.allCases { modes.setToolTip("\(mode.title) (⌘\(mode.rawValue + 1))", forSegment: mode.rawValue) }
         modes.translatesAutoresizingMaskIntoConstraints = false
         // It fits the sidebar, and never widens it past its divider.
@@ -141,7 +141,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         table.draggingDestinationFeedbackStyle = .gap
         table.menu = NSMenu()
         table.menu?.delegate = self
-        table.onReturn = { [weak self] in self?.openSelected(inSplit: NSApp.currentEvent?.modifierFlags.contains(.option) == true) }
+        table.onReturn = { [weak self] in self?.openSelected(inSplit: NSApp.currentEvent?.modifierFlags.contains(.command) == true) }
         scroll.documentView = table
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -386,7 +386,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
 
     @objc private func clicked(_ sender: Any?) {
         guard table.clickedRow >= 0, table.clickedRow < rows.count else { return }
-        open(rows[table.clickedRow], inSplit: NSApp.currentEvent?.modifierFlags.contains(.option) == true)
+        open(rows[table.clickedRow], inSplit: NSApp.currentEvent?.modifierFlags.contains(.command) == true)
     }
 
     private func openSelected(inSplit: Bool) {

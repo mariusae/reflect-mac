@@ -698,7 +698,7 @@ final class OutlineTextView: NSTextView {
             while let next = window?.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) {
                 let moved = hypot(next.locationInWindow.x - start.x, next.locationInWindow.y - start.y)
                 if next.type == .leftMouseUp {
-                    if moved < 4 { navigator?.outlineView(self, open: url, inSplit: event.modifierFlags.contains(.option)) }
+                    if moved < 4 { navigator?.outlineView(self, open: url, inSplit: event.modifierFlags.contains(.command)) }
                     return
                 }
             }
@@ -847,7 +847,7 @@ final class OutlineTextView: NSTextView {
 
     override func clicked(onLink link: Any, at charIndex: Int) {
         guard let url = link as? URL ?? (link as? String).flatMap(URL.init(string:)) else { return }
-        navigator?.outlineView(self, open: url, inSplit: NSApp.currentEvent?.modifierFlags.contains(.option) == true)
+        navigator?.outlineView(self, open: url, inSplit: NSApp.currentEvent?.modifierFlags.contains(.command) == true)
     }
 
     // MARK: Moving across edges
@@ -885,7 +885,7 @@ final class OutlineTextView: NSTextView {
     }
 
     override func moveUp(_ sender: Any?) {
-        if let linkCompletion {
+        if let linkCompletion, linkCompletion.hasChoice || linkCompletion.trigger == .brackets {
             linkCompletion.move(-1)
             return
         }
@@ -904,7 +904,7 @@ final class OutlineTextView: NSTextView {
     }
 
     override func moveDown(_ sender: Any?) {
-        if let linkCompletion {
+        if let linkCompletion, linkCompletion.hasChoice || linkCompletion.trigger == .brackets {
             linkCompletion.move(1)
             return
         }
@@ -1024,6 +1024,7 @@ final class OutlineTextView: NSTextView {
         if text == " ", replacementRange.location == NSNotFound, selectedRange().length == 0, applySmartRowType() { return }
         super.insertText(string, replacementRange: replacementRange)
         if text == "[" { beginLinkCompletion() }
+        if text == "@" { beginMention() }
     }
 
     // MARK: Finishing links
@@ -1038,6 +1039,24 @@ final class OutlineTextView: NSTextView {
         if case .code = row(at: rowIndex(at: caret)).kind { return }
         if spans(atRowOf: caret).contains(where: { $0.kind == .code && NSLocationInRange(caret - 1, $0.range) }) { return }
         let completion = LinkCompletion(textView: self, start: caret)
+        linkCompletion = completion
+        if !completion.refresh() { endLinkCompletion() }
+    }
+
+    /// `@` typed at the start of a word, outside code, starts a link too:
+    /// what is chosen goes in as `[[Name]]`. Not in an address — `a@b`.
+    private func beginMention() {
+        guard LinkCompletion.sources != nil, linkCompletion == nil, let storage = textStorage else { return }
+        let caret = selectedRange().location
+        let text = storage.string as NSString
+        guard caret >= 1, text.character(at: caret - 1) == 0x40 else { return }
+        if caret >= 2 {
+            let before = text.substring(with: NSRange(location: caret - 2, length: 1))
+            guard before.rangeOfCharacter(from: .whitespacesAndNewlines) != nil || before == "\u{2028}" || "([{\"'“‘".contains(before) else { return }
+        }
+        if case .code = row(at: rowIndex(at: caret)).kind { return }
+        if spans(atRowOf: caret).contains(where: { $0.kind == .code && NSLocationInRange(caret - 1, $0.range) }) { return }
+        let completion = LinkCompletion(textView: self, start: caret, trigger: .at)
         linkCompletion = completion
         if !completion.refresh() { endLinkCompletion() }
     }
@@ -1062,15 +1081,21 @@ final class OutlineTextView: NSTextView {
     }
 
     override func insertTab(_ sender: Any?) {
-        if linkCompletion != nil { acceptLinkCompletion(); return }
+        if let linkCompletion {
+            if linkCompletion.hasChoice { acceptLinkCompletion(); return }
+            endLinkCompletion()
+        }
         indentRows(sender)
     }
     override func insertBacktab(_ sender: Any?) { outdentRows(sender) }
 
     override func insertNewline(_ sender: Any?) {
-        if linkCompletion != nil {
-            acceptLinkCompletion()
-            return
+        if let linkCompletion {
+            if linkCompletion.hasChoice || linkCompletion.trigger == .brackets {
+                acceptLinkCompletion()
+                return
+            }
+            endLinkCompletion()
         }
         if let selectedRows {
             // Return from rows makes a new row after them, to write in.

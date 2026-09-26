@@ -51,9 +51,9 @@ final class StagedSearch: @unchecked Sendable {
 
     private var shown: [Item] {
         guard !query.isEmpty, !exists else { return items }
-        // Last, so Return never makes a note by chance; ⌘Return makes one
+        // Last, so Return never makes a note by chance; ⌥Return makes one
         // from whatever is typed.
-        return items + [Item(target: .create(query), title: "New Note “\(query)”", detail: OpenQuickly.plain("⌘↩ Make a note with this title"),
+        return items + [Item(target: .create(query), title: "New Note “\(query)”", detail: OpenQuickly.plain("⌥↩ Make a note with this title"),
                              symbol: "square.and.pencil", name: query)]
     }
 

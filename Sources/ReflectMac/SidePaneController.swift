@@ -5,7 +5,7 @@ import ReflectCore
 /// way back and forward — in the window's toolbar, over the pane, with its
 /// title and a button to put it away.
 ///
-/// Links followed in it open in it; with ⌥, in the main view.
+/// Links followed in it open in it; with ⌘, in the main view.
 @MainActor
 final class SidePaneController: NSViewController {
     let graph: Graph
