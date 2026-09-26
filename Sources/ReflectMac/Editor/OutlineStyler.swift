@@ -1,23 +1,42 @@
 import AppKit
 import ReflectCore
 
-/// The type and measures of the outline, from one size.
+/// The type and measures of the outline, from the Typography settings.
 struct OutlineMetrics {
-    var fontSize: CGFloat
+    var typography: Typography
 
+    init(typography: Typography = .current) {
+        self.typography = typography
+    }
+
+    init(fontSize: CGFloat) {
+        var typography = Typography.current
+        typography.size = fontSize
+        self.typography = typography
+    }
+
+    var fontSize: CGFloat { typography.size }
     /// How far each level of the outline is indented.
     var indent: CGFloat { round(fontSize * 1.6) }
-    var body: NSFont { .systemFont(ofSize: fontSize) }
-    var code: NSFont { .monospacedSystemFont(ofSize: round(fontSize * 0.88), weight: .regular) }
-    var lineHeightMultiple: CGFloat { 1.18 }
+    var body: NSFont { Typography.font(typography.bodyFamily, face: typography.bodyFace, size: fontSize) }
+    var code: NSFont {
+        Typography.font(typography.monospaceFamily, face: typography.monospaceFace, size: round(fontSize * 0.88), monospaced: true)
+    }
+    var lineHeightMultiple: CGFloat { typography.lineHeight }
+    /// The space after each row.
+    var rowSpacing: CGFloat { round(fontSize * typography.rowSpacing) }
+    var columnWidth: CGFloat { typography.lineLength }
 
     func heading(_ level: Int) -> NSFont {
-        switch level {
-        case 1: .systemFont(ofSize: round(fontSize * 1.5), weight: .bold)
-        case 2: .systemFont(ofSize: round(fontSize * 1.25), weight: .bold)
-        case 3: .systemFont(ofSize: round(fontSize * 1.1), weight: .semibold)
-        default: .systemFont(ofSize: fontSize, weight: .semibold)
+        // The first level at the scale set; the rest step down to body size.
+        let scale = typography.headingScale
+        let (factor, weight): (CGFloat, NSFont.Weight) = switch level {
+        case 1: (scale, .bold)
+        case 2: (1 + (scale - 1) / 2, .bold)
+        case 3: (1 + (scale - 1) / 5, .semibold)
+        default: (1, .semibold)
         }
+        return Typography.font(typography.headingFamily, face: typography.headingFace, size: round(fontSize * factor), weight: weight)
     }
 
     func font(for row: Row) -> NSFont {
@@ -142,7 +161,7 @@ final class OutlineStyler: NSObject, NSTextStorageDelegate {
         paragraph.firstLineHeadIndent = indent
         paragraph.headIndent = indent
         paragraph.lineHeightMultiple = metrics.lineHeightMultiple
-        paragraph.paragraphSpacing = round(metrics.fontSize * 0.2)
+        paragraph.paragraphSpacing = metrics.rowSpacing
         var before: CGFloat = 0
         if case .heading = row.kind {
             before = round(metrics.fontSize * 0.8)
@@ -338,7 +357,28 @@ final class HiddenMarkupGlyphs: NSObject, NSLayoutManagerDelegate {
 }
 
 extension NSFont {
+    /// This font, bolder or slanted: the family's own face for it, found
+    /// by name and weight — some families mark neither — else what the
+    /// system makes of the traits.
     func adding(_ trait: NSFontDescriptor.SymbolicTraits) -> NSFont {
+        if let family = familyName {
+            let faces = Typography.Face.all(in: family)
+            if let current = faces.first(where: { $0.name == fontName }) {
+                var candidates = faces
+                if trait.contains(.italic) { candidates = candidates.filter { $0.italic } } else { candidates = candidates.filter { $0.italic == current.italic } }
+                if trait.contains(.bold) {
+                    // Heavier: Bold itself if it is heavier, else the nearest heavier.
+                    let heavier = candidates.filter { $0.heaviness > current.heaviness }
+                    candidates = heavier.filter { $0.style.lowercased().hasPrefix("bold") }.isEmpty
+                        ? heavier.sorted { $0.heaviness < $1.heaviness }
+                        : heavier.filter { $0.style.lowercased().hasPrefix("bold") }
+                } else {
+                    // The same weight, slanted.
+                    candidates = candidates.sorted { abs($0.heaviness - current.heaviness) < abs($1.heaviness - current.heaviness) }
+                }
+                if let face = candidates.first, let font = NSFont(name: face.name, size: pointSize) { return font }
+            }
+        }
         let descriptor = fontDescriptor.withSymbolicTraits(fontDescriptor.symbolicTraits.union(trait))
         return NSFont(descriptor: descriptor, size: pointSize) ?? self
     }

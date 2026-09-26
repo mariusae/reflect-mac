@@ -82,6 +82,21 @@ public enum NoteCreation {
         "---\nid: \(id)\n---\n# \(title.trimmingCharacters(in: .whitespacesAndNewlines))\n"
     }
 
+    /// Writes a blank note — an id, and a title to type — under a name held
+    /// for it until it has one: its id. Its title, once settled, names it.
+    public static func createBlank(in root: URL) throws -> String {
+        let folder = root.appendingPathComponent(GraphPaths.notesDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let id = ulid()
+        let path = "\(GraphPaths.notesDirectory)/\(id).md"
+        let descriptor = open(root.appendingPathComponent(path).path, O_CREAT | O_EXCL | O_WRONLY, 0o644)
+        guard descriptor >= 0 else { throw CocoaError(.fileWriteFileExists) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        try handle.write(contentsOf: Data("---\nid: \(id)\n---\n# \n".utf8))
+        try handle.close()
+        return path
+    }
+
     /// Writes a new note for a title at the first free path, and returns it.
     public static func create(title: String, in root: URL) throws -> String {
         let folder = root.appendingPathComponent(GraphPaths.notesDirectory)

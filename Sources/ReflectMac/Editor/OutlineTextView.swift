@@ -379,7 +379,7 @@ final class OutlineTextView: NSTextView {
     // MARK: Hidden markup
 
     /// The text of the row a location is in, line break left out.
-    private func textRange(ofRowAt location: Int) -> NSRange {
+    func textRange(ofRowAt location: Int) -> NSRange {
         let paragraph = paragraphRanges[rowIndex(at: location)]
         let length = textStorage!.length
         let start = min(paragraph.location, length)
@@ -1102,6 +1102,14 @@ final class OutlineTextView: NSTextView {
             let index = selectedRows.upperBound - 1
             editText(inRow: index)
             insertRow(after: index)
+            return
+        }
+        // `---`, `***` or `___` alone on a row, then Return: a line across.
+        let index = rowIndex(at: selectedRange().location)
+        let current = row(at: index)
+        if selectedRange().length == 0, current.task == nil, current.kind == .bullet || current.kind == .paragraph,
+           Self.ruleMarks.contains(ruleText(ofRowAt: selectedRange().location)) {
+            makeRule(at: index)
             return
         }
         splitRow()

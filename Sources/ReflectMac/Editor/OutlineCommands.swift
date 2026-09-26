@@ -134,11 +134,9 @@ extension OutlineTextView {
         case _ where ["-", "*", "+"].contains(prefix) && row.kind == .paragraph:
             row.kind = .bullet
             row.marker = prefix.first!
-        case _ where ["---", "***", "___"].contains(prefix) && rest.isEmpty:
-            row.kind = .rule
-            row.text = prefix
-            replaceRow(index, with: row, actionName: "Change Row Type")
-            restoreCaret(CaretPosition(row: index, offset: prefix.count))
+        case _ where Self.ruleMarks.contains(prefix) && rest.isEmpty:
+            // A line across, and a row after it to go on in.
+            makeRule(at: index)
             return true
         default:
             let digits = prefix.dropLast()
@@ -337,6 +335,52 @@ extension OutlineTextView {
         }
     }
 
+    /// Format ▸ Horizontal Line: a line across after this row — or in
+    /// place of it, when it is empty — and a new row after it, to write in.
+    @objc func insertHorizontalRule(_ sender: Any?) {
+        if isSelectingRows, let rows = selectedRows { editText(inRow: rows.upperBound - 1) }
+        let index = rowIndex(at: selectedRange().location)
+        let row = row(at: index)
+        let text = ruleText(ofRowAt: selectedRange().location)
+        if text.isEmpty || Self.ruleMarks.contains(text) {
+            makeRule(at: index)
+        } else {
+            // After the row and all under it.
+            var after = rows
+            let before = after
+            let end = OutlineEditing.subtreeEnd(after, index)
+            after.insert(Row(kind: .rule, depth: row.depth, text: "---"), at: end)
+            after.insert(Row(kind: .bullet, depth: row.depth), at: end + 1)
+            OutlineEditing.normalize(&after)
+            replace(before, with: after, actionName: "Horizontal Line")
+            restoreCaret(CaretPosition(row: end + 1, offset: 0))
+        }
+    }
+
+    /// What typed alone on a row makes it a line across: Markdown's three
+    /// marks, and the dash they become when smart dashes are on.
+    static let ruleMarks: Set<String> = ["---", "***", "___", "—", "—-", "–-"]
+
+    /// A row's text, trimmed — the text, not its style, which has none.
+    func ruleText(ofRowAt location: Int) -> String {
+        (string as NSString).substring(with: textRange(ofRowAt: location)).trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Makes a row a line across, and puts the caret in a new row after it.
+    func makeRule(at index: Int) {
+        var after = rows
+        let before = after
+        let row = after[index]
+        let typed = row.text.trimmingCharacters(in: .whitespaces)
+        var rule = Row(kind: .rule, depth: row.depth, text: ["---", "***", "___"].contains(typed) ? typed : "---")
+        rule.gap = row.gap
+        after[index] = rule
+        after.insert(Row(kind: .bullet, depth: row.depth), at: index + 1)
+        OutlineEditing.normalize(&after)
+        replace(before, with: after, actionName: "Horizontal Line")
+        restoreCaret(CaretPosition(row: index + 1, offset: 0))
+    }
+
     // MARK: Inline formatting
 
     @objc func toggleBold(_ sender: Any?) { wrapSelection("**") }
@@ -420,7 +464,8 @@ extension OutlineTextView {
             return isEditable && !isSelectingRows
         case #selector(indentRows(_:)), #selector(outdentRows(_:)), #selector(moveRowsUp(_:)),
              #selector(moveRowsDown(_:)), #selector(deleteRows(_:)), #selector(duplicateRows(_:)),
-             #selector(toggleDone(_:)), #selector(newRow(_:)), #selector(setRowType(_:)), #selector(toggleBullet(_:)):
+             #selector(toggleDone(_:)), #selector(newRow(_:)), #selector(setRowType(_:)), #selector(toggleBullet(_:)),
+             #selector(insertHorizontalRule(_:)):
             return isEditable
         default:
             return super.validateUserInterfaceItem(item)

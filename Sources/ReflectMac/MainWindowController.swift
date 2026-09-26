@@ -36,9 +36,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     init(graph: Graph, sync: SyncController) {
         self.graph = graph
         self.sync = sync
-        let stored = UserDefaults.standard.double(forKey: Self.fontSizeKey)
-        let size = stored > 0 ? CGFloat(stored) : Self.defaultFontSize
-        timeline = TimelineViewController(graph: graph, metrics: OutlineMetrics(fontSize: size))
+        timeline = TimelineViewController(graph: graph, metrics: OutlineMetrics(typography: .current))
         index = NoteIndex(root: graph.root)
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(Bundle.main.bundleIdentifier ?? "ReflectMac").appendingPathComponent("PictureText")
@@ -96,7 +94,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sidebar.onOpen = { [weak self] target, inSplit, found in self?.workspace.open(target, inSplit: inSplit, found: found) }
         sidebar.onPin = { [weak self] path, pinned in self?.setPinned(path, pinned) }
         sidebar.onReorder = { [weak self] pins in self?.renumberPins(pins) }
+        NotificationCenter.default.addObserver(self, selector: #selector(typographyChanged(_:)), name: Typography.didChange, object: nil)
         NotePaneController.index = index
+        NotePaneController.onRetitle = { [weak self] ref, from, to in self?.retitle(ref, from: from, to: to) }
+        NotePaneController.onLeave = { [weak self] ref, text in self?.leftBlank(ref, text) }
         NotePaneController.openBacklink = { [weak self] path, link, inSplit in
             self?.workspace.open(OpenQuickly.target(for: path), inSplit: inSplit, found: link.map { .words([$0]) })
         }
@@ -263,6 +264,115 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sync.noteChanged()
         sidebar.reload()
         sidebar.refreshSearch()
+    }
+
+    // MARK: New notes
+
+    /// Blank notes made here and not yet named.
+    private var blankNotes = Set<String>()
+
+    /// File ▸ New Note: a blank note, the caret in its title. Its file is
+    /// named for its title once the title settles; left blank, it goes.
+    @objc func newNote(_ sender: Any?) {
+        do {
+            let path = try NoteCreation.createBlank(in: graph.root)
+            blankNotes.insert(path)
+            index.refresh(path)
+            Log.shared.info("files", "Made a new note", detail: path)
+            workspace.show(NoteRef(path: path), inSplit: false)
+        } catch {
+            Log.shared.error("files", "Could not make a new note", detail: error.localizedDescription)
+            presentError(error)
+        }
+    }
+
+    /// A blank note left as it was made — no title, nothing written — is
+    /// taken away again.
+    private func leftBlank(_ ref: NoteRef, _ text: String) {
+        guard blankNotes.contains(ref.path) else { return }
+        let outline = OutlineMarkdown.parse(text)
+        guard TitleRename.authoredTitle(path: ref.path, source: text) == nil, Backlinks.isEmpty(outline.rows) else { return }
+        blankNotes.remove(ref.path)
+        try? FileManager.default.removeItem(at: graph.root.appendingPathComponent(ref.path))
+        index.refresh(ref.path)
+        Log.shared.info("files", "Took away a new note left blank", detail: ref.path)
+        sidebarNeedsReload()
+    }
+
+    // MARK: Renames
+
+    /// The aliases each note's last rename added, and the title it left the
+    /// note with: a rename from that title goes on the chain, and prunes them.
+    private var renameChains: [String: (title: String, added: [String])] = [:]
+
+    /// A note's title settled on a new one: as Reflect does — the links to
+    /// it follow, its old title stays on as an alias, and a note Reflect
+    /// manages moves to the file its title names. A note that had no title
+    /// (`from` nil) only moves: nothing links to a title never had.
+    func retitle(_ ref: NoteRef, from: String?, to: String) {
+        // Named, a new note is kept.
+        blankNotes.remove(ref.path)
+        workspace.saveAll()
+        var path = ref.path
+        guard graph.exists(path: path) else { return }
+        var changed = false
+        if let from {
+            let result = index.retitleLinks(to: path, from: from, to: to, read: graph.read(path:),
+                                             write: { [graph] text, source in try graph.write(text, path: source) })
+            changed = !result.rewritten.isEmpty
+            var summary = "Renamed “\(from)” to “\(to)”"
+            if !result.rewritten.isEmpty { summary += ": links in \(result.rewritten.count) \(result.rewritten.count == 1 ? "note" : "notes") follow" }
+            var detail: [String] = result.rewritten
+            if result.collision { detail.append("“\(from)” is another note’s now: links to it are left alone.") }
+            if result.destinationBlocked { detail.append("“\(to)” is another note’s: links were not repointed; the old title keeps them here.") }
+            if !result.failed.isEmpty {
+                Log.shared.warning("files", "Could not update links in \(result.failed.count) notes", detail: result.failed.joined(separator: "\n"))
+            }
+            Log.shared.info("files", summary, detail: detail.isEmpty ? nil : detail.joined(separator: "\n"))
+
+            // The old title, kept as an alias — unless it is another note's.
+            let chain = renameChains[path]
+            let previous = chain?.title == from ? chain?.added ?? [] : []
+            renameChains[path] = (to, [])
+            if !result.collision, let source = graph.read(path: path) {
+                let current = TitleRename.aliases(in: source)
+                if let aliases = TitleRename.nextAliases(current, from: from, to: to, previousAutoAliases: previous) {
+                    do {
+                        try graph.write(Frontmatter.setting("aliases", toList: aliases, in: source), path: path)
+                        renameChains[path] = (to, TitleRename.added(current, aliases))
+                        changed = true
+                    } catch {
+                        Log.shared.error("files", "Could not keep “\(from)” as an alias of \(path)", detail: error.localizedDescription)
+                    }
+                }
+            }
+            index.refresh(path)
+        }
+
+        // The file follows the title, for a note Reflect manages.
+        if let source = graph.read(path: path), TitleRename.isManaged(path: path, source: source) {
+            let destination = index.managedPath(for: to, current: path)
+            if destination != path {
+                do {
+                    try FileManager.default.moveItem(at: graph.root.appendingPathComponent(path),
+                                                     to: graph.root.appendingPathComponent(destination))
+                    Log.shared.info("files", "Moved \(path) to \(destination)")
+                    index.refresh(path)
+                    index.refresh(destination)
+                    SessionState.shared.moved(graph.root, from: NoteRef(path: path), to: NoteRef(path: destination))
+                    if let chain = renameChains.removeValue(forKey: path) { renameChains[destination] = chain }
+                    workspace.moved(from: path, to: destination)
+                    path = destination
+                    changed = true
+                } catch {
+                    Log.shared.error("files", "Could not move \(path) to \(destination)", detail: error.localizedDescription)
+                }
+            }
+        }
+        guard changed else { return }
+        workspace.reloadFromDisk()
+        sync.noteChanged()
+        sidebarNeedsReload()
     }
 
     /// File ▸ Topic Note: makes the note the keyboard is in a topic —
@@ -620,9 +730,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     @objc func makeTextStandardSize(_ sender: Any?) { setFontSize(Self.defaultFontSize) }
 
     private func setFontSize(_ size: CGFloat) {
-        let size = min(max(size, 10), 32)
-        UserDefaults.standard.set(Double(size), forKey: Self.fontSizeKey)
-        workspace.metrics = OutlineMetrics(fontSize: size)
+        var typography = Typography.current
+        typography.size = min(max(size, Typography.sizes.lowerBound), Typography.sizes.upperBound)
+        // Told to every window, this one too.
+        Typography.current = typography
+    }
+
+    @objc private func typographyChanged(_ notification: Notification) {
+        workspace.metrics = OutlineMetrics(typography: .current)
     }
 
     @objc func revealInFinder(_ sender: Any?) {

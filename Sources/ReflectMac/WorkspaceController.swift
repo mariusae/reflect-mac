@@ -302,6 +302,34 @@ final class WorkspaceController: NSViewController {
         side.reloadFromDisk()
     }
 
+    /// A note moved to a new path — its title renamed — followed wherever
+    /// it is shown or remembered, with its caret where it was.
+    func moved(from old: String, to new: String) {
+        let ref = NoteRef(path: new)
+        back = back.map { $0?.path == old ? ref : $0 }
+        forward = forward.map { $0?.path == old ? ref : $0 }
+        if let pane = main, pane.ref.path == old {
+            let selection = pane.noteView.editor.selectedRange()
+            let focused = (view.window?.firstResponder as? NSView)?.isDescendant(of: pane.view) == true
+            pane.discard()
+            pane.view.removeFromSuperview()
+            pane.removeFromParent()
+            let next = self.pane(for: ref)
+            addChild(next)
+            view.addSubview(next.view)
+            next.view.frame = view.bounds
+            main = next
+            let editor = next.noteView.editor
+            if let length = editor.textStorage?.length {
+                let location = min(selection.location, length)
+                editor.setSelectedRange(NSRange(location: location, length: min(selection.length, length - location)))
+            }
+            if focused { view.window?.makeFirstResponder(editor) }
+        }
+        side.moved(from: old, to: ref)
+        onChange?()
+    }
+
     /// Topic notes shown look again at what links to them.
     func refreshBacklinks() {
         main?.refreshBacklinks()

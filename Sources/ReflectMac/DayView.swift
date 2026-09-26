@@ -93,7 +93,9 @@ final class DayView: NSView, NSTextViewDelegate {
     }
 
     private func applyMetrics() {
-        title.font = .systemFont(ofSize: round(metrics.fontSize * 1.45), weight: .bold)
+        // In the headings' typeface, as the notes' own headings are.
+        title.font = Typography.font(metrics.typography.headingFamily, face: metrics.typography.headingFace,
+                                     size: round(metrics.fontSize * 1.45), weight: .bold)
         badge.font = .systemFont(ofSize: round(metrics.fontSize * 0.95), weight: .medium)
         updateTitle()
     }
@@ -145,7 +147,7 @@ final class DayView: NSView, NSTextViewDelegate {
     // MARK: Layout
 
     private var column: NSRect {
-        let width = min(Self.columnWidth, bounds.width - 48)
+        let width = min(metrics.columnWidth, bounds.width - 48)
         return NSRect(x: ((bounds.width - width) / 2).rounded(), y: 0, width: width, height: bounds.height)
     }
 
@@ -164,11 +166,13 @@ final class DayView: NSView, NSTextViewDelegate {
         let column = column
         // A label draws its text a couple of points in from its edge.
         let textX = column.minX + metrics.indent - 2
+        // Whole points, and a little over: a bold face's last figure reaches
+        // past the width it is measured at.
         let size = title.intrinsicContentSize
-        title.frame = NSRect(x: textX, y: headerTop, width: size.width, height: size.height)
+        title.frame = NSRect(x: textX, y: headerTop, width: ceil(size.width) + 4, height: ceil(size.height))
         let badgeSize = badge.intrinsicContentSize
-        badge.frame = NSRect(x: title.frame.maxX + 10, y: title.frame.maxY - badgeSize.height - 3,
-                             width: badgeSize.width, height: badgeSize.height)
+        badge.frame = NSRect(x: title.frame.maxX + 6, y: title.frame.maxY - ceil(badgeSize.height) - 3,
+                             width: ceil(badgeSize.width) + 4, height: ceil(badgeSize.height))
         var y = editorTop
         if let parkedNotice {
             let height = parkedNotice.height(forWidth: column.width)
@@ -201,7 +205,7 @@ final class DayView: NSView, NSTextViewDelegate {
 
     /// The height the day wants at a width.
     func desiredHeight(width: CGFloat) -> CGFloat {
-        let columnWidth = min(Self.columnWidth, width - 48)
+        let columnWidth = min(metrics.columnWidth, width - 48)
         var height = editorTop + bottomPadding
         if let parkedNotice { height += parkedNotice.height(forWidth: columnWidth) + noticeSpacing }
         height += conflictView?.height(forWidth: columnWidth) ?? editorHeight(width: columnWidth)

@@ -71,6 +71,15 @@ final class SessionState {
     }
 
     /// Notes a note's folds, writing only when they changed.
+    /// A note's folds, and its place as the note open, kept through a move.
+    func moved(_ root: URL, from old: NoteRef, to new: NoteRef) {
+        update(root) { state in
+            if let marks = state.folds.removeValue(forKey: old.stateKey) { state.folds[new.stateKey] = marks }
+            if state.mainNote == old.path { state.mainNote = new.path }
+            if state.splitNote == old.path { state.splitNote = new.path }
+        }
+    }
+
     func setFolds(_ root: URL, _ note: NoteRef, _ marks: [OutlineFolds.Mark]) {
         guard folds(root, note) != marks else { return }
         update(root) { $0.folds[note.stateKey] = marks.isEmpty ? nil : marks }

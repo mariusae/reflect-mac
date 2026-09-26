@@ -107,6 +107,25 @@ final class SidePaneController: NSViewController {
         update()
     }
 
+    /// A note shown here, or in the way back or forward, moved to a new path.
+    func moved(from old: String, to ref: NoteRef) {
+        back = back.map { $0.path == old ? ref : $0 }
+        forward = forward.map { $0.path == old ? ref : $0 }
+        guard let pane, pane.ref.path == old else { return }
+        let selection = pane.noteView.editor.selectedRange()
+        let focused = hasFocus
+        pane.discard()
+        place(ref)
+        restore(selection, focused: focused)
+    }
+
+    private func restore(_ selection: NSRange, focused: Bool) {
+        guard let editor = pane?.noteView.editor, let length = editor.textStorage?.length else { return }
+        let location = min(selection.location, length)
+        editor.setSelectedRange(NSRange(location: location, length: min(selection.length, length - location)))
+        if focused { view.window?.makeFirstResponder(editor) }
+    }
+
     private func place(_ ref: NoteRef) {
         _ = view
         pane?.save()

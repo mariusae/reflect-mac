@@ -126,7 +126,10 @@ enum Script {
                     return nil
                 }
                 if let item = find(NSApp.mainMenu), let action = item.action {
-                    NSApp.sendAction(action, to: controller, from: item)
+                    // As the menu would: to whatever has the keyboard, else the window.
+                    if !(controller.window?.firstResponder?.tryToPerform(action, with: item) ?? false) {
+                        NSApp.sendAction(action, to: controller, from: item)
+                    }
                 }
             case "image":
                 print("image \(argument): \(String(describing: controller.timeline.images.naturalSize(argument)))")
@@ -271,6 +274,39 @@ enum Script {
                    let picker = NSApp.windows.compactMap({ $0.contentView?.firstDescendant(of: CalendarPickerView.self) }).first {
                     picker.onPick?(day, false)
                 }
+            case "settings":
+                SettingsWindowController.shared.show()
+            case "snap-settings":
+                if let window = SettingsWindowController.shared.window { write(window, name: argument) }
+            case "typography":
+                // typography <key> <value>: a setting set, as its control would.
+                let parts = argument.split(separator: " ", maxSplits: 1).map(String.init)
+                var typography = Typography.current
+                switch parts.first {
+                case "body": typography.bodyFamily = parts.count > 1 ? parts[1] : nil
+                case "heading": typography.headingFamily = parts.count > 1 ? parts[1] : nil
+                case "mono": typography.monospaceFamily = parts.count > 1 ? parts[1] : nil
+                case "bodyface": typography.bodyFace = parts.count > 1 ? parts[1] : nil
+                case "headingface": typography.headingFace = parts.count > 1 ? parts[1] : nil
+                case "line": typography.lineHeight = CGFloat(Double(parts[1]) ?? 1.18)
+                case "rows": typography.rowSpacing = CGFloat(Double(parts[1]) ?? 0.2)
+                case "length": typography.lineLength = CGFloat(Double(parts[1]) ?? 720)
+                case "reset": typography = .defaults
+                case "preset": typography = Typography.presets.first { $0.name == parts[1] }?.typography ?? typography
+                default: break
+                }
+                Typography.current = typography
+            case "rows":
+                // rows: the rows of the note the keyboard is in, as the editor holds them.
+                if let editor = controller.window?.firstResponder as? OutlineTextView {
+                    print("caret: \(editor.selectedRange()) row \(editor.rowIndex(at: editor.selectedRange().location))")
+                    print("rows: " + editor.rows.map { "\($0.kind)/\($0.depth)/\($0.text.debugDescription)/gap\($0.gap.count)" }.joined(separator: " | "))
+                    fflush(stdout)
+                }
+            case "settle-title":
+                // settle-title: a waiting rename, settled now, as leaving the note would.
+                controller.workspace.main?.settleTitle()
+                controller.workspace.side.pane?.settleTitle()
             case "topic":
                 controller.toggleTopic(nil)
             case "pin":

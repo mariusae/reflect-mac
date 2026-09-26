@@ -51,6 +51,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         open(url)
     }
 
+    @objc func showSettings(_ sender: Any?) {
+        SettingsWindowController.shared.show()
+    }
+
     @objc func showConsole(_ sender: Any?) { ConsoleWindowController.shared.show() }
 
     @objc func openGraph(_ sender: Any?) {

@@ -13,6 +13,8 @@ enum MainMenu {
         main.addItem(submenu(appName, [
             item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
             .separator(),
+            item("Settings…", #selector(AppDelegate.showSettings(_:)), ","),
+            .separator(),
             servicesItem(),
             .separator(),
             item("Hide \(appName)", #selector(NSApplication.hide(_:)), "h"),
@@ -23,6 +25,7 @@ enum MainMenu {
         ]))
 
         main.addItem(submenu("File", [
+            item("New Note", #selector(MainWindowController.newNote(_:)), "n"),
             item("Open…", #selector(MainWindowController.openQuickly(_:)), "o"),
             item("Open Graph…", #selector(AppDelegate.openGraph(_:)), "o", [.command, .shift]),
             .separator(),
@@ -115,6 +118,7 @@ enum MainMenu {
             item("Link…", #selector(OutlineTextView.addLink(_:)), "k"),
             .separator(),
             item("Bullet", #selector(OutlineTextView.toggleBullet(_:)), "8", [.command, .shift]),
+            item("Horizontal Line", #selector(OutlineTextView.insertHorizontalRule(_:)), "-", [.command, .option]),
             rowType,
         ]))
 

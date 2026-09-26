@@ -25,6 +25,18 @@ final class NotePaneController: NSViewController, OutlineTextViewNavigator {
         }
     }
 
+    /// Told when a note's title has settled on a new one — the one it had,
+    /// nil for none, and the new — as Reflect settles them: five quiet
+    /// seconds after a save, or on leaving the note; never for a change
+    /// read from disk. Set by the window.
+    static var onRetitle: ((_ ref: NoteRef, _ from: String?, _ to: String) -> Void)?
+    /// Told when a note is no longer shown here, and what it said.
+    static var onLeave: ((_ ref: NoteRef, _ text: String) -> Void)?
+    static let retitleDelay: TimeInterval = 5
+    private var baselineTitle: String?
+    private var pendingTitle: String?
+    private var retitleTimer: Timer?
+
     /// Where backlinks are found, and what opens them: set by the window.
     static var index: NoteIndex?
     static var openBacklink: ((_ path: String, _ link: String?, _ inSplit: Bool) -> Void)?
@@ -58,6 +70,7 @@ final class NotePaneController: NSViewController, OutlineTextViewNavigator {
         noteView.onSave = { [weak self] in
             guard let self else { return }
             onSave?(ref)
+            titleSaved()
             // Written into, or emptied: a topic, or no longer.
             refreshBacklinks()
         }
@@ -66,7 +79,50 @@ final class NotePaneController: NSViewController, OutlineTextViewNavigator {
         backlinks.onOpen = { path, link, inSplit in Self.openBacklink?(path, link, inSplit) }
         document.addSubview(backlinks)
         view = scrollView
+        baselineTitle = title(of: noteView.savedText)
         refreshBacklinks()
+    }
+
+    override func removeFromParent() {
+        super.removeFromParent()
+        if isViewLoaded { Self.onLeave?(ref, noteView.savedText) }
+    }
+
+    // MARK: Renames
+
+    private func title(of text: String) -> String? {
+        ref.day == nil ? TitleRename.authoredTitle(path: ref.path, source: text) : nil
+    }
+
+    /// A save of what was typed here: a new title waits to settle.
+    private func titleSaved() {
+        guard ref.day == nil, let title = title(of: noteView.savedText) else {
+            // No title to rename to: nothing waits, and the old one stands.
+            retitleTimer?.invalidate()
+            pendingTitle = nil
+            return
+        }
+        guard title != baselineTitle else {
+            retitleTimer?.invalidate()
+            pendingTitle = nil
+            return
+        }
+        pendingTitle = title
+        retitleTimer?.invalidate()
+        retitleTimer = Timer.scheduledTimer(withTimeInterval: Self.retitleDelay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.settleTitle() }
+        }
+    }
+
+    /// A title waiting to settle, settled now.
+    func settleTitle() {
+        retitleTimer?.invalidate()
+        retitleTimer = nil
+        guard let to = pendingTitle else { return }
+        let from = baselineTitle
+        baselineTitle = to
+        pendingTitle = nil
+        Self.onRetitle?(ref, from, to)
     }
 
     /// Whether the note is a topic — `topic: true`, or a note that says
@@ -146,9 +202,28 @@ final class NotePaneController: NSViewController, OutlineTextViewNavigator {
         NoteIndex.entry(path: ref.path, source: noteView.savedText).title
     }
 
-    func save() { noteView.save() }
-    func discard() { noteView.discard() }
-    func reloadFromDisk() { noteView.reloadIfChanged() }
+    func save() {
+        noteView.save()
+        settleTitle()
+    }
+
+    func discard() {
+        retitleTimer?.invalidate()
+        pendingTitle = nil
+        noteView.discard()
+    }
+
+    func reloadFromDisk() {
+        let before = noteView.savedText
+        noteView.reloadIfChanged()
+        // What came from disk is the note as it is: its title the one to
+        // rename from, and no rename of it waiting.
+        if noteView.savedText != before {
+            retitleTimer?.invalidate()
+            pendingTitle = nil
+            baselineTitle = title(of: noteView.savedText)
+        }
+    }
 
     // MARK: OutlineTextViewNavigator
 
