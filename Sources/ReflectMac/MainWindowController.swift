@@ -960,7 +960,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             item.view = progressRing
             progressRing.target = self
             progressRing.action = #selector(goToNextUnfinished(_:))
-            item.isBordered = true
+            // Flat, on the toolbar itself: no glass round it.
+            item.isBordered = false
             item.visibilityPriority = .high
             return item
         }
