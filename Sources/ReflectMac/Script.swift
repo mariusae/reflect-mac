@@ -334,6 +334,15 @@ enum Script {
                     print("next-unfinished row \(editor.rowIndex(at: editor.selectedRange().location)) of \(editor.paragraphRanges.count): \(editor.checkboxProgress.map { "\($0.done)/\($0.total)" } ?? "none")")
                     fflush(stdout)
                 }
+            case "peek-mode":
+                // peek-mode <n>: a mode chosen in the peeking sidebar, as its control would.
+                if let mode = Int(argument).flatMap(SidebarViewController.Mode.init(rawValue:)) { controller.peek?.sidebar.show(mode) }
+            case "modes":
+                print("modes: " + controller.sidebars.map { "\($0.mode.title)" }.joined(separator: " / "))
+                fflush(stdout)
+            case "peek":
+                // peek [hide]: the sidebar, put away, peeking out — or back.
+                if argument == "hide" { controller.peek?.hide() } else { controller.peek?.show() }
             case "open-window":
                 controller.openInWindow(argument)
             case "note-windows":

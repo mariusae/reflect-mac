@@ -213,8 +213,15 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     /// Shows a mode: its rows, and in Search, the field.
+    /// Told when the mode is changed here, or the search: another sidebar
+    /// — the peeking one — keeps to the same.
+    var onModeChange: ((Mode) -> Void)?
+    var onSearchChange: ((String) -> Void)?
+
     func show(_ mode: Mode) {
+        let changed = mode != self.mode
         self.mode = mode
+        if changed { onModeChange?(mode) }
         UserDefaults.standard.set(mode.rawValue, forKey: Self.modeKey)
         modes.selectedSegment = mode.rawValue
         let searching = mode == .search, tagging = mode == .tags || mode == .tasks
@@ -268,6 +275,8 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     private var query: String { field.stringValue.trimmingCharacters(in: .whitespaces) }
+    /// What the search field holds.
+    var currentQuery: String { field.stringValue }
 
     // MARK: Tasks
 
@@ -450,6 +459,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     @objc private func searchChanged(_ sender: Any?) {
         SessionState.shared.update(root) { $0.search = query.isEmpty ? nil : query }
         research()
+        onSearchChange?(field.stringValue)
     }
 
     /// Searches again — the notes have changed — keeping the results shown
@@ -465,11 +475,13 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         field.selectText(nil)
     }
 
-    /// Searches for something, as if typed.
-    func search(for text: String) {
+    /// Searches for something, as if typed — and shows Search, unless not.
+    func search(for text: String, switching: Bool = true) {
+        _ = view
+        guard field.stringValue != text || switching else { return }
         field.stringValue = text
         searchChanged(nil)
-        if mode != .search { show(.search) }
+        if switching, mode != .search { show(.search) }
     }
 
     /// Search, for a tag's notes.

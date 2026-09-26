@@ -91,9 +91,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             pictureText.update()
             sidebarNeedsReload()
         }
-        sidebar.onOpen = { [weak self] target, inSplit, found in self?.workspace.open(target, inSplit: inSplit, found: found) }
-        sidebar.onPin = { [weak self] path, pinned in self?.setPinned(path, pinned) }
-        sidebar.onReorder = { [weak self] pins in self?.renumberPins(pins) }
         NotificationCenter.default.addObserver(self, selector: #selector(typographyChanged(_:)), name: Typography.didChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(textChanged(_:)), name: NSText.didChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appWillTerminate(_:)), name: NSApplication.willTerminateNotification, object: nil)
@@ -103,9 +100,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         NotePaneController.openBacklink = { [weak self] path, link, inSplit in
             self?.workspace.open(OpenQuickly.target(for: path), inSplit: inSplit, found: link.map { .words([$0]) })
         }
-        sidebar.onTrash = { [weak self] path in self?.confirmTrash(path) }
-        sidebar.onOpenInWindow = { [weak self] path in self?.openInWindow(path) }
-        sidebar.onSetTask = { [weak self] task, done in self?.setTask(task, done: done) }
+        wire(sidebar)
         timeline.onSave = saved
         workspace.onSave = saved
         workspace.onChange = { [weak self] in
@@ -240,10 +235,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sidebarReload?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
-                self?.sidebar.reload()
-                self?.sidebar.refreshSearch()
+                self?.sidebars.forEach { $0.reload(); $0.refreshSearch() }
                 // Links may have come or gone.
-                self?.sidebar.follow(self?.sidebar.linked, force: true)
+                self?.sidebars.forEach { $0.follow($0.linked, force: true) }
                 self?.workspace.refreshBacklinks()
             }
         }
@@ -251,13 +245,63 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
+    /// Every sidebar showing: the window's, and the one peeking out.
+    var sidebars: [SidebarViewController] { [sidebar] + ((peek?.sidebar).map { [$0] } ?? []) }
+
+    /// What a sidebar tells, done — the window's and the peeking one alike.
+    private func wire(_ sidebar: SidebarViewController) {
+        sidebar.onOpen = { [weak self] target, inSplit, found in
+            self?.peek?.hide()
+            self?.workspace.open(target, inSplit: inSplit, found: found)
+        }
+        sidebar.onPin = { [weak self] path, pinned in self?.setPinned(path, pinned) }
+        sidebar.onReorder = { [weak self] pins in self?.renumberPins(pins) }
+        sidebar.onTrash = { [weak self] path in self?.confirmTrash(path) }
+        sidebar.onOpenInWindow = { [weak self] path in
+            self?.peek?.hide()
+            self?.openInWindow(path)
+        }
+        sidebar.onSetTask = { [weak self] task, done in self?.setTask(task, done: done) }
+        // One mode, one search, whichever sidebar they are changed in.
+        sidebar.onModeChange = { [weak self, weak sidebar] mode in
+            for other in self?.sidebars ?? [] where other !== sidebar && other.mode != mode { other.show(mode) }
+        }
+        sidebar.onSearchChange = { [weak self, weak sidebar] text in
+            for other in self?.sidebars ?? [] where other !== sidebar { other.search(for: text, switching: false) }
+        }
+    }
+
+    // MARK: The sidebar, peeking
+
+    private(set) var peek: PeekSidebar?
+
+    /// With the sidebar put away, the pointer at the window's left edge
+    /// brings it out over the notes, on glass — the notes stay where they are.
+    private func installPeek() {
+        guard let content = split.view as NSView?, peek == nil else { return }
+        let peeking = SidebarViewController(index: index, search: ReflectSearchIndex(root: graph.root),
+                                            pictures: pictureText.index, root: graph.root)
+        wire(peeking)
+        peek = PeekSidebar(sidebar: peeking, in: content, isCollapsed: { [weak self] in self?.sidebarItem.isCollapsed ?? false },
+                           willShow: { [weak self] in
+                               guard let self else { return }
+                               // As the window's sidebar was left — which the
+                               // peeking one, changed, has kept the same.
+                               if peeking.mode != sidebar.mode { peeking.show(sidebar.mode) }
+                               peeking.follow(sidebar.linked)
+                               peeking.search(for: sidebar.currentQuery, switching: false)
+                           })
+    }
+
     @objc func toggleSidebar(_ sender: Any?) {
+        peek?.hide(animated: false)
         split.toggleSidebar(sender)
     }
 
     /// View ▸ Pinned, Search, Tags: the sidebar in that mode, shown if it was not.
     @objc func showSidebarMode(_ sender: NSMenuItem) {
         if sidebarItem.isCollapsed { sidebarItem.animator().isCollapsed = false }
+        peek?.hide(animated: false)
         sidebar.show(SidebarViewController.Mode(rawValue: sender.tag) ?? .notes)
     }
 
@@ -305,7 +349,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     /// The sidebar's backlinks follow the note the keyboard is in.
     private func followFocus() {
-        sidebar.follow(focusedNotePath)
+        sidebars.forEach { $0.follow(focusedNotePath) }
     }
 
     /// The note the keyboard is in: its path.
@@ -369,8 +413,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         Log.shared.info("files", "Moved \(path) to the Trash")
         index.refresh(path)
         sync.noteChanged()
-        sidebar.reload()
-        sidebar.refreshSearch()
+        sidebars.forEach { $0.reload(); $0.refreshSearch() }
     }
 
     // MARK: New notes
@@ -500,7 +543,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         workspace.reloadFromDisk()
         for window in noteWindows.values { window.reloadFromDisk() }
         sync.noteChanged()
-        sidebar.refreshTasks()
+        sidebars.forEach { $0.refreshTasks() }
     }
 
     /// File ▸ Topic Note: makes the note the keyboard is in a topic —
@@ -529,7 +572,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         index.refresh(path)
         workspace.reloadFromDisk()
         sync.noteChanged()
-        sidebar.reload()
+        sidebars.forEach { $0.reload() }
     }
 
     /// Pins a note, after every other, as Reflect does — `pinned:` in its
@@ -550,7 +593,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         index.refresh(path)
         workspace.reloadFromDisk()
         sync.noteChanged()
-        sidebar.reload()
+        sidebars.forEach { $0.reload() }
     }
 
     /// Gives pinned notes new numbers — `pinned:` in each — putting the
@@ -572,7 +615,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         Log.shared.info("files", "Reordered the pinned notes", detail: pins.map { "\($0.path): \($0.order ?? 0)" }.joined(separator: "\n"))
         workspace.reloadFromDisk()
         sync.noteChanged()
-        sidebar.reload()
+        sidebars.forEach { $0.reload() }
     }
 
     private func showTitle() {
@@ -603,6 +646,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             window?.makeKeyAndOrderFront(nil)
             if state.consoleOpen == true { ConsoleWindowController.shared.show(); window?.makeKeyAndOrderFront(nil) }
             timeline.onScroll = { [weak self] in self?.noteState() }
+            installPeek()
             NotificationCenter.default.addObserver(self, selector: #selector(selectionChanged(_:)),
                                                    name: NSTextView.didChangeSelectionNotification, object: nil)
         }
