@@ -245,6 +245,13 @@ enum Script {
             case "trash-note":
                 // trash-note <path>: moved to the Trash, as if confirmed.
                 controller.trash(argument)
+            case "note-end":
+                // note-end: the main note scrolled to its end; whether it shows backlinks.
+                controller.workspace.main?.scrollToEnd()
+                print("note-end backlinks \(controller.workspace.main?.showsBacklinks ?? false)")
+                fflush(stdout)
+            case "topic":
+                controller.toggleTopic(nil)
             case "pin":
                 controller.togglePinned(nil)
             case "picture-text":

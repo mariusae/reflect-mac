@@ -20,6 +20,9 @@ public struct NoteEntry: Equatable, Sendable {
     public var pin: Pin? = nil
     /// The `#tags` in its text, each once, as first written.
     public var tags: [String] = []
+    /// Whether it is a topic note — frontmatter `topic: true` — whose
+    /// backlinks show after it.
+    public var isTopic = false
 
     public enum Pin: Equatable, Sendable, Comparable {
         case order(Double)
@@ -155,9 +158,10 @@ public final class NoteIndex: @unchecked Sendable {
             for part in parts where !part.isEmpty && keys.insert(foldKey(part)).inserted { aliases.append(part) }
         }
         let privacy = frontmatter.scalar("private").map { ["true", "yes", "on", "1"].contains($0.lowercased()) } ?? false
+        let topic = frontmatter.scalar("topic").map { ["true", "yes", "on", "1"].contains($0.lowercased()) } ?? false
         return NoteEntry(path: path, title: title, aliases: aliases, day: day, modified: modified,
                          isPrivate: privacy, titleIsHeading: titleIsHeading,
-                         pin: pin(frontmatter.scalar("pinned")), tags: tags(in: body))
+                         pin: pin(frontmatter.scalar("pinned")), tags: tags(in: body), isTopic: topic)
     }
 
     /// Reflect's reading of `pinned:`: `true` (or yes, on, 1) pins, a

@@ -302,6 +302,12 @@ final class WorkspaceController: NSViewController {
         side.reloadFromDisk()
     }
 
+    /// Topic notes shown look again at what links to them.
+    func refreshBacklinks() {
+        main?.refreshBacklinks()
+        side.pane?.refreshBacklinks()
+    }
+
     /// The title of what is shown in the main place.
     var noteTitle: String? { main?.noteTitle }
 }

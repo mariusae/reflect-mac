@@ -10,7 +10,8 @@ enum BacklinkText {
     static let rowLimit = 10
     static let textLimit = 320
 
-    static func attributed(_ context: BacklinkContext, size: CGFloat = NSFont.smallSystemFontSize + 1) -> NSAttributedString {
+    static func attributed(_ context: BacklinkContext, size: CGFloat = NSFont.smallSystemFontSize + 1,
+                           rowLimit: Int = BacklinkText.rowLimit) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let font = NSFont.systemFont(ofSize: size)
         let linked = linkKey(context.link)

@@ -31,6 +31,7 @@ enum MainMenu {
             .separator(),
             item("Show in Finder", #selector(MainWindowController.revealInFinder(_:)), "r", [.command, .shift]),
             item("Pin Note", #selector(MainWindowController.togglePinned(_:)), "p", [.command, .shift]),
+            item("Topic Note", #selector(MainWindowController.toggleTopic(_:))),
             item("Move Note to Trash…", #selector(MainWindowController.trashNote(_:)), "\u{8}", [.command, .shift]),
             .separator(),
             item("Close Window", #selector(NSWindow.performClose(_:)), "w"),

@@ -96,6 +96,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sidebar.onOpen = { [weak self] target, inSplit, found in self?.workspace.open(target, inSplit: inSplit, found: found) }
         sidebar.onPin = { [weak self] path, pinned in self?.setPinned(path, pinned) }
         sidebar.onReorder = { [weak self] pins in self?.renumberPins(pins) }
+        NotePaneController.index = index
+        NotePaneController.openBacklink = { [weak self] path, link, inSplit in
+            self?.workspace.open(OpenQuickly.target(for: path), inSplit: inSplit, found: link.map { .words([$0]) })
+        }
         sidebar.onTrash = { [weak self] path in self?.confirmTrash(path) }
         timeline.onSave = saved
         workspace.onSave = saved
@@ -167,6 +171,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 self?.sidebar.refreshSearch()
                 // Links may have come or gone.
                 self?.sidebar.follow(self?.sidebar.linked, force: true)
+                self?.workspace.refreshBacklinks()
             }
         }
         sidebarReload = work
@@ -258,6 +263,35 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sync.noteChanged()
         sidebar.reload()
         sidebar.refreshSearch()
+    }
+
+    /// File ▸ Topic Note: makes the note the keyboard is in a topic —
+    /// `topic: true`, its backlinks shown after it — or no longer one.
+    @objc func toggleTopic(_ sender: Any?) {
+        guard let path = focusedNotePath else { NSSound.beep(); return }
+        setFrontmatter(path, "topic", index.entry(path)?.isTopic == true ? nil : "true", verb: "Made a topic of")
+        workspace.refreshBacklinks()
+    }
+
+    /// Sets or takes away a frontmatter key of a note, and has everything
+    /// that shows it catch up.
+    private func setFrontmatter(_ path: String, _ key: String, _ value: String?, verb: String) {
+        workspace.saveAll()
+        guard let source = graph.read(path: path) else { NSSound.beep(); return }
+        let updated = Frontmatter.setting(key, to: value, in: source)
+        guard updated != source else { return }
+        do {
+            try graph.write(updated, path: path)
+        } catch {
+            Log.shared.error("files", "Could not change \(path)", detail: error.localizedDescription)
+            presentError(error)
+            return
+        }
+        Log.shared.info("files", "\(value == nil ? "Set back" : verb) \(path)", detail: "\(key): \(value ?? "—")")
+        index.refresh(path)
+        workspace.reloadFromDisk()
+        sync.noteChanged()
+        sidebar.reload()
     }
 
     /// Pins a note, after every other, as Reflect does — `pinned:` in its
@@ -518,6 +552,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             guard let path = focusedNotePath else { return false }
             return GraphPaths.day(fromDailyPath: path) == nil && graph.exists(path: path)
         }
+        if item.action == #selector(toggleTopic(_:)) {
+            guard let path = focusedNotePath, graph.read(path: path) != nil else {
+                item.state = .off
+                return false
+            }
+            item.state = index.entry(path)?.isTopic == true ? .on : .off
+            return true
+        }
         if item.action == #selector(togglePinned(_:)) {
             guard let path = focusedNotePath, graph.read(path: path) != nil else {
                 item.title = "Pin Note"
@@ -614,11 +656,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             // What can be done to the note the keyboard is in.
             let item = NSMenuToolbarItem(itemIdentifier: identifier)
             item.label = "Note"
-            item.toolTip = "Pin or Delete This Note"
+            item.toolTip = "Pin, Make a Topic, or Delete This Note"
             item.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Note")
             item.showsIndicator = false
             let menu = NSMenu()
             menu.addItem(withTitle: "Pin Note", action: #selector(togglePinned(_:)), keyEquivalent: "")
+            menu.addItem(withTitle: "Topic Note", action: #selector(toggleTopic(_:)), keyEquivalent: "")
             menu.addItem(withTitle: "Show in Finder", action: #selector(revealNoteInFinder(_:)), keyEquivalent: "")
             menu.addItem(.separator())
             menu.addItem(withTitle: "Move Note to Trash…", action: #selector(trashNote(_:)), keyEquivalent: "")

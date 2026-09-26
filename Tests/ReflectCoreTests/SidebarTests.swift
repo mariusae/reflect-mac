@@ -65,7 +65,19 @@ import Testing
         guard let path = ProcessInfo.processInfo.environment["REFLECT_GRAPH"] else { return }
         let index = NoteIndex(root: URL(fileURLWithPath: path))
         index.scan()
-        #expect(index.pinned.count == 18)
+        // As many as there are notes saying `pinned:` — something other than false.
+        let root = URL(fileURLWithPath: path)
+        var expected = 0
+        for directory in ["notes", "daily"] {
+            for file in (try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent(directory).path)) ?? []
+            where file.hasSuffix(".md") {
+                let text = (try? String(contentsOf: root.appendingPathComponent("\(directory)/\(file)"), encoding: .utf8)) ?? ""
+                if let line = text.split(separator: "\n").first(where: { $0.hasPrefix("pinned:") }),
+                   NoteIndex.pin(String(line.dropFirst("pinned:".count))) != nil { expected += 1 }
+            }
+        }
+        #expect(expected > 0)
+        #expect(index.pinned.count == expected)
         print("pinned:", index.pinned.map(\.title).joined(separator: " · "))
         print("tags:", index.tags.prefix(30).map { "\($0.name) (\($0.count))" }.joined(separator: " · "))
     }

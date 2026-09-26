@@ -49,6 +49,16 @@ import Testing
                 == ["middle item\n  deep [[Target]] mention"])
     }
 
+    @Test func knowsEmptyNotesAndTopics() {
+        #expect(Backlinks.isEmpty(OutlineMarkdown.parse("---\nid: x\n---\n# Title\n").rows))
+        #expect(Backlinks.isEmpty(OutlineMarkdown.parse("# Title\n\n- \n").rows))
+        #expect(Backlinks.isEmpty(OutlineMarkdown.parse("").rows))
+        #expect(!Backlinks.isEmpty(OutlineMarkdown.parse("# Title\n\n- a thought\n").rows))
+        #expect(!Backlinks.isEmpty(OutlineMarkdown.parse("just text\n").rows))
+        #expect(NoteIndex.entry(path: "notes/a.md", source: "---\ntopic: true\n---\n# A\n").isTopic)
+        #expect(!NoteIndex.entry(path: "notes/a.md", source: "# A\n").isTopic)
+    }
+
     @Test func findsLinkingNotesNewestFirst() throws {
         let manager = FileManager.default
         let root = manager.temporaryDirectory.appendingPathComponent("backlinks-\(UUID())")

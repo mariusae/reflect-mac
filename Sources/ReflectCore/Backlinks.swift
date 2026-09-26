@@ -63,6 +63,15 @@ public enum Backlinks {
         return keys
     }
 
+    /// Whether a note says nothing but its title: a topic, then, shown as
+    /// what links to it.
+    public static func isEmpty(_ rows: [Row]) -> Bool {
+        rows.enumerated().allSatisfy { index, row in
+            if index == 0, case .heading(1) = row.kind { return true }
+            return row.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
     /// The contexts of the links in a note's rows that `mentions` says lead
     /// to the note.
     public static func contexts(in outline: Outline, mentions: (String) -> Bool) -> [BacklinkContext] {
