@@ -194,7 +194,10 @@ final class OutlineLayoutManager: NSLayoutManager {
             guard let image = NSImage(systemSymbolName: name, accessibilityDescription: done ? "Done" : "To do")?
                 .withSymbolConfiguration(configuration) else { return }
             let size = image.size
-            image.draw(in: NSRect(x: center.x - size.width / 2, y: center.y - size.height / 2, width: size.width, height: size.height),
+            // A box as tall as a capital: centred on the capitals, as a
+            // symbol sits beside words, not on the small letters as a dot.
+            let middle = baseline - font.capHeight / 2
+            image.draw(in: NSRect(x: center.x - size.width / 2, y: middle - size.height / 2, width: size.width, height: size.height),
                        from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         case .number(let label):
             let attributes: [NSAttributedString.Key: Any] = [
