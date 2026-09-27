@@ -1,0 +1,13 @@
+// The GitHub App the phone signs in with. Its details go in
+// GitHub.local.xcconfig, beside this file and never committed:
+//
+//     GITHUB_CLIENT_ID = Iv23li…
+//     GITHUB_CLIENT_SECRET = …
+//     GITHUB_APP_SLUG = the-app-name-in-its-url
+//
+// A native app cannot keep a secret; GitHub's advice is to ship it and
+// sign in with PKCE, which the app does.
+GITHUB_CLIENT_ID =
+GITHUB_CLIENT_SECRET =
+GITHUB_APP_SLUG =
+#include? "GitHub.local.xcconfig"

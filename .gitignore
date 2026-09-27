@@ -3,3 +3,7 @@ build/
 .DS_Store
 *.xcodeproj
 .swiftpm/
+!iOS/ReflectiOS.xcodeproj/
+iOS/ReflectiOS.xcodeproj/xcuserdata/
+iOS/ReflectiOS.xcodeproj/project.xcworkspace/xcuserdata/
+iOS/GitHub.local.xcconfig

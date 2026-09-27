@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ReflectCore
+import ReflectGit2
 
 /// Reflect's own sync tests (`src-tauri/src/git/tests.rs`), run against this
 /// implementation: a bare remote, and two devices with clones of it.
@@ -42,7 +43,7 @@ private final class Fixture {
 
     @discardableResult
     func shell(_ arguments: [String], in directory: URL) throws -> String {
-        try Git(root: directory).run(arguments)
+        try CommandLineGit(root: directory).run(arguments)
     }
 }
 
@@ -57,24 +58,39 @@ private func read(_ root: URL, _ path: String) throws -> String {
 }
 
 private func headMessage(_ root: URL) throws -> String {
-    try Git(root: root).run(["log", "-1", "--format=%s"]).trimmingCharacters(in: .whitespacesAndNewlines)
+    try CommandLineGit(root: root).run(["log", "-1", "--format=%s"]).trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 private func headPaths(_ root: URL) throws -> [String] {
-    try Git(root: root).run(["ls-tree", "-r", "--name-only", "HEAD"]).split(separator: "\n").map(String.init)
+    try CommandLineGit(root: root).run(["ls-tree", "-r", "--name-only", "HEAD"]).split(separator: "\n").map(String.init)
 }
 
 private func isClean(_ root: URL) -> Bool {
     !FileManager.default.fileExists(atPath: root.appendingPathComponent(".git/MERGE_HEAD").path)
 }
 
+/// Which way the sync's steps are done: every sync test runs both ways, so
+/// the phone's libgit2 syncs as the Mac's `git` does.
+enum SyncBackend: String, CaseIterable, CustomStringConvertible {
+    case commandLine, libgit2
+
+    var description: String { rawValue }
+
+    func git(_ root: URL) -> Git {
+        switch self {
+        case .commandLine: Git(root: root)
+        case .libgit2: Git(backend: LibGit2Backend(root: root)!)
+        }
+    }
+}
+
 @Suite(.serialized) struct GitSyncTests {
 
     // MARK: Committing
 
-    @Test func commitDescribesSingleNoteChanges() throws {
+    @Test(arguments: SyncBackend.allCases) func commitDescribesSingleNoteChanges(_ backend: SyncBackend) throws {
         let fixture = try Fixture()
-        let git = Git(root: fixture.deviceA)
+        let git = backend.git(fixture.deviceA)
         try write(fixture.deviceA, "notes/project-atlas.md", "# Project Atlas\n")
         _ = try git.cycle(.push)
         #expect(try headMessage(fixture.deviceA) == "Add Project Atlas")
@@ -86,9 +102,9 @@ private func isClean(_ root: URL) -> Bool {
         #expect(try headMessage(fixture.deviceA) == "Delete Project Atlas")
     }
 
-    @Test func commitUsesAuthoredSubjectsAndHidesPrivateOnes() throws {
+    @Test(arguments: SyncBackend.allCases) func commitUsesAuthoredSubjectsAndHidesPrivateOnes(_ backend: SyncBackend) throws {
         let fixture = try Fixture()
-        let git = Git(root: fixture.deviceA)
+        let git = backend.git(fixture.deviceA)
         try write(fixture.deviceA, "notes/01arz3ndektsv4rrffq69g5fav.md", "---\ntitle: \"Project #1\"\n---\n# Ignored H1\n")
         _ = try git.cycle(.push)
         #expect(try headMessage(fixture.deviceA) == "Add Project #1")
@@ -100,9 +116,9 @@ private func isClean(_ root: URL) -> Bool {
         #expect(try headMessage(fixture.deviceA) == "Add daily note for 2026-06-23")
     }
 
-    @Test func commitDescribesRenamesAndBatches() throws {
+    @Test(arguments: SyncBackend.allCases) func commitDescribesRenamesAndBatches(_ backend: SyncBackend) throws {
         let fixture = try Fixture()
-        let git = Git(root: fixture.deviceA)
+        let git = backend.git(fixture.deviceA)
         let body = "\n\n- stable body line one\n- stable body line two\n- stable body line three\n"
         try write(fixture.deviceA, "notes/original.md", "# Original Name" + body)
         _ = try git.cycle(.push)
@@ -127,42 +143,42 @@ private func isClean(_ root: URL) -> Bool {
         #expect(try headMessage(fixture.deviceA) == "Add 1 note and 1 file")
     }
 
-    @Test func commitLeavesOutTheIndexAndLargeFiles() throws {
+    @Test(arguments: SyncBackend.allCases) func commitLeavesOutTheIndexAndLargeFiles(_ backend: SyncBackend) throws {
         let fixture = try Fixture()
         try write(fixture.deviceA, ".reflect/index.sqlite", "index")
         try write(fixture.deviceA, "notes/a.md", "# A\n")
         let big = fixture.deviceA.appendingPathComponent("assets/video.mov")
         FileManager.default.createFile(atPath: big.path, contents: nil)
         try FileHandle(forWritingTo: big).truncate(atOffset: UInt64(Git.maxFileBytes))
-        let report = try Git(root: fixture.deviceA).cycle(.push)
+        let report = try backend.git(fixture.deviceA).cycle(.push)
         #expect(report.skippedLargeFiles.map(\.path) == ["assets/video.mov"])
         #expect(try headPaths(fixture.deviceA) == ["notes/a.md"])
     }
 
-    @Test func commitWorksWhenTheIgnoreFileAlreadyLeavesOutTheIndex() throws {
+    @Test(arguments: SyncBackend.allCases) func commitWorksWhenTheIgnoreFileAlreadyLeavesOutTheIndex(_ backend: SyncBackend) throws {
         // Reflect writes `/.reflect/` into every graph's .gitignore.
         let fixture = try Fixture()
         try write(fixture.deviceA, ".gitignore", "# Reflect local index + caches (rebuildable; never committed)\n/.reflect/\n")
         try write(fixture.deviceA, ".reflect/index.sqlite", "index")
         try write(fixture.deviceA, "daily/2026-09-25.md", "- today\n")
-        _ = try Git(root: fixture.deviceA).cycle(.full)
+        _ = try backend.git(fixture.deviceA).cycle(.full)
         #expect(try headPaths(fixture.deviceA) == [".gitignore", "daily/2026-09-25.md"])
     }
 
     // MARK: Merging
 
     /// Both devices start from `path` holding `text`, pushed by the first.
-    private func shared(_ path: String, _ text: String) throws -> (Fixture, Git, Git, URL) {
+    private func shared(_ backend: SyncBackend, _ path: String, _ text: String) throws -> (Fixture, Git, Git, URL) {
         let fixture = try Fixture()
         try write(fixture.deviceA, path, text)
-        let a = Git(root: fixture.deviceA)
+        let a = backend.git(fixture.deviceA)
         _ = try a.cycle(.push)
         let deviceB = try fixture.secondDevice()
-        return (fixture, a, Git(root: deviceB), deviceB)
+        return (fixture, a, backend.git(deviceB), deviceB)
     }
 
-    @Test func conflictingEditsAreCommittedWithLabelledMarkers() throws {
-        let (fixture, a, b, deviceB) = try shared("notes/shared.md", "# Shared\n\noriginal line\n")
+    @Test(arguments: SyncBackend.allCases) func conflictingEditsAreCommittedWithLabelledMarkers(_ backend: SyncBackend) throws {
+        let (fixture, a, b, deviceB) = try shared(backend, "notes/shared.md", "# Shared\n\noriginal line\n")
         try write(deviceB, "notes/shared.md", "# Shared\n\nedited on b\n")
         _ = try b.cycle(.push)
         try write(fixture.deviceA, "notes/shared.md", "# Shared\n\nedited on a\n")
@@ -180,8 +196,8 @@ private func isClean(_ root: URL) -> Bool {
         #expect(try read(deviceB, "notes/shared.md") == content)
     }
 
-    @Test func editVersusDeleteKeepsTheEdit() throws {
-        let (fixture, a, b, deviceB) = try shared("notes/keep.md", "# Keep\n\noriginal\n")
+    @Test(arguments: SyncBackend.allCases) func editVersusDeleteKeepsTheEdit(_ backend: SyncBackend) throws {
+        let (fixture, a, b, deviceB) = try shared(backend, "notes/keep.md", "# Keep\n\noriginal\n")
         try write(deviceB, "notes/keep.md", "# Keep\n\nedited on b\n")
         _ = try b.cycle(.push)
         try FileManager.default.removeItem(at: fixture.deviceA.appendingPathComponent("notes/keep.md"))
@@ -193,15 +209,15 @@ private func isClean(_ root: URL) -> Bool {
         #expect(isClean(fixture.deviceA))
     }
 
-    @Test func binaryConflictKeepsBothCopies() throws {
+    @Test(arguments: SyncBackend.allCases) func binaryConflictKeepsBothCopies(_ backend: SyncBackend) throws {
         let fixture = try Fixture()
         let image = fixture.deviceA.appendingPathComponent("assets/img.bin")
         try Data([0, 98, 97, 115, 101, 1]).write(to: image)
-        let a = Git(root: fixture.deviceA)
+        let a = backend.git(fixture.deviceA)
         _ = try a.cycle(.push)
         let deviceB = try fixture.secondDevice()
         try Data([0, 66, 1]).write(to: deviceB.appendingPathComponent("assets/img.bin"))
-        _ = try Git(root: deviceB).cycle(.push)
+        _ = try backend.git(deviceB).cycle(.push)
         try Data([0, 65, 1]).write(to: image)
 
         let report = try a.cycle(.full)
@@ -211,8 +227,8 @@ private func isClean(_ root: URL) -> Bool {
         #expect(isClean(fixture.deviceA))
     }
 
-    @Test func renameRenameKeepsBothNames() throws {
-        let (fixture, a, b, deviceB) = try shared("notes/orig.md", "# Original\n\nshared content that travels with the rename\n")
+    @Test(arguments: SyncBackend.allCases) func renameRenameKeepsBothNames(_ backend: SyncBackend) throws {
+        let (fixture, a, b, deviceB) = try shared(backend, "notes/orig.md", "# Original\n\nshared content that travels with the rename\n")
         try FileManager.default.moveItem(at: deviceB.appendingPathComponent("notes/orig.md"),
                                          to: deviceB.appendingPathComponent("notes/renamed-b.md"))
         _ = try b.cycle(.push)
@@ -227,9 +243,9 @@ private func isClean(_ root: URL) -> Bool {
         #expect(isClean(fixture.deviceA))
     }
 
-    @Test func renameOnOneDeviceMergesWithAnEditOnTheOther() throws {
+    @Test(arguments: SyncBackend.allCases) func renameOnOneDeviceMergesWithAnEditOnTheOther(_ backend: SyncBackend) throws {
         let base = "# Meeting Notes\n\n- agenda point one\n- agenda point two\n- agenda point three\n"
-        let (fixture, a, b, deviceB) = try shared("notes/01arz3ndektsv4rrffq69g5fav.md", base)
+        let (fixture, a, b, deviceB) = try shared(backend, "notes/01arz3ndektsv4rrffq69g5fav.md", base)
         try write(deviceB, "notes/01arz3ndektsv4rrffq69g5fav.md",
                   "# Meeting Notes\n\n- agenda point one\n- agenda point two EDITED ON B\n- agenda point three\n")
         _ = try b.cycle(.push)
@@ -242,8 +258,8 @@ private func isClean(_ root: URL) -> Bool {
         #expect(!FileManager.default.fileExists(atPath: fixture.deviceA.appendingPathComponent("notes/01arz3ndektsv4rrffq69g5fav.md").path))
     }
 
-    @Test func theSameNoteMadeOnTwoDevicesIsAConflictToReview() throws {
-        let (fixture, a, b, deviceB) = try shared("notes/seed.md", "# Seed\n")
+    @Test(arguments: SyncBackend.allCases) func theSameNoteMadeOnTwoDevicesIsAConflictToReview(_ backend: SyncBackend) throws {
+        let (fixture, a, b, deviceB) = try shared(backend, "notes/seed.md", "# Seed\n")
         try write(deviceB, "notes/meeting.md", "# Meeting\n\nnotes from device b\n")
         _ = try b.cycle(.push)
         try write(fixture.deviceA, "notes/meeting.md", "# Meeting\n\nnotes from device a\n")
@@ -256,8 +272,8 @@ private func isClean(_ root: URL) -> Bool {
         #expect(isClean(fixture.deviceA))
     }
 
-    @Test func aPushTurnedAwayMergesAndTriesAgain() throws {
-        let (fixture, a, b, deviceB) = try shared("daily/2026-06-23.md", "- one\n")
+    @Test(arguments: SyncBackend.allCases) func aPushTurnedAwayMergesAndTriesAgain(_ backend: SyncBackend) throws {
+        let (fixture, a, b, deviceB) = try shared(backend, "daily/2026-06-23.md", "- one\n")
         try write(deviceB, "notes/b.md", "# B\n")
         _ = try b.cycle(.push)
         try write(fixture.deviceA, "notes/a.md", "# A\n")
@@ -270,13 +286,55 @@ private func isClean(_ root: URL) -> Bool {
         #expect(try headMessage(fixture.deviceA) == "Merge changes from other devices")
     }
 
-    @Test func aDetachedHeadIsRefused() throws {
+    @Test(arguments: SyncBackend.allCases) func aDetachedHeadIsRefused(_ backend: SyncBackend) throws {
         let fixture = try Fixture()
         try write(fixture.deviceA, "notes/a.md", "# A\n")
-        let git = Git(root: fixture.deviceA)
+        let git = backend.git(fixture.deviceA)
         _ = try git.cycle(.push)
-        try git.run(["checkout", "--quiet", "--detach"])
+        try CommandLineGit(root: fixture.deviceA).run(["checkout", "--quiet", "--detach"])
         #expect(throws: GitError.self) { try git.cycle(.full) }
+    }
+
+    /// The phone: a clone through libgit2, syncing with a Mac that
+    /// uses `git` — both ways, through a conflict. (The phone clones only
+    /// the latest commit, but libgit2 cannot do that from a folder.)
+    @Test func aCloneSyncsWithTheMac() throws {
+        let fixture = try Fixture()
+        let mac = Git(root: fixture.deviceA)
+        try write(fixture.deviceA, "notes/shared.md", "# Shared\n\noriginal line\n")
+        _ = try mac.cycle(.push)
+        try write(fixture.deviceA, "daily/2026-09-25.md", "- from the mac\n")
+        _ = try mac.cycle(.push)
+
+        let phoneRoot = fixture.directory.appendingPathComponent("phone")
+        let phone = Git(backend: try LibGit2Backend.clone(fixture.remote.path, to: phoneRoot))
+        #expect(try read(phoneRoot, "daily/2026-09-25.md") == "- from the mac\n")
+
+        try write(phoneRoot, "notes/shared.md", "# Shared\n\nedited on the phone\n")
+        try write(phoneRoot, "daily/2026-09-26.md", "- from the phone\n")
+        _ = try phone.cycle(.push)
+        try write(fixture.deviceA, "notes/shared.md", "# Shared\n\nedited on the mac\n")
+
+        let report = try mac.cycle(.full)
+        #expect(report.conflicted == ["notes/shared.md"])
+        #expect(try read(fixture.deviceA, "daily/2026-09-26.md") == "- from the phone\n")
+
+        _ = try phone.cycle(.full)
+        #expect(try read(phoneRoot, "notes/shared.md") == read(fixture.deviceA, "notes/shared.md"))
+        #expect(isClean(phoneRoot))
+    }
+
+    /// What the phone does first: only the latest commit, over HTTPS. Uses
+    /// the network, so only with `REFLECT_NETWORK_TESTS=1`.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["REFLECT_NETWORK_TESTS"] == "1"))
+    func aShallowCloneOverHTTPS() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("reflect-clone-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let backend = try LibGit2Backend.clone("https://github.com/libgit2/TestGitRepository", to: directory, depth: 1)
+        #expect(backend.commitCount() == 1)
+        #expect(try backend.currentBranch() != nil)
+        let git = Git(backend: backend)
+        _ = try git.cycle(.full)
     }
 
     @Test func conflictCopyPathsStayInTheirDirectory() {

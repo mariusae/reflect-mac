@@ -7,9 +7,10 @@ public final class Graph: @unchecked Sendable {
     /// The repository the graph is kept in, when it is kept in one.
     public let git: Git?
 
-    public init(root: URL) {
+    /// A graph kept in step through a repository, or in none.
+    public init(root: URL, git: Git?) {
         self.root = root.standardizedFileURL
-        self.git = Git.open(root)
+        self.git = git
     }
 
     // MARK: Any note, by its graph-relative path
