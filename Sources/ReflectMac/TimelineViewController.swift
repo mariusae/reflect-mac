@@ -326,6 +326,12 @@ final class TimelineViewController: NSViewController, OutlineTextViewNavigator {
         let view = view(for: day)
         guard !view.hasConflict else { return }
         view.window?.makeFirstResponder(view.editor)
+        // Where the day was left, brought into sight; a day not written in
+        // here before, at its end — or its start, when its end is out of sight.
+        if view.restoreSelection() {
+            view.editor.scrollRangeToVisible(view.editor.selectedRange())
+            return
+        }
         view.editor.enter(from: .bottom, x: .greatestFiniteMagnitude, scrolling: false)
         let caret = view.editor.convert(view.editor.firstRectOfSelection, to: document)
         if !scrollView.contentView.bounds.contains(NSPoint(x: caret.minX, y: caret.maxY)) {

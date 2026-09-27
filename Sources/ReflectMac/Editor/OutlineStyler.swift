@@ -271,6 +271,11 @@ enum InlineMarkdown {
                     storage.addAttribute(.outlineFileLead, value: pill, range: NSRange(location: open.location, length: 1))
                     storage.addAttribute(.outlineFileTail, value: pill, range: NSRange(location: close.location, length: 1))
                     storage.addAttribute(.foregroundColor, value: NSColor.labelColor, range: content)
+                    // A PDF shows itself too, below the link.
+                    if let size = images?.pdfSize(target) {
+                        storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: size),
+                                             range: NSRange(location: span.range.location, length: 1))
+                    }
                 }
             case .url(let target):
                 if let url = URL(string: target) {
@@ -358,6 +363,12 @@ final class HiddenMarkupGlyphs: NSObject, NSLayoutManagerDelegate {
         lineFragmentRect.pointee.size.height = height
         lineFragmentUsedRect.pointee.size.height = height
         return true
+    }
+
+    /// Laid out: the PDFs' views go where their room now is.
+    func layoutManager(_ layoutManager: NSLayoutManager, didCompleteLayoutFor textContainer: NSTextContainer?, atEnd layoutFinishedFlag: Bool) {
+        guard let view = (layoutManager as? OutlineLayoutManager)?.outlineView else { return }
+        MainActor.assumeIsolated { view.schedulePDFPlacement() }
     }
 
     func layoutManager(_ layoutManager: NSLayoutManager, shouldUse action: NSLayoutManager.ControlCharacterAction,

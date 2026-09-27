@@ -84,6 +84,7 @@ final class NotePaneController: NSViewController, OutlineTextViewNavigator {
     }
 
     override func removeFromParent() {
+        rememberScroll()
         super.removeFromParent()
         if isViewLoaded { Self.onLeave?(ref, noteView.savedText) }
     }
@@ -193,10 +194,43 @@ final class NotePaneController: NSViewController, OutlineTextViewNavigator {
         document.scroll(NSPoint(x: 0, y: max(0, document.frame.height - scrollView.contentView.bounds.height)))
     }
 
-    /// Puts the keyboard in the note, at the end of what is written.
+    /// Puts the keyboard in the note where it was left, scrolled as it was
+    /// left; a note not read here before, at the end of what is written.
     func focus() {
         view.window?.makeFirstResponder(noteView.editor)
-        if !noteView.hasConflict { noteView.editor.enter(from: .bottom, x: .greatestFiniteMagnitude, scrolling: false) }
+        guard !noteView.hasConflict else { return }
+        if noteView.restoreSelection() {
+            restoreScroll()
+        } else {
+            noteView.editor.enter(from: .bottom, x: .greatestFiniteMagnitude, scrolling: false)
+        }
+    }
+
+    /// Scrolls to where the note was left — once laid out now, and again
+    /// once the window has laid it out as it shows it.
+    private func restoreScroll() {
+        let offset = SessionState.shared.place(graph.root, ref)?.offset
+        let apply = { [weak self] in
+            guard let self else { return }
+            view.layoutSubtreeIfNeeded()
+            if let offset {
+                let bottom = max(0, document.frame.height - scrollView.contentView.bounds.height)
+                document.scroll(NSPoint(x: 0, y: min(CGFloat(offset), bottom)))
+            } else {
+                noteView.editor.scrollRangeToVisible(noteView.editor.selectedRange())
+            }
+        }
+        apply()
+        DispatchQueue.main.async(execute: apply)
+    }
+
+    /// How far down the note is scrolled.
+    var scrollOffset: CGFloat { scrollView.contentView.bounds.minY }
+
+    /// Notes how far down the note is scrolled, to come back to.
+    private func rememberScroll() {
+        guard isViewLoaded, view.window != nil else { return }
+        SessionState.shared.setOffset(graph.root, ref, Double(scrollOffset))
     }
 
     /// The note's title, as the window shows it.
@@ -207,6 +241,7 @@ final class NotePaneController: NSViewController, OutlineTextViewNavigator {
     func save() {
         noteView.save()
         settleTitle()
+        rememberScroll()
     }
 
     func discard() {

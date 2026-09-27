@@ -112,6 +112,8 @@ final class OutlineLayoutManager: NSLayoutManager {
             for (box, frame) in ImageLine.frames(in: storage, characters: characters, container: container,
                                                    fragment: fragment, indent: indent) {
                 let rect = frame.offsetBy(dx: origin.x, dy: origin.y)
+                // A PDF is a view of its own, over this room.
+                if box.isPDF { continue }
                 if let tweet = store.tweet(box.source) {
                     TweetCard.draw(tweet, in: rect, images: store)
                     continue
@@ -266,6 +268,29 @@ final class OutlineLayoutManager: NSLayoutManager {
         return ImageLine.frames(in: storage, characters: characters, container: container, fragment: fragment, indent: indent)
             .first { $0.frame.contains(inContainer) }
             .map { ($0.box, $0.frame.offsetBy(dx: origin.x, dy: origin.y)) }
+    }
+
+    /// Where each PDF shown in the text goes, in the text view: its box,
+    /// the character its link starts at, and its frame. Lays the text out
+    /// as far as the last of them.
+    func pdfFrames(origin: NSPoint) -> [(box: ImageBox, location: Int, frame: NSRect)] {
+        guard let storage = textStorage, let container = textContainers.first, storage.length > 0,
+              storage.string.localizedCaseInsensitiveContains(".pdf") else { return [] }
+        var found: [(ImageBox, Int, NSRect)] = []
+        storage.enumerateAttribute(.outlineImage, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let box = value as? ImageBox, box.isPDF else { return }
+            let glyph = glyphIndexForCharacter(at: range.location)
+            guard glyph < numberOfGlyphs else { return }
+            var lineGlyphs = NSRange()
+            let fragment = lineFragmentRect(forGlyphAt: glyph, effectiveRange: &lineGlyphs)
+            let characters = characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil)
+            let indent = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle)?.headIndent ?? 0
+            if let frame = ImageLine.frames(in: storage, characters: characters, container: container, fragment: fragment, indent: indent)
+                .first(where: { $0.box === box })?.frame {
+                found.append((box, range.location, frame.offsetBy(dx: origin.x, dy: origin.y)))
+            }
+        }
+        return found
     }
 
     /// The row whose handle is at a point in the text view, if any.

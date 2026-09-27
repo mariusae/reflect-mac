@@ -378,6 +378,22 @@ final class DayView: NSView, NSTextViewDelegate {
 
     // MARK: NSTextViewDelegate
 
+    /// Where the caret is, noted as it moves while it is here — not as the
+    /// note is loaded or changed from disk — so the note opens there again.
+    func textViewDidChangeSelection(_ notification: Notification) {
+        guard window?.firstResponder === editor, !hasConflict else { return }
+        SessionState.shared.setSelection(graph.root, ref, editor.selectedRange())
+    }
+
+    /// The caret put back where the note was left, when it was left
+    /// somewhere still in it. Says whether it was.
+    func restoreSelection() -> Bool {
+        guard let place = SessionState.shared.place(graph.root, ref), let length = editor.textStorage?.length else { return false }
+        let location = min(place.location, length)
+        editor.setSelectedRange(NSRange(location: location, length: min(place.length, length - location)))
+        return true
+    }
+
     func textDidChange(_ notification: Notification) {
         // Folding is an edit to the text on screen, if not to the note.
         SessionState.shared.setFolds(graph.root, ref, OutlineFolds.marks(editor.rows))

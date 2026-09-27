@@ -299,6 +299,29 @@ enum Script {
                 default: break
                 }
                 Typography.current = typography
+            case "pdf":
+                // pdf next|previous|resize <w> <h>|state: the first PDF in the note in the main place.
+                if let editor = controller.workspace.main?.noteView.editor {
+                    editor.placePDFs()
+                    if let preview = editor.pdfPreviews.values.first {
+                        let parts = argument.split(separator: " ")
+                        switch parts.first {
+                        case "next": preview.showNext()
+                        case "previous": preview.showPrevious()
+                        case "resize" where parts.count == 3:
+                            preview.onResize?(CGSize(width: Double(parts[1]) ?? 0, height: Double(parts[2]) ?? 0))
+                        default:
+                            print("pdf \(preview.source) page \(preview.pageIndex + 1)/\(preview.pageCount) frame \(Int(preview.frame.width))x\(Int(preview.frame.height)) at \(Int(preview.frame.minY))")
+                            fflush(stdout)
+                        }
+                    }
+                }
+            case "note-place":
+                // note-place: the caret and scroll of the note in the main place.
+                if let main = controller.workspace.main {
+                    print("note-place \(main.ref.path) caret \(main.noteView.editor.selectedRange().location) scroll \(Int(main.scrollOffset))")
+                    fflush(stdout)
+                }
             case "caret-row":
                 // caret-row <n>: the caret at the end of row n of the note the keyboard is in.
                 if let editor = controller.window?.firstResponder as? OutlineTextView, let n = Int(argument), n < editor.paragraphRanges.count {

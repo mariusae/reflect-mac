@@ -26,6 +26,8 @@ final class ImageStore: @unchecked Sendable {
     private var videos: [String: Video?] = [:]
     /// The pills of files linked from notes, by source.
     var pills: [String: FilePill] = [:]
+    /// Each PDF's first page, its height to its width.
+    var pdfAspects: [String: CGFloat] = [:]
     /// The pictures a post's card shows, and the post's source: when one
     /// arrives, the card is drawn again.
     private var dependents: [String: Set<String>] = [:]
@@ -314,6 +316,9 @@ final class ImageBox: NSObject {
         guard size.width > width, width > 0 else { return CGSize(width: size.width.rounded(), height: size.height.rounded()) }
         return CGSize(width: width.rounded(), height: (size.height * width / size.width).rounded())
     }
+
+    /// Whether it is a PDF's preview, not a picture.
+    var isPDF: Bool { source.lowercased().hasSuffix(".pdf") }
 
     /// Space above and below a picture.
     static let margin: CGFloat = 4

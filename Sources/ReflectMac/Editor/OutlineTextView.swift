@@ -370,6 +370,69 @@ final class OutlineTextView: NSTextView {
         updateLinkCompletion()
     }
 
+    // MARK: PDFs
+
+    /// The PDFs shown in the text, as live views: by source, and which
+    /// time the note shows that source, so a view outlives restyling.
+    private(set) var pdfPreviews: [String: PDFPreview] = [:]
+    private var pdfPlacementPending = false
+
+    /// Moves the PDFs' views to their room, once the text has settled.
+    func schedulePDFPlacement() {
+        guard !pdfPlacementPending else { return }
+        pdfPlacementPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            pdfPlacementPending = false
+            placePDFs()
+        }
+    }
+
+    func placePDFs() {
+        guard let manager = layoutManager as? OutlineLayoutManager, let images else { return }
+        var seen = Set<String>()
+        var counts: [String: Int] = [:]
+        for (box, _, frame) in manager.pdfFrames(origin: textContainerOrigin) {
+            let count = counts[box.source, default: 0]
+            counts[box.source] = count + 1
+            let key = "\(box.source)#\(count)"
+            seen.insert(key)
+            let preview = pdfPreviews[key] ?? {
+                guard let url = images.graphFile(box.source) else { return nil }
+                let made = PDFPreview(source: box.source, url: url, root: images.root)
+                made.onResize = { [weak self, weak made] size in
+                    guard let self, let made else { return }
+                    resizePDF(made, to: size)
+                }
+                addSubview(made)
+                pdfPreviews[key] = made
+                return made
+            }()
+            guard let preview else { continue }
+            if preview.frame != frame.integral { preview.frame = frame.integral }
+        }
+        for (key, preview) in pdfPreviews where !seen.contains(key) {
+            preview.removeFromSuperview()
+            pdfPreviews[key] = nil
+        }
+    }
+
+    /// A PDF made larger or smaller by its grip: no wider than its column,
+    /// no smaller than it can be read in; kept, and every note showing it
+    /// laid out again.
+    private func resizePDF(_ preview: PDFPreview, to size: CGSize) {
+        let indent = preview.frame.minX - textContainerOrigin.x
+        let column = (textContainer?.size.width ?? 600) - indent - 2 * (textContainer?.lineFragmentPadding ?? 0)
+        let width = min(max(size.width, PDFPreview.minimum.width), max(PDFPreview.minimum.width, column)).rounded()
+        let height = min(max(size.height, PDFPreview.minimum.height), 2400).rounded()
+        guard let root = images?.root else { return }
+        SessionState.shared.setPDF(root, preview.source) {
+            $0.width = width
+            $0.height = height
+        }
+        NotificationCenter.default.post(name: ImageStore.didLoad, object: preview.source)
+    }
+
     @objc private func pictureArrived(_ notification: Notification) {
         guard let source = notification.object as? String, textStorage!.string.contains(source) else { return }
         styler.styleAll(textStorage!)
