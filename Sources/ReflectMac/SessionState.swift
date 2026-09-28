@@ -51,6 +51,8 @@ final class SessionState {
         var places: [String: NotePlace]?
         /// By the PDF's source in the graph.
         var pdfs: [String: PDFPlace]?
+        /// The picture each carousel shows, by its first picture's source.
+        var carousels: [String: Int]?
         var consoleOpen: Bool?
         /// The note open in the window's main place, when not the timeline.
         var mainNote: String?
@@ -133,6 +135,15 @@ final class SessionState {
         change(&place)
         guard place != pdf(root, source) else { return }
         update(root) { $0.pdfs = ($0.pdfs ?? [:]).merging([source: place]) { $1 } }
+    }
+
+    func carouselIndex(_ root: URL, _ first: String) -> Int {
+        graph(root).carousels?[first] ?? 0
+    }
+
+    func setCarouselIndex(_ root: URL, _ first: String, _ index: Int) {
+        guard carouselIndex(root, first) != index else { return }
+        update(root) { $0.carousels = ($0.carousels ?? [:]).merging([first: index]) { $1 } }
     }
 
     func setFolds(_ root: URL, _ note: NoteRef, _ marks: [OutlineFolds.Mark]) {

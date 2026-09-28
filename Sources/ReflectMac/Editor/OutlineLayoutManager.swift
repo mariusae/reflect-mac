@@ -114,6 +114,10 @@ final class OutlineLayoutManager: NSLayoutManager {
                 let rect = frame.offsetBy(dx: origin.x, dy: origin.y)
                 // A PDF is a view of its own, over this room.
                 if box.isPDF { continue }
+                if box.carousel != nil, let view = outlineView {
+                    Carousel.draw(box, index: view.carouselIndex(box), in: rect, images: store)
+                    continue
+                }
                 if let tweet = store.tweet(box.source) {
                     TweetCard.draw(tweet, in: rect, images: store)
                     continue
@@ -274,11 +278,17 @@ final class OutlineLayoutManager: NSLayoutManager {
     /// the character its link starts at, and its frame. Lays the text out
     /// as far as the last of them.
     func pdfFrames(origin: NSPoint) -> [(box: ImageBox, location: Int, frame: NSRect)] {
-        guard let storage = textStorage, let container = textContainers.first, storage.length > 0,
-              storage.string.localizedCaseInsensitiveContains(".pdf") else { return [] }
+        guard let storage = textStorage, storage.string.localizedCaseInsensitiveContains(".pdf") else { return [] }
+        return pictureFrames(origin: origin) { $0.isPDF }
+    }
+
+    /// Where each picture, card or PDF in the text is, in the text view,
+    /// that passes a test: its box, the character it starts at, and its frame.
+    func pictureFrames(origin: NSPoint, where include: (ImageBox) -> Bool = { _ in true }) -> [(box: ImageBox, location: Int, frame: NSRect)] {
+        guard let storage = textStorage, let container = textContainers.first, storage.length > 0 else { return [] }
         var found: [(ImageBox, Int, NSRect)] = []
         storage.enumerateAttribute(.outlineImage, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
-            guard let box = value as? ImageBox, box.isPDF else { return }
+            guard let box = value as? ImageBox, include(box) else { return }
             let glyph = glyphIndexForCharacter(at: range.location)
             guard glyph < numberOfGlyphs else { return }
             var lineGlyphs = NSRange()

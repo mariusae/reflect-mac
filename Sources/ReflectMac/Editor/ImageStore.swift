@@ -304,10 +304,14 @@ extension NSAttributedString.Key {
 final class ImageBox: NSObject {
     let source: String
     let size: CGSize
+    /// Pictures written side by side, shown one at a time: all of their
+    /// sources, in order, this box's first. Nil for a picture on its own.
+    let carousel: [String]?
 
-    init(source: String, size: CGSize) {
+    init(source: String, size: CGSize, carousel: [String]? = nil) {
         self.source = source
         self.size = size
+        self.carousel = carousel
     }
 
     /// The size it is drawn at in a column so wide: never wider than the

@@ -22,18 +22,31 @@ extension OutlineTextView {
         case text(Int)
         /// A row of its own, at an index among the rows, at a depth.
         case row(index: Int, depth: Int)
+        /// Straight after a picture, at a place in the text view's text:
+        /// in a carousel with it.
+        case join(Int)
     }
 
     // MARK: Dragging from
 
     /// Starts dragging a picture, from the mouse-down that picked it up.
     func beginDragging(_ picture: ImageBox, frame: NSRect, event: NSEvent) {
-        guard let location = rangeOfPicture(picture)?.location,
-              let span = spans(atRowOf: location).first(where: { span in
+        guard let location = rangeOfPicture(picture)?.location else { return }
+        let spans = spans(atRowOf: location)
+        guard var span = spans.first(where: { span in
                   guard span.range.location == location else { return false }
                   if case .url = span.kind { return true }
                   return span.isImage
               }) else { return }
+        var picture = picture
+        // From a carousel, the picture it shows.
+        if let members = picture.carousel {
+            let pictures = spans.filter { $0.isImage && $0.range.location >= location }
+            let index = carouselIndex(picture)
+            guard index < pictures.count, index < members.count else { return }
+            span = pictures[index]
+            picture = ImageBox(source: members[index], size: frame.size)
+        }
         let markdown = (textStorage!.string as NSString).substring(with: span.range)
         draggedPicture = DraggedPicture(markdown: markdown, range: span.range)
 
@@ -59,8 +72,10 @@ extension OutlineTextView {
                 TweetCard.draw(tweet, in: rect, images: images)
             } else if let video = images.video(picture.source) {
                 VideoCard.draw(video, in: rect, images: images)
-            } else {
-                images.image(picture.source)?.draw(in: rect)
+            } else if let image = images.image(picture.source), image.size.width > 0, image.size.height > 0 {
+                let scale = min(rect.width / image.size.width, rect.height / image.size.height)
+                let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+                image.draw(in: NSRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height))
             }
             return true
         }
@@ -90,31 +105,48 @@ extension OutlineTextView {
     func pictureDragUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard isEditable else { return [] }
         let point = convert(sender.draggingLocation, from: nil)
-        switch pictureDrop(at: point) {
+        let drop = pictureDrop(at: point, joining: Self.isPictureMarkdown(sender))
+        dropRing.isHidden = true
+        switch drop {
         case .text:
             dropLine.isHidden = true
             _ = super.draggingUpdated(sender)
         case .row(let index, let depth):
             super.draggingExited(sender)
             showDropLine(index: index, depth: depth)
+        case .join:
+            super.draggingExited(sender)
+            dropLine.isHidden = true
+            if let frame = outlineLayout.pictureFrame(at: point, origin: textContainerOrigin)?.frame {
+                if dropRing.superview !== self { addSubview(dropRing) }
+                dropRing.frame = frame.insetBy(dx: -3, dy: -3)
+                dropRing.isHidden = false
+            }
         }
         return sender.draggingSource is OutlineTextView ? .move : .copy
     }
 
     func pictureDragEnded() {
         dropLine.isHidden = true
+        dropRing.isHidden = true
+    }
+
+    /// Whether what is dragged is a picture's Markdown, which can join a carousel.
+    static func isPictureMarkdown(_ sender: NSDraggingInfo) -> Bool {
+        sender.draggingPasteboard.string(forType: pictureType)?.hasPrefix("![") ?? false
     }
 
     /// Puts a dropped picture in place, taking it from where it was when it
     /// came from a note.
     func dropPicture(_ sender: NSDraggingInfo) -> Bool {
         dropLine.isHidden = true
+        dropRing.isHidden = true
         guard isEditable, let markdown = sender.draggingPasteboard.string(forType: Self.pictureType) else { return false }
         let point = convert(sender.draggingLocation, from: nil)
         let source = (sender.draggingSource as? OutlineTextView).flatMap { view in
             view.draggedPicture.map { (view, $0.range) }
         }
-        movePicture(markdown, from: source, to: pictureDrop(at: point))
+        movePicture(markdown, from: source, to: pictureDrop(at: point, joining: Self.isPictureMarkdown(sender)))
         return true
     }
 
@@ -131,6 +163,11 @@ extension OutlineTextView {
         if case .text(let location) = drop {
             let index = rowIndex(at: location)
             textTarget = (index, snapped(min(location - ranges[index].location, (after[index].text as NSString).length), inRow: index))
+        }
+        if case .join(let location) = drop {
+            // Exactly where it is asked for: straight after the picture.
+            let index = rowIndex(at: location)
+            textTarget = (index, min(location - ranges[index].location, (after[index].text as NSString).length))
         }
         var removed: (row: Int, gone: Bool)?
 
@@ -153,6 +190,15 @@ extension OutlineTextView {
 
         var caret: CaretPosition
         switch drop {
+        case .join:
+            guard let (index, offset) = textTarget else { return }
+            let text = after[index].text as NSString
+            after[index].text = text.replacingCharacters(in: NSRange(location: offset, length: 0), with: markdown)
+            caret = CaretPosition(row: index, offset: offset + (markdown as NSString).length)
+            if let (row, gone) = removed, gone, row != index {
+                after.remove(at: row)
+                if caret.row > row { caret.row -= 1 }
+            }
         case .text:
             guard let (index, offset) = textTarget else { return }
             let text = after[index].text as NSString
@@ -256,7 +302,9 @@ extension OutlineTextView {
     /// Where a picture dropped at a point goes: in among the text under it,
     /// or — dropped between rows, before a row's text, or on a row's
     /// pictures — in a row of its own, there.
-    func pictureDrop(at point: NSPoint) -> PictureDrop {
+    func pictureDrop(at point: NSPoint, joining: Bool = false) -> PictureDrop {
+        // Onto a picture: into a carousel with it.
+        if joining, let target = joinTarget(at: point) { return .join(target) }
         guard let layout = layoutManager, let container = textContainer, let storage = textStorage, storage.length > 0 else {
             return .row(index: 0, depth: 0)
         }
@@ -291,6 +339,19 @@ extension OutlineTextView {
         return .text(characterIndexForInsertion(at: point))
     }
 
+    /// Where a picture dropped onto one at a point is written: straight
+    /// after it — after the last of its carousel, when it is in one. Nil off
+    /// a picture, or on a card or a PDF, which carousels do not take.
+    private func joinTarget(at point: NSPoint) -> Int? {
+        guard let (box, _) = outlineLayout.pictureFrame(at: point, origin: textContainerOrigin), !box.isPDF,
+              let images, box.carousel != nil || Carousel.isPicture(box.source, images: images),
+              let location = rangeOfPicture(box)?.location else { return nil }
+        let pictures = spans(atRowOf: location).filter { $0.isImage && $0.range.location >= location }
+        let count = box.carousel?.count ?? 1
+        guard count <= pictures.count else { return nil }
+        return NSMaxRange(pictures[count - 1].range)
+    }
+
     /// A row's rectangle in the text container: all its lines, pictures and all.
     private func rowRect(_ paragraph: NSRange) -> NSRect {
         guard let layout = layoutManager else { return .zero }
@@ -317,6 +378,29 @@ extension OutlineTextView {
         dropLine.frame = NSRect(x: x, y: textContainerOrigin.y + y - 1.5, width: width, height: 3)
         dropLine.isHidden = false
     }
+}
+
+/// Round a picture another dragged onto it would join.
+final class DropRingView: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.borderWidth = 3
+        isHidden = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func updateLayer() {
+        layer?.borderColor = NSColor.controlAccentColor.cgColor
+        layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 /// The line a picture's new row would go at.

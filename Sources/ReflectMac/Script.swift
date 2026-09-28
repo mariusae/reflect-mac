@@ -20,9 +20,15 @@ enum Script {
               let text = try? String(contentsOfFile: path, encoding: .utf8) else { return }
         let lines = text.split(separator: "\n").map(String.init).filter { !$0.hasPrefix("#") && !$0.isEmpty }
         // Commands in menus go to the key window, which a script run from a
-        // terminal does not otherwise get.
-        NSApp.activate(ignoringOtherApps: true)
-        controller.window?.makeKeyAndOrderFront(nil)
+        // terminal does not otherwise get. With REFLECT_SCRIPT_BACKGROUND set,
+        // the app never comes forward — so what someone is typing elsewhere
+        // stays there — and the script sticks to commands that need no keys.
+        if ProcessInfo.processInfo.environment["REFLECT_SCRIPT_BACKGROUND"] == nil {
+            NSApp.activate(ignoringOtherApps: true)
+            controller.window?.makeKeyAndOrderFront(nil)
+        } else {
+            controller.window?.orderBack(nil)
+        }
         step(lines[...], controller, after: 1.0)
     }
 
@@ -316,6 +322,57 @@ enum Script {
                         }
                     }
                 }
+            case "picture":
+                // picture list | next | join <i> <j> | split <text>: the main note's pictures —
+                // listed; the first carousel turned; picture i dropped onto picture j;
+                // the first picture dropped into the split note, on some text.
+                guard let editor = controller.workspace.main?.noteView.editor else { break }
+                let frames = editor.outlineLayout.pictureFrames(origin: editor.textContainerOrigin)
+                let parts = argument.split(separator: " ", maxSplits: 1).map(String.init)
+                switch parts.first {
+                case "next":
+                    if let carousel = frames.first(where: { $0.box.carousel != nil }) {
+                        let button = Carousel.nextButton(in: carousel.frame)
+                        _ = editor.clickCarousel(carousel.box, frame: carousel.frame, at: NSPoint(x: button.midX, y: button.midY))
+                    }
+                case "join":
+                    let numbers = (parts.count > 1 ? parts[1] : "").split(separator: " ").compactMap { Int($0) }
+                    guard numbers.count == 2, numbers.allSatisfy({ $0 < frames.count }) else { break }
+                    let moving = frames[numbers[0]], onto = frames[numbers[1]]
+                    guard let span = editor.spans(atRowOf: moving.location).first(where: { $0.range.location == moving.location }) else { break }
+                    let markdown = (editor.string as NSString).substring(with: span.range)
+                    let drop = editor.pictureDrop(at: NSPoint(x: onto.frame.midX, y: onto.frame.midY), joining: markdown.hasPrefix("!["))
+                    editor.movePicture(markdown, from: (editor, span.range), to: drop)
+                case "split":
+                    guard let target = controller.workspace.split?.noteView.editor, let first = frames.first,
+                          let span = editor.spans(atRowOf: first.location).first(where: { $0.range.location == first.location }) else { break }
+                    let markdown = (editor.string as NSString).substring(with: span.range)
+                    let at = (target.string as NSString).range(of: parts.count > 1 ? parts[1] : "")
+                    target.movePicture(markdown, from: (editor, span.range), to: .text(at.location == NSNotFound ? 0 : NSMaxRange(at)))
+                default:
+                    for (index, item) in frames.enumerated() {
+                        let kind = item.box.carousel.map { "carousel \(editor.carouselIndex(item.box) + 1)/\($0.count)" } ?? "picture"
+                        print("picture \(index) \(kind) \(item.box.source) \(Int(item.frame.width))x\(Int(item.frame.height))")
+                    }
+                    fflush(stdout)
+                }
+            case "magic-link":
+                // magic-link <words> | <address>: the words in the main note selected, and the address pasted on them.
+                let parts = argument.components(separatedBy: " | ")
+                if let editor = controller.workspace.main?.noteView.editor, parts.count == 2 {
+                    let range = (editor.string as NSString).range(of: parts[0])
+                    if range.location != NSNotFound {
+                        editor.setSelectedRange(range)
+                        print("magic-link \(editor.linkSelection(to: parts[1]))")
+                        fflush(stdout)
+                    }
+                }
+            case "note-text":
+                // note-text [split]: the main (or split) note as saved.
+                let pane = argument == "split" ? controller.workspace.split : controller.workspace.main
+                pane?.save()
+                if let pane { print("--- \(pane.ref.path)\n\(controller.graph.read(path: pane.ref.path) ?? "")---") }
+                fflush(stdout)
             case "note-place":
                 // note-place: the caret and scroll of the note in the main place.
                 if let main = controller.workspace.main {

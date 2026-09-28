@@ -241,7 +241,9 @@ enum InlineMarkdown {
             storage.attribute(.font, at: location, effectiveRange: nil) as? NSFont ?? base
         }
         let found = InlineMarkup.spans(in: text, range: body)
-        for span in images?.resolve(found) ?? found.map(unshown) {
+        let resolved = images?.resolve(found) ?? found.map(unshown)
+        let carousels = images.map { Carousel.groups(in: resolved, text: text, images: $0) } ?? [:]
+        for span in resolved {
             let content = span.content
             switch span.kind {
             case .strong:
@@ -291,7 +293,13 @@ enum InlineMarkdown {
                     storage.addAttributes([.link: url, .foregroundColor: NSColor.linkColor], range: content)
                 }
             case .image(let reference):
-                if let size = images?.size(of: reference) {
+                // Pictures side by side: one carousel, drawn at the first's place.
+                if let group = carousels[span.range.location] {
+                    if let group {
+                        storage.addAttribute(.outlineImage, value: ImageBox(source: reference.source, size: group.size, carousel: group.sources),
+                                             range: NSRange(location: span.range.location, length: 1))
+                    }
+                } else if let size = images?.size(of: reference) {
                     storage.addAttribute(.outlineImage, value: ImageBox(source: reference.source, size: size),
                                          range: NSRange(location: span.range.location, length: 1))
                 }

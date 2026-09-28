@@ -61,6 +61,8 @@ final class OutlineTextView: NSTextView {
     var draggedPicture: DraggedPicture?
     /// Where a dragged picture's new row would go.
     let dropLine = DropLineView()
+    /// Round the picture a dragged one would join, in a carousel.
+    let dropRing = DropRingView()
     /// How selected text looks, set aside while rows are selected, which
     /// look like rows instead.
     private var textSelectionAttributes: [NSAttributedString.Key: Any] = [:]
@@ -730,11 +732,14 @@ final class OutlineTextView: NSTextView {
             clickHandle(ofRow: index)
             return
         }
-        if let picture = outlineLayout.pictureHit(at: point, origin: textContainerOrigin) {
+        if let (picture, frame) = outlineLayout.pictureFrame(at: point, origin: textContainerOrigin) {
             window?.makeFirstResponder(self)
+            // A carousel's buttons and dots turn it.
+            if picture.carousel != nil, clickCarousel(picture, frame: frame, at: point) { return }
             if event.clickCount >= 2 {
                 // Double-clicked, a picture opens in the app that opens it.
-                if let url = URL(string: picture.source) { navigator?.outlineView(self, open: url, inSplit: false) }
+                let source = picture.carousel.map { $0[carouselIndex(picture)] } ?? picture.source
+                if let url = URL(string: source) { navigator?.outlineView(self, open: url, inSplit: false) }
             } else if let location = rangeOfPicture(picture)?.location {
                 // Once, it takes the caret beside it — or, moved, it is dragged.
                 let start = event.locationInWindow
@@ -1305,6 +1310,8 @@ final class OutlineTextView: NSTextView {
     }
 
     override func paste(_ sender: Any?) {
+        // A link pasted on words: the words link to it.
+        if let url = Self.pastedLink(.general), linkSelection(to: url) { return }
         let files = incoming(from: .general)
         if !files.isEmpty {
             add(files)
@@ -1317,6 +1324,62 @@ final class OutlineTextView: NSTextView {
             return
         }
         pasteRows(OutlineMarkdown.parse(text).unfoldedRows)
+    }
+
+    // MARK: Magic links
+
+    /// A web or mail address, when that is all the pasteboard holds.
+    static func pastedLink(_ pasteboard: NSPasteboard) -> String? {
+        pasteboard.string(forType: .string).flatMap(address(in:))
+    }
+
+    /// Text that is a web or mail address and nothing else, trimmed.
+    static func address(in text: String) -> String? {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !text.contains(where: \.isWhitespace),
+              let url = URL(string: text), let scheme = url.scheme?.lowercased(),
+              ["http", "https", "mailto"].contains(scheme), scheme == "mailto" || url.host != nil else { return nil }
+        return text
+    }
+
+    /// Makes the words selected a link to an address: `[words](address)` —
+    /// or, when they are a link's words already, points that link there.
+    /// Only words on one line, and not an address themselves. Says whether
+    /// it did.
+    func linkSelection(to address: String) -> Bool {
+        let selection = selectedRange()
+        guard selectedRows == nil, selection.length > 0, let storage = textStorage, NSMaxRange(selection) <= storage.length else { return false }
+        let text = storage.string as NSString
+        let words = text.substring(with: selection)
+        guard !words.contains("\n"), !words.contains("\u{2028}"), Self.address(in: words) == nil else { return false }
+        // Brackets and spaces in an address would end its Markdown early.
+        let target = address.replacingOccurrences(of: " ", with: "%20").replacingOccurrences(of: "(", with: "%28")
+            .replacingOccurrences(of: ")", with: "%29")
+        // As a change to the row's text, as a whole: the address goes in
+        // among hidden Markdown, which typing is kept out of.
+        let index = rowIndex(at: selection.location)
+        let start = paragraphRanges[index].location
+        let before = rows
+        var after = before
+        let row = after[index].text as NSString
+        let caret: Int
+        if let span = spans(atRowOf: selection.location).first(where: { span in
+            guard case .link = span.kind else { return false }
+            return NSLocationInRange(selection.location, span.content) && NSMaxRange(selection) <= NSMaxRange(span.content)
+        }), let close = span.markup.last {
+            // Already a link's words: only where it goes changes.
+            let old = NSRange(location: close.location + 2 - start, length: max(0, close.length - 3))
+            after[index].text = row.replacingCharacters(in: old, with: target)
+            caret = NSMaxRange(span.range) - start - old.length + (target as NSString).length
+        } else {
+            let escaped = words.replacingOccurrences(of: "[", with: "\\[").replacingOccurrences(of: "]", with: "\\]")
+            let markdown = "[\(escaped)](\(target))"
+            after[index].text = row.replacingCharacters(in: NSRange(location: selection.location - start, length: selection.length), with: markdown)
+            caret = selection.location - start + (markdown as NSString).length
+        }
+        replace(before, with: after, actionName: "Link")
+        restoreCaret(CaretPosition(row: index, offset: caret))
+        return true
     }
 
     /// The rows and all inside them, as Markdown standing on its own.
