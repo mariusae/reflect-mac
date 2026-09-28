@@ -610,6 +610,8 @@ final class OutlineTextView: NSTextView {
 
     /// The row under the pointer.
     private(set) var hoveredRow: Int?
+    /// The picture under the pointer, whose grip shows.
+    var hoveredPictureFrame: NSRect?
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -624,7 +626,12 @@ final class OutlineTextView: NSTextView {
         super.mouseMoved(with: event)
         let point = convert(event.locationInWindow, from: nil)
         hover(at: point)
+        hoverPicture(at: point)
         showLinkCard(at: point)
+        if onPictureGrip(point) {
+            NSCursor.frameResize(position: .bottomRight, directions: .all).set()
+            return
+        }
         // Bullets, checkboxes and pictures are things to click, not text:
         // over them the pointer is the arrow.
         if outlineLayout.handleHit(at: point, origin: textContainerOrigin) != nil
@@ -635,7 +642,9 @@ final class OutlineTextView: NSTextView {
 
     override func cursorUpdate(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if outlineLayout.handleHit(at: point, origin: textContainerOrigin) != nil
+        if onPictureGrip(point) {
+            NSCursor.frameResize(position: .bottomRight, directions: .all).set()
+        } else if outlineLayout.handleHit(at: point, origin: textContainerOrigin) != nil
             || outlineLayout.pictureHit(at: point, origin: textContainerOrigin) != nil {
             NSCursor.arrow.set()
         } else {
@@ -646,6 +655,7 @@ final class OutlineTextView: NSTextView {
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
         hover(at: nil)
+        hoverPicture(at: nil)
         LinkCard.shared.scheduleHide()
     }
 
@@ -730,6 +740,11 @@ final class OutlineTextView: NSTextView {
         if let index = outlineLayout.handleHit(at: point, origin: textContainerOrigin) {
             window?.makeFirstResponder(self)
             clickHandle(ofRow: index)
+            return
+        }
+        if onPictureGrip(point) {
+            window?.makeFirstResponder(self)
+            dragPictureGrip(event)
             return
         }
         if let (picture, frame) = outlineLayout.pictureFrame(at: point, origin: textContainerOrigin) {

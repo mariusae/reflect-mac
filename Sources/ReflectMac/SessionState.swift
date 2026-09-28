@@ -44,6 +44,11 @@ final class SessionState {
         var height: Double?
     }
 
+    struct PictureSize: Codable, Equatable {
+        var width: Double
+        var height: Double
+    }
+
     struct Graph: Codable {
         var top: Place?
         var focus: Focus?
@@ -53,6 +58,8 @@ final class SessionState {
         var pdfs: [String: PDFPlace]?
         /// The picture each carousel shows, by its first picture's source.
         var carousels: [String: Int]?
+        /// The size each picture, or carousel, was given here, by `ImageBox.sizeKey`.
+        var pictureSizes: [String: PictureSize]?
         var consoleOpen: Bool?
         /// The note open in the window's main place, when not the timeline.
         var mainNote: String?
@@ -72,7 +79,10 @@ final class SessionState {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Reflect Mac")
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-        url = support.appendingPathComponent("State.json")
+        // A scripted run keeps its own: it must not write over the state of
+        // the app someone is using, nor have that written over its own.
+        let scripted = ProcessInfo.processInfo.environment["REFLECT_SCRIPT"] != nil
+        url = support.appendingPathComponent(scripted ? "State (scripts).json" : "State.json")
         if let data = try? Data(contentsOf: url), let stored = try? JSONDecoder().decode([String: Graph].self, from: data) {
             graphs = stored
         }
@@ -144,6 +154,21 @@ final class SessionState {
     func setCarouselIndex(_ root: URL, _ first: String, _ index: Int) {
         guard carouselIndex(root, first) != index else { return }
         update(root) { $0.carousels = ($0.carousels ?? [:]).merging([first: index]) { $1 } }
+    }
+
+    func pictureSize(_ root: URL, _ key: String) -> CGSize? {
+        graph(root).pictureSizes?[key].map { CGSize(width: $0.width, height: $0.height) }
+    }
+
+    /// Keeps the size a picture was given; nil forgets it, for its own.
+    func setPictureSize(_ root: URL, _ key: String, _ size: CGSize?) {
+        let value = size.map { PictureSize(width: Double($0.width), height: Double($0.height)) }
+        guard graph(root).pictureSizes?[key] != value else { return }
+        update(root) { state in
+            var sizes = state.pictureSizes ?? [:]
+            sizes[key] = value
+            state.pictureSizes = sizes.isEmpty ? nil : sizes
+        }
     }
 
     func setFolds(_ root: URL, _ note: NoteRef, _ marks: [OutlineFolds.Mark]) {

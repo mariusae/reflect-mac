@@ -24,7 +24,8 @@ enum Carousel {
             defer { run.removeAll() }
             guard run.count >= 2 else { return }
             let sizes = run.compactMap { images.naturalSize($0.source) }
-            let size = CGSize(width: sizes.map(\.width).max() ?? 400, height: sizes.map(\.height).max() ?? 300)
+            let size = images.viewerSize(ImageBox.sizeKey(source: run[0].source, carousel: true))
+                ?? CGSize(width: sizes.map(\.width).max() ?? 400, height: sizes.map(\.height).max() ?? 300)
             result[run[0].span.range.location] = Group(sources: run.map(\.source), size: size)
             for member in run.dropFirst() { result.updateValue(nil, forKey: member.span.range.location) }
         }

@@ -153,11 +153,10 @@ enum MainMenu {
             item("Actual Size", #selector(MainWindowController.makeTextStandardSize(_:))),
             .separator(),
             item("Show Sidebar", #selector(MainWindowController.toggleSidebar(_:)), "s", [.command, .control]),
-            tagged(item("Notes", #selector(MainWindowController.showSidebarMode(_:)), "1"), 0),
-            tagged(item("Search", #selector(MainWindowController.showSidebarMode(_:)), "2"), 1),
-            tagged(item("Tags", #selector(MainWindowController.showSidebarMode(_:)), "3"), 2),
-            tagged(item("Backlinks", #selector(MainWindowController.showSidebarMode(_:)), "4"), 3),
-            tagged(item("Tasks", #selector(MainWindowController.showSidebarMode(_:)), "5"), 4),
+            ] + SidebarViewController.Mode.shown.enumerated().map { position, mode in
+                // Tagged with the mode, numbered as it is shown.
+                tagged(item(mode.title, #selector(MainWindowController.showSidebarMode(_:)), "\(position + 1)"), mode.rawValue)
+            } + [
             .separator(),
             item("Close Split View", #selector(MainWindowController.closeSplitView(_:))),
             .separator(),

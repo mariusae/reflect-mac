@@ -54,6 +54,10 @@ final class ImageStore: @unchecked Sendable {
         // A post is the card's size, whatever the note says.
         if Tweet.id(from: reference.source) != nil || Video.id(from: reference.source) != nil { return naturalSize(reference.source) }
         guard let natural = naturalSize(reference.source), natural.width > 0, natural.height > 0 else { return nil }
+        // Made larger or smaller here: its width, in its own shape.
+        if let given = viewerSize(ImageBox.sizeKey(source: reference.source, carousel: false)) {
+            return CGSize(width: given.width, height: (given.width * natural.height / natural.width).rounded())
+        }
         switch (reference.width, reference.height) {
         case let (width?, height?): return CGSize(width: width, height: height)
         case let (width?, nil): return CGSize(width: width, height: width * natural.height / natural.width)
@@ -89,6 +93,11 @@ final class ImageStore: @unchecked Sendable {
         }
         fetch(source, from: url, to: cached)
         return nil
+    }
+
+    /// The size a picture, or carousel, was given here, when it was.
+    func viewerSize(_ key: String) -> CGSize? {
+        MainActor.assumeIsolated { SessionState.shared.pictureSize(root, key) }
     }
 
     /// Calls back once, when a picture sent for arrives.
@@ -323,6 +332,20 @@ final class ImageBox: NSObject {
 
     /// Whether it is a PDF's preview, not a picture.
     var isPDF: Bool { source.lowercased().hasSuffix(".pdf") }
+
+    /// What the size it was given here is kept under.
+    var sizeKey: String { Self.sizeKey(source: source, carousel: carousel != nil) }
+
+    static func sizeKey(source: String, carousel: Bool) -> String {
+        carousel ? "carousel " + source : source
+    }
+
+    /// Whether it can be made larger or smaller here: a picture or a
+    /// carousel — not a card, whose size is its own, nor a PDF, which has
+    /// its own grip.
+    var isResizable: Bool {
+        carousel != nil || (!isPDF && Tweet.id(from: source) == nil && Video.id(from: source) == nil)
+    }
 
     /// Space above and below a picture.
     static let margin: CGFloat = 4

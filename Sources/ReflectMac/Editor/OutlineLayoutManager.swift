@@ -116,6 +116,7 @@ final class OutlineLayoutManager: NSLayoutManager {
                 if box.isPDF { continue }
                 if box.carousel != nil, let view = outlineView {
                     Carousel.draw(box, index: view.carouselIndex(box), in: rect, images: store)
+                    if view.hoveredPictureFrame == rect { Self.drawPictureGrip(in: rect) }
                     continue
                 }
                 if let tweet = store.tweet(box.source) {
@@ -136,6 +137,7 @@ final class OutlineLayoutManager: NSLayoutManager {
                     rect.fill()
                 }
                 NSGraphicsContext.restoreGraphicsState()
+                if outlineView?.hoveredPictureFrame == rect, box.isResizable { Self.drawPictureGrip(in: rect) }
             }
         }
     }

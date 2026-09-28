@@ -10,12 +10,17 @@ import ReflectCore
 final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate,
     NSMenuDelegate {
     enum Mode: Int, CaseIterable {
-        case notes, search, tags, backlinks, tasks
+        case notes, search, tags, backlinks, tasks, outline
 
-        var title: String { ["Notes", "Search", "Tags", "Backlinks", "Tasks"][rawValue] }
-        /// What its segment shows: a symbol, so five fit the narrowest sidebar.
-        var symbol: String { ["doc.text", "magnifyingglass", "number", "link", "checklist"][rawValue] }
-        var label: String { ["Notes", "Search", "Tags", "Links", "Tasks"][rawValue] }
+        var title: String { ["Notes", "Search", "Tags", "Backlinks", "Tasks", "Outline"][rawValue] }
+        /// What its segment shows: a symbol, so six fit the narrowest sidebar.
+        var symbol: String { ["doc.text", "magnifyingglass", "number", "link", "checklist", "list.bullet.indent"][rawValue] }
+        var label: String { ["Notes", "Search", "Tags", "Links", "Tasks", "Outline"][rawValue] }
+
+        /// The order they are shown in — the segments, the menu and its
+        /// ⌘-numbers. Not their raw values, which are kept as the mode left.
+        static let shown: [Mode] = [.notes, .outline, .search, .tags, .backlinks, .tasks]
+        var position: Int { Self.shown.firstIndex(of: self) ?? 0 }
     }
 
     /// A row: something to open, a section's heading, or words in place of rows.
@@ -32,6 +37,9 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         /// A run of tasks' parents, and a task.
         case taskContext([String])
         case task(NoteTask)
+        /// A heading of the note the keyboard is in — or, in a note with
+        /// none, a row at its top level: its row, and how far it is in.
+        case heading(text: String, row: Int, level: Int)
         case hint(String)
     }
 
@@ -64,11 +72,19 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     private(set) var tagOrder: TagOrder = TagOrder(rawValue: UserDefaults.standard.integer(forKey: SidebarViewController.tagOrderKey)) ?? .name
     private let tagSort = NSPopUpButton(frame: .zero, pullsDown: false)
     private let modes: NSSegmentedControl = {
-        let control = NSSegmentedControl(images: Mode.allCases.map { mode in
+        let control = NSSegmentedControl(images: Mode.shown.map { mode in
             NSImage(systemSymbolName: mode.symbol, accessibilityDescription: mode.title) ?? NSImage()
         }, trackingMode: .selectOne, target: nil, action: nil)
         return control
     }()
+    /// The note the keyboard is in, as it is now — typed but not yet saved
+    /// too — and the row the caret is in. Set by the window.
+    var currentNote: (() -> (path: String, rows: [ReflectCore.Row], caretRow: Int)?)?
+    /// Told to go to a row of the note the keyboard is in.
+    var onJump: ((_ path: String, _ row: Int) -> Void)?
+    private var outlineRows: [Row] = []
+    private var outlinePath: String?
+
     /// Told to tick a task, or untick it, in its note.
     var onSetTask: ((NoteTask, _ done: Bool) -> Void)?
     /// The tasks as last found, and what of them is shown.
@@ -118,7 +134,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         modes.action = #selector(modeChanged(_:))
         modes.segmentDistribution = .fillEqually
         modes.controlSize = .regular
-        for mode in Mode.allCases { modes.setToolTip("\(mode.title) (⌘\(mode.rawValue + 1))", forSegment: mode.rawValue) }
+        for mode in Mode.shown { modes.setToolTip("\(mode.title) (⌘\(mode.position + 1))", forSegment: mode.position) }
         modes.translatesAutoresizingMaskIntoConstraints = false
         // It fits the sidebar, and never widens it past its divider.
         modes.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -209,7 +225,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
     // MARK: Modes
 
     @objc private func modeChanged(_ sender: Any?) {
-        show(Mode(rawValue: modes.selectedSegment) ?? .notes)
+        show(Mode.shown.indices.contains(modes.selectedSegment) ? Mode.shown[modes.selectedSegment] : .notes)
     }
 
     /// Shows a mode: its rows, and in Search, the field.
@@ -223,7 +239,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         self.mode = mode
         if changed { onModeChange?(mode) }
         UserDefaults.standard.set(mode.rawValue, forKey: Self.modeKey)
-        modes.selectedSegment = mode.rawValue
+        modes.selectedSegment = mode.position
         let searching = mode == .search, tagging = mode == .tags || mode == .tasks
         taskFilter.isHidden = mode != .tasks
         if mode != .tasks { justDone.removeAll() }
@@ -256,6 +272,9 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
             rows = found
         case .backlinks:
             rows = backlinks
+        case .outline:
+            refreshOutline(reloading: false)
+            rows = outlineRows
         case .tasks:
             rows = taskRows
             refreshTasks()
@@ -371,11 +390,82 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         refreshTasks()
     }
 
+    // MARK: Outline
+
+    /// The outline of the note the keyboard is in: its headings, each as far
+    /// in as its level — or, in a note with none, its top-level rows — and
+    /// the one the caret is under chosen.
+    func refreshOutline(reloading: Bool = true) {
+        guard let note = currentNote?() else {
+            outlineRows = [.hint("The outline of the note you are in shows here")]
+            outlinePath = nil
+            if reloading, mode == .outline { rows = outlineRows; table.reloadData() }
+            return
+        }
+        var entries = Self.outline(note.rows, path: note.path)
+        if entries.isEmpty { entries = [.hint("Nothing to outline yet")] }
+        let title = index.entry(note.path).map { $0.day.map(OpenQuickly.dayTitle) ?? $0.title }
+            ?? GraphPaths.day(fromDailyPath: note.path).map(OpenQuickly.dayTitle) ?? note.path
+        let next: [Row] = [.header(title)] + entries
+        let changed = note.path != outlinePath || next.map(Self.outlineKey) != outlineRows.map(Self.outlineKey)
+        outlinePath = note.path
+        outlineRows = next
+        guard reloading, mode == .outline else { return }
+        if changed {
+            rows = outlineRows
+            table.reloadData()
+        }
+        // The section the caret is in.
+        let current = rows.lastIndex { row in
+            if case .heading(_, let at, _) = row { return at <= note.caretRow }
+            return false
+        }
+        if let current, table.selectedRow != current {
+            table.selectRowIndexes([current], byExtendingSelection: false)
+            table.scrollRowToVisible(current)
+        } else if current == nil {
+            table.deselectAll(nil)
+        }
+    }
+
+    /// A note's headings — its title's left out, being the note's name —
+    /// or, with none, its top-level rows.
+    static func outline(_ rows: [ReflectCore.Row], path: String) -> [Row] {
+        var headings: [(text: String, row: Int, level: Int)] = []
+        for (index, row) in rows.enumerated() {
+            guard case .heading(let level) = row.kind else { continue }
+            let text = InlineMarkup.plainText(row.text)
+            // A note's first heading, at the top, is its title.
+            if index == 0, level == 1, GraphPaths.day(fromDailyPath: path) == nil { continue }
+            if !text.isEmpty { headings.append((text, index, level)) }
+        }
+        if !headings.isEmpty {
+            let top = headings.map(\.level).min() ?? 1
+            return headings.map { .heading(text: $0.text, row: $0.row, level: $0.level - top) }
+        }
+        return rows.enumerated().compactMap { index, row in
+            guard row.depth == 0, row.kind != .rule, row.kind != .code else { return nil }
+            if index == 0, case .heading = row.kind { return nil }
+            let text = InlineMarkup.plainText(row.text).components(separatedBy: "\n").first ?? ""
+            return text.isEmpty ? nil : .heading(text: text, row: index, level: 0)
+        }
+    }
+
+    private static func outlineKey(_ row: Row) -> String {
+        switch row {
+        case .heading(let text, let at, let level): "\(at):\(level):\(text)"
+        case .header(let title): "#" + title
+        case .hint(let text): "?" + text
+        default: ""
+        }
+    }
+
     // MARK: Backlinks
 
     /// Shows the backlinks of a note — the one the keyboard is in — found in
     /// the background; the last found stay until the new ones come.
     func follow(_ path: String?, force: Bool = false) {
+        if mode == .outline { refreshOutline() }
         guard force || path != linked else { return }
         linked = path
         backlinkGeneration += 1
@@ -489,6 +579,9 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         search(for: "#" + tag)
     }
 
+    /// The heights the table gives its rows, for scripts.
+    var tableRowHeights: [Int] { (0..<table.numberOfRows).map { Int(table.rect(ofRow: $0).height) } }
+
     /// The rows shown, for scripts.
     var shownRows: [String] {
         ["[\(mode.title)]"] + rows.map { row in
@@ -498,6 +591,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
             case .source(let entry): "source " + entry.title
             case .taskContext(let crumbs): "  (" + crumbs.joined(separator: " › ") + ")"
             case .task(let task): "task \(task.done ? "[x]" : "[ ]") " + task.text
+            case .heading(let text, let row, let level): String(repeating: "  ", count: level) + "§ \(text) @\(row)"
             case .backlink(_, let context): "  " + context.rows.map(\.text).joined(separator: " / ")
             case .recent(let entry): "recent " + entry.title
             case .result(let item): "result " + item.title + (item.detail.map { " — " + $0.string.prefix(40) } ?? "")
@@ -515,6 +609,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
             case .pinned(let entry), .recent(let entry), .source(let entry): title = entry.title
             case .backlink(_, let context): title = context.rows.map(\.text).joined(separator: " ")
             case .task(let task): title = task.text
+            case .heading(let text, _, _): title = text
             case .taskContext: continue
             case .result(let item): title = item.title
             case .tag(let name, _): title = "#" + name
@@ -573,6 +668,8 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
             onOpen?(OpenQuickly.target(for: task.notePath), inSplit, .words([task.text]))
         case .taskContext:
             break
+        case .heading(_, let row, _):
+            if let path = outlinePath { onJump?(path, row) }
         case .result(let item):
             onOpen?(item.target, inSplit, item.found)
         case .tag(let name, _):
@@ -690,6 +787,10 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
             let cell = tableView.makeView(withIdentifier: RowCell.identifier, owner: nil) as? RowCell ?? RowCell()
             cell.show(title: name, detail: nil, symbol: "number", badge: "\(count)")
             return cell
+        case .heading(let text, _, let level):
+            let cell = tableView.makeView(withIdentifier: OutlineCell.identifier, owner: nil) as? OutlineCell ?? OutlineCell()
+            cell.show(text, level: level)
+            return cell
         case .hint(let text):
             let cell = tableView.makeView(withIdentifier: .init("hint"), owner: nil) as? HintCell ?? HintCell()
             cell.textField?.stringValue = text
@@ -765,6 +866,7 @@ final class SidebarViewController: NSViewController, NSTableViewDataSource, NSTa
         case .source(let entry): "source:" + entry.path
         case .backlink(let path, let context): "backlink:" + path + ":" + context.link + ":\(context.rows.first?.text ?? "")"
         case .task(let task): "task:" + Self.key(task)
+        case .heading(let text, let row, _): "heading:\(row):" + text
         case .taskContext: nil
         case .result(let item): "result:\(item.target)"
         case .tag(let name, _): "tag:" + name
@@ -938,6 +1040,40 @@ private final class HintCell: NSTableCellView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+}
+
+/// A heading in the outline: its words, as far in as its level; the
+/// outermost a little heavier.
+private final class OutlineCell: NSTableCellView {
+    static let identifier = NSUserInterfaceItemIdentifier("outline")
+    private let label = NSTextField(labelWithString: "")
+    private var indent: NSLayoutConstraint!
+
+    init() {
+        super.init(frame: .zero)
+        identifier = Self.identifier
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        textField = label
+        indent = label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6)
+        NSLayoutConstraint.activate([
+            indent,
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -6),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    func show(_ text: String, level: Int) {
+        label.stringValue = text
+        label.font = .systemFont(ofSize: NSFont.systemFontSize, weight: level == 0 ? .medium : .regular)
+        label.textColor = level == 0 ? .labelColor : .secondaryLabelColor
+        indent.constant = 6 + CGFloat(min(level, 5)) * 14
+    }
 }
 
 /// A note, a result or a tag: a symbol, a title, maybe a line of what was

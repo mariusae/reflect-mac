@@ -126,7 +126,7 @@ enum Script {
                 // menu <title>: chooses the menu item with that title.
                 func find(_ menu: NSMenu?) -> NSMenuItem? {
                     for item in menu?.items ?? [] {
-                        if item.title == argument { return item }
+                        if item.title == argument, item.submenu == nil { return item }
                         if let found = find(item.submenu) { return found }
                     }
                     return nil
@@ -240,7 +240,10 @@ enum Script {
                 controller.sidebar.openRow(containing: argument, inSplit: true)
             case "sidebar":
                 // sidebar [section]: what the sidebar shows.
-                print("sidebar: " + controller.sidebar.shownRows.prefix(40).joined(separator: " | "))
+                for (index, sidebar) in controller.sidebars.enumerated() {
+                    print("sidebar\(index == 0 ? "" : " (peek)"): " + sidebar.shownRows.prefix(40).joined(separator: " | ")
+                          + " — \(sidebar.isViewLoaded ? "table \(sidebar.view.frame.size) rows \(sidebar.tableRowHeights)" : "not loaded")")
+                }
                 fflush(stdout)
             case "backlinks-of":
                 // backlinks-of <path>: the sidebar's backlinks, as if the keyboard were there.
@@ -343,6 +346,16 @@ enum Script {
                     let markdown = (editor.string as NSString).substring(with: span.range)
                     let drop = editor.pictureDrop(at: NSPoint(x: onto.frame.midX, y: onto.frame.midY), joining: markdown.hasPrefix("!["))
                     editor.movePicture(markdown, from: (editor, span.range), to: drop)
+                case "hover":
+                    if let index = Int(parts.count > 1 ? parts[1] : ""), index < frames.count {
+                        editor.hoverPicture(at: NSPoint(x: frames[index].frame.midX, y: frames[index].frame.midY))
+                    }
+                                case "resize":
+                    // resize <i> <w> <h>
+                    let numbers = (parts.count > 1 ? parts[1] : "").split(separator: " ").compactMap { Double($0) }
+                    guard numbers.count == 3, Int(numbers[0]) < frames.count else { break }
+                    let item = frames[Int(numbers[0])]
+                    editor.resizePicture(item.box, from: item.frame, to: CGSize(width: numbers[1], height: numbers[2]))
                 case "split":
                     guard let target = controller.workspace.split?.noteView.editor, let first = frames.first,
                           let span = editor.spans(atRowOf: first.location).first(where: { $0.range.location == first.location }) else { break }
@@ -372,6 +385,12 @@ enum Script {
                 let pane = argument == "split" ? controller.workspace.split : controller.workspace.main
                 pane?.save()
                 if let pane { print("--- \(pane.ref.path)\n\(controller.graph.read(path: pane.ref.path) ?? "")---") }
+                fflush(stdout)
+            case "view-menu":
+                // view-menu: the View menu's sidebar modes, with their keys.
+                let view = NSApp.mainMenu?.items.first { $0.title == "View" }?.submenu
+                print("view-menu: " + (view?.items ?? []).filter { $0.action == #selector(MainWindowController.showSidebarMode(_:)) }
+                    .map { "\($0.title) ⌘\($0.keyEquivalent) tag \($0.tag)" }.joined(separator: ", "))
                 fflush(stdout)
             case "note-place":
                 // note-place: the caret and scroll of the note in the main place.

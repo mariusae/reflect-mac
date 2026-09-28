@@ -262,6 +262,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             self?.openInWindow(path)
         }
         sidebar.onSetTask = { [weak self] task, done in self?.setTask(task, done: done) }
+        sidebar.currentNote = { [weak self] in self?.currentNote }
+        sidebar.onJump = { [weak self] path, row in self?.jump(to: row, in: path) }
         // One mode, one search, whichever sidebar they are changed in.
         sidebar.onModeChange = { [weak self, weak sidebar] mode in
             for other in self?.sidebars ?? [] where other !== sidebar && other.mode != mode { other.show(mode) }
@@ -349,7 +351,59 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     /// The sidebar's backlinks follow the note the keyboard is in.
     private func followFocus() {
+        if let editor = focusedEditor { lastEditor = editor }
         sidebars.forEach { $0.follow(focusedNotePath) }
+    }
+
+    // MARK: The outline
+
+    /// The editor last written or moved about in: the outline's, while the
+    /// keyboard is off in the sidebar.
+    private weak var lastEditor: OutlineTextView?
+
+    /// The editor the keyboard is in, in this window.
+    private var focusedEditor: OutlineTextView? {
+        guard let editor = window?.firstResponder as? OutlineTextView else { return nil }
+        return Self.dayView(of: editor) == nil ? nil : editor
+    }
+
+    private static func dayView(of editor: NSView) -> DayView? {
+        var view = editor.superview
+        while let current = view {
+            if let day = current as? DayView { return day }
+            view = current.superview
+        }
+        return nil
+    }
+
+    /// The note the outline is of: the one the keyboard is in, or was last
+    /// in, as it is now; and the row its caret is in.
+    private var currentNote: (path: String, rows: [ReflectCore.Row], caretRow: Int)? {
+        guard let editor = focusedEditor ?? lastEditor ?? workspace.main?.noteView.editor, editor.window === window,
+              let day = Self.dayView(of: editor) else { return nil }
+        return (day.ref.path, editor.rows, editor.rowIndex(at: editor.selectedRange().location))
+    }
+
+    /// Goes to a row of the note the outline is of: the caret at its start,
+    /// and the row at the top of what is shown.
+    private func jump(to row: Int, in path: String) {
+        guard let editor = focusedEditor ?? lastEditor ?? workspace.main?.noteView.editor,
+              Self.dayView(of: editor)?.ref.path == path else { return }
+        let ranges = editor.paragraphRanges
+        guard row < ranges.count else { return }
+        peek?.hide()
+        window?.makeFirstResponder(editor)
+        if editor.selectedRows != nil { editor.leaveRowSelection() }
+        editor.setSelectedRange(NSRange(location: ranges[row].location, length: 0))
+        if let manager = editor.layoutManager, let container = editor.textContainer {
+            let glyphs = manager.glyphRange(forCharacterRange: NSRange(location: ranges[row].location, length: 1), actualCharacterRange: nil)
+            var rect = manager.boundingRect(forGlyphRange: glyphs, in: container)
+            // Just under what is over the notes — the toolbar — not beneath it.
+            let over = editor.enclosingScrollView?.contentInsets.top ?? 0
+            rect.origin.y += editor.textContainerOrigin.y - 12 - over
+            rect.size.height = editor.enclosingScrollView?.contentView.bounds.height ?? rect.height
+            editor.scrollToVisible(rect)
+        }
     }
 
     /// The note the keyboard is in: its path.
