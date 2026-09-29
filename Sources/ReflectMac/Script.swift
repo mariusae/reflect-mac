@@ -422,6 +422,11 @@ enum Script {
                     print("row-gaps " + editor.rows.map { "\($0.text)[\($0.gap.count)]" }.joined(separator: " "))
                     fflush(stdout)
                 }
+            case "choose-window":
+                // choose-window <query>: the chooser's first result for a query, opened in a window of its own.
+                let items = OpenQuickly.items(for: argument, index: controller.index, search: ReflectSearchIndex(root: controller.graph.root),
+                                              pictures: controller.pictureText.index)
+                if let first = items.first { controller.openInWindow(first.target, found: first.found) }
             case "overflow":
                 // overflow: days whose text reaches past their frame.
                 let days = controller.timeline.overflowingDays

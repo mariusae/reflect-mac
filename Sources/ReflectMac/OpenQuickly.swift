@@ -32,6 +32,8 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
     private let pictures: ImageTextIndex?
     /// Told what to open, and whether in the split view.
     var onOpen: ((Target, _ inSplit: Bool, _ found: OutlineTextView.Found?) -> Void)?
+    /// Told what to open in a window of its own.
+    var onOpenInWindow: ((Target, _ found: OutlineTextView.Found?) -> Void)?
 
     private let panel: ChooserPanel
     private let field = NSTextField()
@@ -70,6 +72,7 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
         }
         panel.onResign = { [weak self] in self?.close() }
         panel.onCommandReturn = { [weak self] in self?.openSelected(inSplit: true) }
+        panel.onShiftCommandReturn = { [weak self] in self?.openSelectedInWindow() }
 
         let background = NSVisualEffectView()
         background.material = .popover
@@ -114,7 +117,7 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
 
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .tertiaryLabelColor
-        hint.stringValue = "↩ Open    ⌘↩ Open in Split View    ⌥↩ New Note    ⎋ Close"
+        hint.stringValue = "↩ Open    ⌘↩ Split View    ⇧⌘↩ New Window    ⌥↩ New Note    ⎋ Close"
         hint.alignment = .right
         background.addSubview(hint)
     }
@@ -339,7 +342,11 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
                 let target = index.matches(query, limit: 1).first
                     .flatMap { NoteIndex.foldKey($0.entry.title) == key ? Target.note($0.entry.path) : nil } ?? .create(query)
                 close()
-                onOpen?(target, flags.contains(.command), nil)
+                if flags.contains(.command) && flags.contains(.shift) {
+                    onOpenInWindow?(target, nil)
+                } else {
+                    onOpen?(target, flags.contains(.command), nil)
+                }
             } else {
                 openSelected(inSplit: flags.contains(.command))
             }
@@ -361,7 +368,21 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
     @objc private func clicked(_ sender: Any?) {
         guard table.clickedRow >= 0 else { return }
         table.selectRowIndexes([table.clickedRow], byExtendingSelection: false)
-        openSelected(inSplit: NSApp.currentEvent?.modifierFlags.contains(.command) == true)
+        let flags = NSApp.currentEvent?.modifierFlags ?? []
+        if flags.contains(.command) && flags.contains(.shift) {
+            openSelectedInWindow()
+        } else {
+            openSelected(inSplit: flags.contains(.command))
+        }
+    }
+
+    /// ⇧⌘Return, or ⇧⌘-click: in a window of its own.
+    private func openSelectedInWindow() {
+        _ = currentItems()
+        guard table.selectedRow >= 0, table.selectedRow < items.count else { return }
+        let item = items[table.selectedRow]
+        close()
+        onOpenInWindow?(item.target, item.found)
     }
 
     private func openSelected(inSplit: Bool) {
@@ -437,12 +458,20 @@ final class ChooserPanel: NSPanel {
     var onResign: (() -> Void)?
     /// ⌘Return: a key equivalent, so the field never sees it as a Return.
     var onCommandReturn: (() -> Void)?
+    /// ⇧⌘Return, likewise.
+    var onShiftCommandReturn: (() -> Void)?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.type == .keyDown, event.keyCode == 36 || event.keyCode == 76,
-           event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command, let onCommandReturn {
-            onCommandReturn()
-            return true
+        if event.type == .keyDown, event.keyCode == 36 || event.keyCode == 76 {
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if flags == .command, let onCommandReturn {
+                onCommandReturn()
+                return true
+            }
+            if flags == [.command, .shift], let onShiftCommandReturn {
+                onShiftCommandReturn()
+                return true
+            }
         }
         return super.performKeyEquivalent(with: event)
     }

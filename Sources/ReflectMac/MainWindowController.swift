@@ -22,6 +22,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private lazy var chooser: OpenQuickly = {
         let chooser = OpenQuickly(index: index, search: searchIndex, pictures: pictureText.index)
         chooser.onOpen = { [weak self] target, inSplit, found in self?.workspace.open(target, inSplit: inSplit, found: found) }
+        chooser.onOpenInWindow = { [weak self] target, found in self?.openInWindow(target, found: found) }
         return chooser
     }()
     private var statusTimer: Timer?
@@ -177,6 +178,26 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     }
 
     /// A note in a window of its own — the one it is in already, if any.
+    /// What the chooser chose, in a window of its own — made first, when it
+    /// is a note to make — and what its search found there, shown.
+    func openInWindow(_ target: OpenQuickly.Target, found: OutlineTextView.Found?) {
+        let path: String
+        switch target {
+        case .note(let note): path = note
+        case .day(let day): path = GraphPaths.dailyPath(for: day)
+        case .create(let title):
+            guard let made = workspace.create(title) else { return }
+            path = made
+        }
+        openInWindow(path)
+        guard let found, let editor = noteWindows[path]?.pane.noteView.editor else { return }
+        // Once the note is laid out in its window.
+        DispatchQueue.main.async {
+            editor.window?.makeFirstResponder(editor)
+            editor.reveal(found)
+        }
+    }
+
     func openInWindow(_ path: String) {
         if let open = noteWindows[path] {
             open.show()
