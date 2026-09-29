@@ -834,6 +834,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     @objc func goToToday(_ sender: Any?) { workspace.showToday() }
 
+    /// Go ▸ This Week: the week's note.
+    @objc func goToThisWeek(_ sender: Any?) {
+        workspace.show(NoteRef(path: GraphPaths.weeklyPath(for: .current)), inSplit: false)
+    }
+
     // MARK: The calendar
 
     private weak var calendarItem: NSToolbarItem?
@@ -849,6 +854,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         let current = workspace.current?.day ?? timeline.currentDay
         let picker = CalendarPickerView(selected: current)
         picker.marked = Set(index.all.compactMap(\.day))
+        picker.markedWeeks = Set(index.all.compactMap { GraphPaths.week(fromWeeklyPath: $0.path) })
+        picker.currentWeek = workspace.current.flatMap { GraphPaths.week(fromWeeklyPath: $0.path) }
         let controller = NSViewController()
         controller.view = picker
         let popover = NSPopover()
@@ -859,6 +866,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         picker.onPick = { [weak self, weak popover] day, inSplit in
             popover?.performClose(nil)
             self?.workspace.show(.day(day), inSplit: inSplit)
+        }
+        picker.onPickWeek = { [weak self, weak popover] week, inSplit in
+            popover?.performClose(nil)
+            self?.workspace.show(NoteRef(path: GraphPaths.weeklyPath(for: week)), inSplit: inSplit)
         }
         calendarPopover = popover
         if let item = calendarItem, window?.toolbar?.isVisible == true, window?.toolbar?.items.contains(item) == true {

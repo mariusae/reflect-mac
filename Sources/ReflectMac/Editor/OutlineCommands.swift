@@ -753,17 +753,19 @@ extension OutlineTextView {
     }
 
     override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
-        super.acceptableDragTypes + [.fileURL, Self.pictureType] + Self.pictureTypes
+        super.acceptableDragTypes + [.fileURL, Self.pictureType, Self.rowsType] + Self.pictureTypes
             + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if carriesRows(sender) { return rowDragUpdated(sender) }
         if carriesPicture(sender) { return pictureDragUpdated(sender) }
         let operation = super.draggingEntered(sender)
         return isEditable && carriesFiles(sender.draggingPasteboard) ? .copy : operation
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if carriesRows(sender) { return rowDragUpdated(sender) }
         if carriesPicture(sender) { return pictureDragUpdated(sender) }
         // The text view moves its drop caret along; the answer is ours.
         let operation = super.draggingUpdated(sender)
@@ -776,11 +778,12 @@ extension OutlineTextView {
     }
 
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        if carriesPicture(sender) { return isEditable }
+        if carriesRows(sender) || carriesPicture(sender) { return isEditable }
         return isEditable && carriesFiles(sender.draggingPasteboard) ? true : super.prepareForDragOperation(sender)
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if carriesRows(sender) { return dropRows(sender) }
         if carriesPicture(sender) { return dropPicture(sender) }
         let pasteboard = sender.draggingPasteboard
         guard isEditable, carriesFiles(pasteboard) else { return super.performDragOperation(sender) }

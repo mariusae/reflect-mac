@@ -5,11 +5,21 @@ import ReflectCore
 /// with notes dotted, today in the accent colour, the day being looked at
 /// chosen. A click goes to a day — with ⌘, in the split view; the arrows
 /// move, Return goes, ‹ and › or a scroll turn the month.
+///
+/// Down the side, each row's week — ISO weeks, counted from the row's
+/// Monday — with a dot for a week with a note; a click goes to its note.
 final class CalendarPickerView: NSView {
     /// Told the day picked, and whether in the split view.
     var onPick: ((Day, _ inSplit: Bool) -> Void)?
     /// The days with notes.
     var marked: Set<Day> = [] { didSet { needsDisplay = true } }
+    /// Told the week picked, and whether in the split view.
+    var onPickWeek: ((Week, _ inSplit: Bool) -> Void)?
+    /// The weeks with notes.
+    var markedWeeks: Set<Week> = [] { didSet { needsDisplay = true } }
+    /// The week whose note is being looked at.
+    var currentWeek: Week? { didSet { needsDisplay = true } }
+    private var hoveredWeek: Week?
     private(set) var selected: Day
     /// The month shown: its first day.
     private var month: Day
@@ -24,8 +34,10 @@ final class CalendarPickerView: NSView {
     static let header: CGFloat = 40
     static let weekdays: CGFloat = 22
     static let margin: CGFloat = 12
+    /// The column of week numbers, before the days.
+    static let weekColumn: CGFloat = 30
     static var size: NSSize {
-        NSSize(width: margin * 2 + cell.width * 7, height: header + weekdays + cell.height * 6 + margin)
+        NSSize(width: margin * 2 + weekColumn + cell.width * 7, height: header + weekdays + cell.height * 6 + margin)
     }
 
     private var calendar: Calendar { .current }
@@ -85,9 +97,27 @@ final class CalendarPickerView: NSView {
     }
 
     private func frame(ofPlace index: Int) -> NSRect {
-        NSRect(x: Self.margin + CGFloat(index % 7) * Self.cell.width,
+        NSRect(x: Self.margin + Self.weekColumn + CGFloat(index % 7) * Self.cell.width,
                y: Self.header + Self.weekdays + CGFloat(index / 7) * Self.cell.height,
                width: Self.cell.width, height: Self.cell.height)
+    }
+
+    /// The week of each of the grid's six rows: the week its Monday is in.
+    private var weeks: [Week] {
+        let days = grid
+        let monday = (2 - calendar.firstWeekday + 7) % 7
+        return (0..<6).compactMap { row in days.indices.contains(row * 7 + monday) ? Week(days[row * 7 + monday]) : nil }
+    }
+
+    private func frame(ofWeekRow row: Int) -> NSRect {
+        NSRect(x: Self.margin, y: Self.header + Self.weekdays + CGFloat(row) * Self.cell.height,
+               width: Self.weekColumn - 4, height: Self.cell.height)
+    }
+
+    private func week(at point: NSPoint) -> Week? {
+        let weeks = weeks
+        for row in weeks.indices where frame(ofWeekRow: row).contains(point) { return weeks[row] }
+        return nil
     }
 
     private func day(at point: NSPoint) -> Day? {
@@ -119,9 +149,42 @@ final class CalendarPickerView: NSView {
         for column in 0..<7 {
             let symbol = symbols[(column + calendar.firstWeekday - 1) % 7] as NSString
             let size = symbol.size(withAttributes: small)
-            symbol.draw(at: NSPoint(x: Self.margin + CGFloat(column) * Self.cell.width + (Self.cell.width - size.width) / 2,
+            symbol.draw(at: NSPoint(x: Self.margin + Self.weekColumn + CGFloat(column) * Self.cell.width + (Self.cell.width - size.width) / 2,
                                     y: Self.header + 2), withAttributes: small)
         }
+
+        // The weeks, down the side.
+        let heading = "W" as NSString
+        let headingSize = heading.size(withAttributes: small)
+        heading.draw(at: NSPoint(x: Self.margin + (Self.weekColumn - 4 - headingSize.width) / 2, y: Self.header + 2), withAttributes: small)
+        let thisWeek = Week.current
+        for (row, week) in weeks.enumerated() {
+            let cell = frame(ofWeekRow: row)
+            let pill = NSRect(x: cell.minX, y: cell.minY + 4, width: cell.width, height: 22)
+            let chosen = week == currentWeek
+            if chosen {
+                NSColor.controlAccentColor.setFill()
+                NSBezierPath(roundedRect: pill, xRadius: 6, yRadius: 6).fill()
+            } else if week == hoveredWeek {
+                NSColor.quaternaryLabelColor.setFill()
+                NSBezierPath(roundedRect: pill, xRadius: 6, yRadius: 6).fill()
+            }
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: week == thisWeek ? .bold : .medium),
+                .foregroundColor: chosen ? NSColor.white : week == thisWeek ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor,
+            ]
+            let number = "\(week.week)" as NSString
+            let size = number.size(withAttributes: attributes)
+            number.draw(at: NSPoint(x: pill.midX - size.width / 2, y: pill.midY - size.height / 2 - 1), withAttributes: attributes)
+            if markedWeeks.contains(week) {
+                let dot = NSRect(x: pill.midX - 2, y: pill.maxY - 5, width: 4, height: 4)
+                (chosen ? NSColor.white : NSColor.secondaryLabelColor).setFill()
+                NSBezierPath(ovalIn: dot).fill()
+            }
+        }
+        // A rule between the weeks and the days.
+        NSColor.separatorColor.setFill()
+        NSRect(x: Self.margin + Self.weekColumn - 2, y: Self.header + Self.weekdays + 4, width: 1, height: Self.cell.height * 6 - 8).fill()
 
         let today = Day.today
         for (index, day) in grid.enumerated() {
@@ -158,20 +221,30 @@ final class CalendarPickerView: NSView {
     // MARK: Picking
 
     override func mouseMoved(with event: NSEvent) {
-        let day = day(at: convert(event.locationInWindow, from: nil))
-        if day != hovered {
+        let point = convert(event.locationInWindow, from: nil)
+        let day = day(at: point)
+        let week = week(at: point)
+        if day != hovered || week != hoveredWeek {
             hovered = day
+            hoveredWeek = week
             needsDisplay = true
         }
     }
 
     override func mouseExited(with event: NSEvent) {
         hovered = nil
+        hoveredWeek = nil
         needsDisplay = true
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard let day = day(at: convert(event.locationInWindow, from: nil)) else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        if let week = week(at: point) {
+            currentWeek = week
+            onPickWeek?(week, event.modifierFlags.contains(.command))
+            return
+        }
+        guard let day = day(at: point) else { return }
         selected = day
         needsDisplay = true
         onPick?(day, event.modifierFlags.contains(.command))

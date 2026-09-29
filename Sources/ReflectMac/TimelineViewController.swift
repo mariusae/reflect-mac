@@ -234,6 +234,25 @@ final class TimelineViewController: NSViewController, OutlineTextViewNavigator {
         }
     }
 
+    private func remeasureChanged() {
+        let days = changedWhileTiling
+        changedWhileTiling.removeAll()
+        for day in days.sorted() {
+            if let view = views[day] { heightChanged(view) }
+        }
+    }
+
+    /// Days whose text reaches past their own frame — drawn there, but out
+    /// of reach of the mouse. For scripts.
+    var overflowingDays: [String] {
+        views.sorted { $0.key < $1.key }.compactMap { day, view in
+            let needed = view.desiredHeight(width: document.bounds.width)
+            let editorBottom = view.editor.frame.maxY
+            guard editorBottom > view.bounds.height + 0.5 || abs(needed - view.bounds.height) > 0.5 else { return nil }
+            return "\(day): frame \(Int(view.bounds.height)) wants \(Int(needed)) editor to \(Int(editorBottom))"
+        }
+    }
+
     private func makeView(for day: Day) -> DayView {
         let view = DayView(day: day, graph: graph, images: images, metrics: metrics)
         view.editor.navigator = self
@@ -247,8 +266,19 @@ final class TimelineViewController: NSViewController, OutlineTextViewNavigator {
         return view
     }
 
+    /// Days whose height changed while the days were being laid out, to
+    /// measure again once they are: not to be lost, which would leave text
+    /// drawn past the day's frame, out of the mouse's reach.
+    private var changedWhileTiling = Set<Day>()
+
     private func heightChanged(_ view: DayView) {
-        guard !tiling else { return }
+        guard !tiling else {
+            if changedWhileTiling.isEmpty {
+                DispatchQueue.main.async { [weak self] in self?.remeasureChanged() }
+            }
+            changedWhileTiling.insert(view.day)
+            return
+        }
         let height = view.desiredHeight(width: document.bounds.width)
         guard measured[view.day] != height else { return }
         keepingTop { measured[view.day] = height }

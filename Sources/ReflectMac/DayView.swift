@@ -121,8 +121,14 @@ final class DayView: NSView, NSTextViewDelegate {
             // Untitled: nothing over it — the title is typed in the note.
             let untitled = TitleRename.authoredTitle(path: ref.path, source: savedText) == nil && entry.title == "Untitled"
             title.stringValue = entry.titleIsHeading || untitled ? "" : entry.title
-            title.textColor = .labelColor
             var notes: [String] = []
+            // A week's note: its days beside its name, this week's in the accent colour.
+            let week = GraphPaths.week(fromWeeklyPath: ref.path)
+            title.textColor = week == .current ? .controlAccentColor : .labelColor
+            if let week {
+                notes.append(OpenQuickly.weekRange(week))
+                if week == .current { notes.append("This Week") }
+            }
             if conflictView != nil { notes.append("Needs Review") } else if isReadOnly { notes.append("Read Only") }
             badge.stringValue = notes.joined(separator: " · ")
             badge.isHidden = notes.isEmpty
@@ -185,6 +191,14 @@ final class DayView: NSView, NSTextViewDelegate {
             conflictView.frame = NSRect(x: column.minX, y: y, width: column.width, height: conflictView.height(forWidth: column.width))
         } else {
             editor.frame = NSRect(x: column.minX, y: y, width: column.width, height: editorHeight(width: column.width))
+            // Text past the day's own frame is drawn, but out of the mouse's
+            // reach: whoever placed the day is told to measure it again.
+            if editor.frame.maxY > bounds.height + 0.5 {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, editor.frame.maxY > bounds.height + 0.5 else { return }
+                    onHeightChange?(self)
+                }
+            }
         }
     }
 

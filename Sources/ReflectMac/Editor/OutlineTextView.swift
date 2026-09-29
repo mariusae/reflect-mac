@@ -59,6 +59,8 @@ final class OutlineTextView: NSTextView {
     private var adjusting = false
     /// The picture being dragged from here, while it is.
     var draggedPicture: DraggedPicture?
+    /// The rows being dragged from this view, by their bullets.
+    var draggedRows: Range<Int>?
     /// Where a dragged picture's new row would go.
     let dropLine = DropLineView()
     /// Round the picture a dragged one would join, in a carousel.
@@ -739,6 +741,15 @@ final class OutlineTextView: NSTextView {
         let point = convert(event.locationInWindow, from: nil)
         if let index = outlineLayout.handleHit(at: point, origin: textContainerOrigin) {
             window?.makeFirstResponder(self)
+            // Clicked, a bullet does what it does; moved, it carries its row.
+            let start = event.locationInWindow
+            while let next = window?.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) {
+                if next.type == .leftMouseUp { break }
+                if hypot(next.locationInWindow.x - start.x, next.locationInWindow.y - start.y) >= 4 {
+                    if isEditable { beginDraggingRows(from: index, event: event) }
+                    return
+                }
+            }
             clickHandle(ofRow: index)
             return
         }

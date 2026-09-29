@@ -89,6 +89,12 @@ final class StagedSearch: @unchecked Sendable {
 
     /// A day the query names, and the notes whose names match it.
     private func named() {
+        if let week = OpenQuickly.week(from: query) {
+            let path = GraphPaths.weeklyPath(for: week)
+            add(Item(target: .note(path), title: week.title,
+                     detail: OpenQuickly.plain(OpenQuickly.weekRange(week) + (week == .current ? " · This week" : "")),
+                     symbol: "calendar.day.timeline.left"), path: path)
+        }
         if let day = OpenQuickly.day(from: query) {
             add(Item(target: .day(day), title: OpenQuickly.dayTitle(day),
                      detail: OpenQuickly.plain(day == .today ? "Today" : day.description), symbol: "calendar"),
@@ -100,7 +106,9 @@ final class StagedSearch: @unchecked Sendable {
             add(Item(target: .note(match.entry.path), title: match.entry.title, detail: detail, symbol: "doc.text"), path: match.entry.path)
         }
         let key = NoteIndex.foldKey(query)
-        exists = named.contains { NoteIndex.foldKey($0.entry.title) == key || $0.entry.aliases.contains { NoteIndex.foldKey($0) == key } }
+        // A week's name is its note's, written or not: nothing new to make.
+        exists = OpenQuickly.week(from: query) != nil
+            || named.contains { NoteIndex.foldKey($0.entry.title) == key || $0.entry.aliases.contains { NoteIndex.foldKey($0) == key } }
     }
 
     /// The notes with the query's words in them: from Reflect's index when

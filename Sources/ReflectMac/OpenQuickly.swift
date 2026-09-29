@@ -217,6 +217,36 @@ final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, N
     }
 
 
+    /// A week a query names: `2026-W40`, or "this week", "last week",
+    /// "next week", "week 40".
+    nonisolated static func week(from query: String) -> Week? {
+        if let week = Week(query) { return week }
+        let lowered = query.lowercased().trimmingCharacters(in: .whitespaces)
+        switch lowered {
+        case "this week", "week": return .current
+        case "last week": return Week.current.adding(-1)
+        case "next week": return Week.current.adding(1)
+        default: break
+        }
+        let parts = lowered.split(separator: " ")
+        if parts.count == 2, parts[0] == "week", let number = Int(parts[1]) {
+            return Week(year: Week.current.year, week: number)
+        }
+        return nil
+    }
+
+    nonisolated private static let rangeFormatter: DateIntervalFormatter = {
+        let formatter = DateIntervalFormatter()
+        formatter.dateTemplate = "MMMd"
+        return formatter
+    }()
+
+    /// "Sep 28 – Oct 4".
+    nonisolated static func weekRange(_ week: Week) -> String {
+        guard let monday = week.monday?.date, let sunday = week.sunday?.date else { return week.description }
+        return rangeFormatter.string(from: monday, to: sunday)
+    }
+
     /// A day a query names: a date written out, or said — "today", "next
     /// friday", "sep 24".
     nonisolated static func day(from query: String) -> Day? {

@@ -392,6 +392,41 @@ enum Script {
                 print("view-menu: " + (view?.items ?? []).filter { $0.action == #selector(MainWindowController.showSidebarMode(_:)) }
                     .map { "\($0.title) ⌘\($0.keyEquivalent) tag \($0.tag)" }.joined(separator: ", "))
                 fflush(stdout)
+            case "rows-move":
+                // rows-move <row> <index> <depth> [split]: the main note's row, and all under
+                // it, dropped before a row of the main (or split) note, at a depth.
+                let parts = argument.split(separator: " ").map(String.init)
+                guard parts.count >= 3, let row = Int(parts[0]), let index = Int(parts[1]), let depth = Int(parts[2]),
+                      let source = controller.workspace.main?.noteView.editor else { break }
+                let target = parts.count > 3 ? controller.workspace.split?.noteView.editor : source
+                let block = OutlineEditing.block(source.rows, row..<(row + 1))
+                target?.moveRows(block, from: source, to: .init(index: index, depth: depth))
+            case "rows-drop-at":
+                // rows-drop-at <row> <above|below> <depth>: where a drop at that row's
+                // upper or lower half, that far in, would go.
+                let parts = argument.split(separator: " ").map(String.init)
+                guard parts.count == 3, let row = Int(parts[0]), let depth = Double(parts[2]),
+                      let editor = controller.workspace.main?.noteView.editor, let layout = editor.layoutManager,
+                      let container = editor.textContainer, row < editor.paragraphRanges.count else { break }
+                let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: editor.paragraphRanges[row].location, length: 1), actualCharacterRange: nil)
+                let line = layout.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
+                _ = container
+                let y = editor.textContainerOrigin.y + (parts[1] == "above" ? line.minY + 2 : line.maxY - 2)
+                let x = editor.textContainerOrigin.x + editor.metrics.indent * (depth + 1)
+                let drop = editor.rowDrop(at: NSPoint(x: x, y: y))
+                print("rows-drop-at \(drop.index) depth \(drop.depth)")
+                fflush(stdout)
+            case "row-gaps":
+                // row-gaps [split]: each row of the main (or split) note, and the blank lines before it.
+                if let editor = (argument == "split" ? controller.workspace.split : controller.workspace.main)?.noteView.editor {
+                    print("row-gaps " + editor.rows.map { "\($0.text)[\($0.gap.count)]" }.joined(separator: " "))
+                    fflush(stdout)
+                }
+            case "overflow":
+                // overflow: days whose text reaches past their frame.
+                let days = controller.timeline.overflowingDays
+                print("overflow: " + (days.isEmpty ? "none" : days.joined(separator: " | ")))
+                fflush(stdout)
             case "note-place":
                 // note-place: the caret and scroll of the note in the main place.
                 if let main = controller.workspace.main {

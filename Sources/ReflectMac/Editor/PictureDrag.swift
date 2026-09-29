@@ -82,13 +82,14 @@ extension OutlineTextView {
     }
 
     override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        guard draggedPicture != nil else { return super.draggingSession(session, sourceOperationMaskFor: context) }
+        guard draggedPicture != nil || draggedRows != nil else { return super.draggingSession(session, sourceOperationMaskFor: context) }
         return context == .withinApplication ? .move : .copy
     }
 
     override func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-        if draggedPicture != nil {
+        if draggedPicture != nil || draggedRows != nil {
             draggedPicture = nil
+            draggedRows = nil
             return
         }
         super.draggingSession(session, endedAt: screenPoint, operation: operation)
@@ -364,7 +365,7 @@ extension OutlineTextView {
     }
 
     /// The line showing where a picture would get a row.
-    private func showDropLine(index: Int, depth: Int) {
+    func showDropLine(index: Int, depth: Int) {
         let ranges = paragraphRanges
         let y: CGFloat
         if index < ranges.count {

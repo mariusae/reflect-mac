@@ -26,8 +26,15 @@ extension OutlineTextView {
 
     /// Whether a point is on the grip of the picture under the pointer.
     func onPictureGrip(_ point: NSPoint) -> Bool {
-        guard let frame = hoveredPictureFrame else { return false }
-        return Self.grip(in: frame).insetBy(dx: -3, dy: -3).contains(point)
+        guard let frame = hoveredPictureFrame, Self.grip(in: frame).insetBy(dx: -3, dy: -3).contains(point) else { return false }
+        // The picture may have moved since the pointer was over it: only a
+        // grip on a picture there now.
+        guard let hit = outlineLayout.pictureFrame(at: point, origin: textContainerOrigin), hit.box.isResizable,
+              hit.frame == frame else {
+            hoveredPictureFrame = nil
+            return false
+        }
+        return true
     }
 
     /// Follows the grip until the button comes up, sizing the picture as it

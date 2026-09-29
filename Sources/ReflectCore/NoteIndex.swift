@@ -53,7 +53,7 @@ public final class NoteIndex: @unchecked Sendable {
         self.root = root
     }
 
-    public static let directories = [GraphPaths.dailyDirectory, GraphPaths.notesDirectory, "templates"]
+    public static let directories = [GraphPaths.dailyDirectory, GraphPaths.weeklyDirectory, GraphPaths.notesDirectory, "templates"]
 
     /// The key two names match by: trimmed, and in lower case.
     public static func foldKey(_ value: String) -> String {
@@ -154,8 +154,12 @@ public final class NoteIndex: @unchecked Sendable {
             let isID = stem.range(of: #"^[0-7][0-9a-hjkmnp-tv-z]{25}$"#, options: [.regularExpression, .caseInsensitive]) != nil
             title = day?.description ?? (isID ? "Untitled" : stem)
         }
+        // A weekly note is named by its week, and answers to `[[2026-W40]]` too.
+        let week = GraphPaths.week(fromWeeklyPath: path)
+        if let week, !titleIsHeading, frontmatter.scalar("title") == nil { title = week.title }
 
         var aliases = frontmatter.list("aliases")
+        if let week, !aliases.contains(week.description) { aliases.append(week.description) }
         var keys = Set(aliases.map(foldKey))
         // `Project // Topic` answers to each of its parts.
         let parts = title.components(separatedBy: "//").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -297,6 +301,7 @@ public final class NoteIndex: @unchecked Sendable {
     public func resolve(_ target: String) -> String? {
         let raw = target.trimmingCharacters(in: .whitespacesAndNewlines)
         if let day = Day(raw) { return GraphPaths.dailyPath(for: day) }
+        if let week = Week(raw) { return GraphPaths.weeklyPath(for: week) }
         let key = Self.foldKey(raw)
         let notes = all.sorted { $0.path < $1.path }
         return notes.first { Self.foldKey($0.title) == key }?.path

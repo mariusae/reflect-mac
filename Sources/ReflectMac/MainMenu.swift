@@ -171,6 +171,7 @@ enum MainMenu {
             item("Forward", #selector(MainWindowController.goForward(_:)), "]"),
             .separator(),
             item("Today", #selector(MainWindowController.goToToday(_:)), "t"),
+            item("This Week", #selector(MainWindowController.goToThisWeek(_:)), "t", [.command, .option]),
             item("Go to Date…", #selector(MainWindowController.showCalendar(_:)), "t", [.command, .shift]),
             .separator(),
             item("Previous Day", #selector(MainWindowController.goToPreviousDay(_:)), up, [.control, .option]),
