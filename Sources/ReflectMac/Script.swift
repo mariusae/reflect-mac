@@ -427,6 +427,24 @@ enum Script {
                 let items = OpenQuickly.items(for: argument, index: controller.index, search: ReflectSearchIndex(root: controller.graph.root),
                                               pictures: controller.pictureText.index)
                 if let first = items.first { controller.openInWindow(first.target, found: first.found) }
+            case "hit-rows":
+                // hit-rows [split]: for each row of the main (or split) note, what a click
+                // at its text would reach, and the frames around it.
+                guard let pane = argument == "split" ? controller.workspace.split : controller.workspace.main,
+                      let editor = Optional(pane.noteView.editor), let layout = editor.layoutManager,
+                      let window = editor.window, let content = window.contentView else { break }
+                print("frames: noteView \(pane.noteView.frame) editor \(editor.frame) doc \(pane.noteView.superview?.frame ?? .zero)")
+                for (index, range) in editor.paragraphRanges.enumerated() {
+                    let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: range.location, length: 1), actualCharacterRange: nil)
+                    let rect = layout.boundingRect(forGlyphRange: glyphs, in: editor.textContainer!)
+                        .offsetBy(dx: editor.textContainerOrigin.x, dy: editor.textContainerOrigin.y)
+                    let point = editor.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+                    let visible = editor.visibleRect.contains(NSPoint(x: rect.midX, y: rect.midY))
+                    let hit = content.hitTest(content.convert(point, from: nil))
+                    let text = (editor.string as NSString).substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("hit \(index) \(text.prefix(20)) → \(hit === editor ? "editor" : hit.map { String(describing: type(of: $0)) } ?? "nothing")\(visible ? "" : " (scrolled away)")")
+                }
+                fflush(stdout)
             case "overflow":
                 // overflow: days whose text reaches past their frame.
                 let days = controller.timeline.overflowingDays

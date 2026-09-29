@@ -21,6 +21,16 @@ final class DayView: NSView, NSTextViewDelegate {
 
     /// Told when the view wants another height.
     var onHeightChange: ((DayView) -> Void)?
+
+    /// The text may take more room or less: laid out again here — the
+    /// editor sized to its text, even when the day's own frame stays as it
+    /// is, as a note filling its pane does — and whoever placed the day told.
+    /// An editor left shorter than its text draws the rest past its frame,
+    /// out of the mouse's reach.
+    private func heightMayHaveChanged() {
+        needsLayout = true
+        onHeightChange?(self)
+    }
     /// Told when the note has been written to disk.
     var onSave: (() -> Void)?
 
@@ -66,7 +76,7 @@ final class DayView: NSView, NSTextViewDelegate {
         editor.onPicturesChanged = { [weak self] in
             guard let self else { return }
             needsLayout = true
-            onHeightChange?(self)
+            heightMayHaveChanged()
         }
         editor.setAccessibilityLabel(ref.day.map { "Note for \(Self.titleFormatter.string(from: $0.date ?? Date()))" } ?? "Note")
         title.isSelectable = false
@@ -88,7 +98,7 @@ final class DayView: NSView, NSTextViewDelegate {
             editor.metrics = newValue
             applyMetrics()
             needsLayout = true
-            onHeightChange?(self)
+            heightMayHaveChanged()
         }
     }
 
@@ -291,7 +301,7 @@ final class DayView: NSView, NSTextViewDelegate {
         let caret = editor.caretPosition
         show(text)
         if focused && !hasConflict { editor.restoreCaret(caret) }
-        onHeightChange?(self)
+        heightMayHaveChanged()
     }
 
     private func park(_ text: String) {
@@ -305,7 +315,7 @@ final class DayView: NSView, NSTextViewDelegate {
         parkedNotice = notice
         addSubview(notice)
         needsLayout = true
-        onHeightChange?(self)
+        heightMayHaveChanged()
     }
 
     private func dropParked() {
@@ -319,14 +329,14 @@ final class DayView: NSView, NSTextViewDelegate {
         dropParked()
         isDirty = true
         save(overwriting: true)
-        onHeightChange?(self)
+        heightMayHaveChanged()
     }
 
     /// Load Theirs: what is on disk replaces this writing.
     private func loadTheirs() {
         guard let parked else { return }
         show(parked)
-        onHeightChange?(self)
+        heightMayHaveChanged()
     }
 
     /// Keeps one side of every conflict in the note, or both, by splicing
@@ -337,7 +347,7 @@ final class DayView: NSView, NSTextViewDelegate {
         do {
             try graph.write(resolved, path: ref.path)
             show(resolved)
-            onHeightChange?(self)
+            heightMayHaveChanged()
             onSave?()
             if !hasConflict {
                 window?.makeFirstResponder(editor)
@@ -416,7 +426,7 @@ final class DayView: NSView, NSTextViewDelegate {
         saveTimer = Timer.scheduledTimer(withTimeInterval: Self.saveDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.save() }
         }
-        onHeightChange?(self)
+        heightMayHaveChanged()
     }
 
     func undoManager(for view: NSTextView) -> UndoManager? { undo }
