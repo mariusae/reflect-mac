@@ -1,0 +1,605 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 110;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		2936E85D306DC875001C615A /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2936E85C306DC875001C615A /* AppDelegate.swift */; };
+		2936E861306DC875001C615A /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = 2936E85F306DC875001C615A /* Main.html */; };
+		2936E863306DC875001C615A /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 2936E862306DC875001C615A /* Icon.png */; };
+		2936E865306DC875001C615A /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = 2936E864306DC875001C615A /* Style.css */; };
+		2936E867306DC875001C615A /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = 2936E866306DC875001C615A /* Script.js */; };
+		2936E869306DC875001C615A /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2936E868306DC875001C615A /* ViewController.swift */; };
+		2936E86C306DC875001C615A /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 2936E86A306DC875001C615A /* Main.storyboard */; };
+		2936E86E306DC876001C615A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2936E86D306DC876001C615A /* Assets.xcassets */; };
+		2936E875306DC876001C615A /* Reflect Capture Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 2936E874306DC876001C615A /* Reflect Capture Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		2936E87A306DC876001C615A /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2936E879306DC876001C615A /* SafariWebExtensionHandler.swift */; };
+		2936E88E306DC876001C615A /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 2936E886306DC876001C615A /* popup.js */; };
+		2936E88F306DC876001C615A /* content.css in Resources */ = {isa = PBXBuildFile; fileRef = 2936E887306DC876001C615A /* content.css */; };
+		2936E890306DC876001C615A /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 2936E888306DC876001C615A /* background.js */; };
+		2936E891306DC876001C615A /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 2936E889306DC876001C615A /* popup.html */; };
+		2936E892306DC876001C615A /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 2936E88A306DC876001C615A /* icons */; };
+		2936E893306DC876001C615A /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 2936E88B306DC876001C615A /* manifest.json */; };
+		2936E894306DC876001C615A /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = 2936E88C306DC876001C615A /* popup.css */; };
+		2936E895306DC876001C615A /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 2936E88D306DC876001C615A /* content.js */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		2936E876306DC876001C615A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 2936E851306DC875001C615A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2936E873306DC876001C615A;
+			remoteInfo = "Reflect Capture Extension";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		2936E881306DC876001C615A /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			dstPath = "";
+			dstSubfolder = PlugIns;
+			files = (
+				2936E875306DC876001C615A /* Reflect Capture Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		2936E859306DC875001C615A /* Reflect Capture.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Reflect Capture.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		2936E85C306DC875001C615A /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		2936E860306DC875001C615A /* Base */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = Base; path = Base.lproj/Main.html; sourceTree = "<group>"; };
+		2936E862306DC875001C615A /* Icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icon.png; sourceTree = "<group>"; };
+		2936E864306DC875001C615A /* Style.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = Style.css; sourceTree = "<group>"; };
+		2936E866306DC875001C615A /* Script.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Script.js; sourceTree = "<group>"; };
+		2936E868306DC875001C615A /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
+		2936E86B306DC875001C615A /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		2936E86D306DC876001C615A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		2936E86F306DC876001C615A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		2936E874306DC876001C615A /* Reflect Capture Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Reflect Capture Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		2936E879306DC876001C615A /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		2936E87B306DC876001C615A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		2936E886306DC876001C615A /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = popup.js; path = ../../../Browser/popup.js; sourceTree = "<group>"; };
+		2936E887306DC876001C615A /* content.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = content.css; path = ../../../Browser/content.css; sourceTree = "<group>"; };
+		2936E888306DC876001C615A /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = background.js; path = ../../../Browser/background.js; sourceTree = "<group>"; };
+		2936E889306DC876001C615A /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = popup.html; path = ../../../Browser/popup.html; sourceTree = "<group>"; };
+		2936E88A306DC876001C615A /* icons */ = {isa = PBXFileReference; lastKnownFileType = folder; name = icons; path = ../../../Browser/icons; sourceTree = "<group>"; };
+		2936E88B306DC876001C615A /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = ../../../Browser/manifest.json; sourceTree = "<group>"; };
+		2936E88C306DC876001C615A /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = popup.css; path = ../../../Browser/popup.css; sourceTree = "<group>"; };
+		2936E88D306DC876001C615A /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = ../../../Browser/content.js; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2936E856306DC875001C615A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		2936E871306DC876001C615A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		2936E850306DC875001C615A = {
+			isa = PBXGroup;
+			children = (
+				2936E85B306DC875001C615A /* Reflect Capture */,
+				2936E878306DC876001C615A /* Reflect Capture Extension */,
+				2936E85A306DC875001C615A /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		2936E85A306DC875001C615A /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				2936E859306DC875001C615A /* Reflect Capture.app */,
+				2936E874306DC876001C615A /* Reflect Capture Extension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		2936E85B306DC875001C615A /* Reflect Capture */ = {
+			isa = PBXGroup;
+			children = (
+				2936E85C306DC875001C615A /* AppDelegate.swift */,
+				2936E868306DC875001C615A /* ViewController.swift */,
+				2936E86A306DC875001C615A /* Main.storyboard */,
+				2936E86D306DC876001C615A /* Assets.xcassets */,
+				2936E86F306DC876001C615A /* Info.plist */,
+				2936E85E306DC875001C615A /* Resources */,
+			);
+			path = "Reflect Capture";
+			sourceTree = "<group>";
+		};
+		2936E85E306DC875001C615A /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				2936E85F306DC875001C615A /* Main.html */,
+				2936E862306DC875001C615A /* Icon.png */,
+				2936E864306DC875001C615A /* Style.css */,
+				2936E866306DC875001C615A /* Script.js */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		2936E878306DC876001C615A /* Reflect Capture Extension */ = {
+			isa = PBXGroup;
+			children = (
+				2936E885306DC876001C615A /* Resources */,
+				2936E879306DC876001C615A /* SafariWebExtensionHandler.swift */,
+				2936E87B306DC876001C615A /* Info.plist */,
+			);
+			path = "Reflect Capture Extension";
+			sourceTree = "<group>";
+		};
+		2936E885306DC876001C615A /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				2936E886306DC876001C615A /* popup.js */,
+				2936E887306DC876001C615A /* content.css */,
+				2936E888306DC876001C615A /* background.js */,
+				2936E889306DC876001C615A /* popup.html */,
+				2936E88A306DC876001C615A /* icons */,
+				2936E88B306DC876001C615A /* manifest.json */,
+				2936E88C306DC876001C615A /* popup.css */,
+				2936E88D306DC876001C615A /* content.js */,
+			);
+			name = Resources;
+			path = "Reflect Capture Extension";
+			sourceTree = SOURCE_ROOT;
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		2936E858306DC875001C615A /* Reflect Capture */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2936E882306DC876001C615A /* Build configuration list for PBXNativeTarget "Reflect Capture" */;
+			buildPhases = (
+				2936E855306DC875001C615A /* Sources */,
+				2936E856306DC875001C615A /* Frameworks */,
+				2936E857306DC875001C615A /* Resources */,
+				2936E881306DC876001C615A /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				2936E877306DC876001C615A /* PBXTargetDependency */,
+			);
+			name = "Reflect Capture";
+			productName = "Reflect Capture";
+			productReference = 2936E859306DC875001C615A /* Reflect Capture.app */;
+			productType = "com.apple.product-type.application";
+		};
+		2936E873306DC876001C615A /* Reflect Capture Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2936E87E306DC876001C615A /* Build configuration list for PBXNativeTarget "Reflect Capture Extension" */;
+			buildPhases = (
+				2936E870306DC876001C615A /* Sources */,
+				2936E871306DC876001C615A /* Frameworks */,
+				2936E872306DC876001C615A /* Resources */,
+			);
+			buildRules = (
+			);
+			name = "Reflect Capture Extension";
+			productName = "Reflect Capture Extension";
+			productReference = 2936E874306DC876001C615A /* Reflect Capture Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		2936E851306DC875001C615A /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					2936E858306DC875001C615A = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					2936E873306DC876001C615A = {
+						CreatedOnToolsVersion = 27.0;
+					};
+				};
+			};
+			buildConfigurationList = 2936E854306DC875001C615A /* Build configuration list for PBXProject "Reflect Capture" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 2936E850306DC875001C615A;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 2936E85A306DC875001C615A /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				2936E858306DC875001C615A /* Reflect Capture */,
+				2936E873306DC876001C615A /* Reflect Capture Extension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		2936E857306DC875001C615A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+				2936E863306DC875001C615A /* Icon.png in Resources */,
+				2936E86C306DC875001C615A /* Main.storyboard in Resources */,
+				2936E867306DC875001C615A /* Script.js in Resources */,
+				2936E861306DC875001C615A /* Main.html in Resources */,
+				2936E86E306DC876001C615A /* Assets.xcassets in Resources */,
+				2936E865306DC875001C615A /* Style.css in Resources */,
+			);
+		};
+		2936E872306DC876001C615A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+				2936E895306DC876001C615A /* content.js in Resources */,
+				2936E88E306DC876001C615A /* popup.js in Resources */,
+				2936E894306DC876001C615A /* popup.css in Resources */,
+				2936E891306DC876001C615A /* popup.html in Resources */,
+				2936E890306DC876001C615A /* background.js in Resources */,
+				2936E892306DC876001C615A /* icons in Resources */,
+				2936E893306DC876001C615A /* manifest.json in Resources */,
+				2936E88F306DC876001C615A /* content.css in Resources */,
+			);
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		2936E855306DC875001C615A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				2936E869306DC875001C615A /* ViewController.swift in Sources */,
+				2936E85D306DC875001C615A /* AppDelegate.swift in Sources */,
+			);
+		};
+		2936E870306DC876001C615A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				2936E87A306DC876001C615A /* SafariWebExtensionHandler.swift in Sources */,
+			);
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		2936E877306DC876001C615A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2936E873306DC876001C615A /* Reflect Capture Extension */;
+			targetProxy = 2936E876306DC876001C615A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		2936E85F306DC875001C615A /* Main.html */ = {
+			isa = PBXVariantGroup;
+			children = (
+				2936E860306DC875001C615A /* Base */,
+			);
+			name = Main.html;
+			sourceTree = "<group>";
+		};
+		2936E86A306DC875001C615A /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				2936E86B306DC875001C615A /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		2936E87C306DC876001C615A /* Debug configuration for PBXProject "Reflect Capture" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		2936E87D306DC876001C615A /* Release configuration for PBXProject "Reflect Capture" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		2936E87F306DC876001C615A /* Debug configuration for PBXNativeTarget "Reflect Capture Extension" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Reflect Capture Extension/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Reflect Capture Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.mariusae.ReflectCapture.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		2936E880306DC876001C615A /* Release configuration for PBXNativeTarget "Reflect Capture Extension" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Reflect Capture Extension/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Reflect Capture Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.mariusae.ReflectCapture.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		2936E883306DC876001C615A /* Debug configuration for PBXNativeTarget "Reflect Capture" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Reflect Capture/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Reflect Capture";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_NSViewGestureRecognizerIsExclusive = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.mariusae.ReflectCapture;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		2936E884306DC876001C615A /* Release configuration for PBXNativeTarget "Reflect Capture" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Reflect Capture/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Reflect Capture";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_NSViewGestureRecognizerIsExclusive = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.mariusae.ReflectCapture;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		2936E854306DC875001C615A /* Build configuration list for PBXProject "Reflect Capture" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2936E87C306DC876001C615A /* Debug configuration for PBXProject "Reflect Capture" */,
+				2936E87D306DC876001C615A /* Release configuration for PBXProject "Reflect Capture" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		2936E87E306DC876001C615A /* Build configuration list for PBXNativeTarget "Reflect Capture Extension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2936E87F306DC876001C615A /* Debug configuration for PBXNativeTarget "Reflect Capture Extension" */,
+				2936E880306DC876001C615A /* Release configuration for PBXNativeTarget "Reflect Capture Extension" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		2936E882306DC876001C615A /* Build configuration list for PBXNativeTarget "Reflect Capture" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2936E883306DC876001C615A /* Debug configuration for PBXNativeTarget "Reflect Capture" */,
+				2936E884306DC876001C615A /* Release configuration for PBXNativeTarget "Reflect Capture" */,
+			);
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 2936E851306DC875001C615A /* Project object */;
+	validationLevel = 1;
+}

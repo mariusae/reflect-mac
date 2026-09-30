@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let graphPathKey = "GraphPath"
 
     private var windowController: MainWindowController?
+    /// Where the browser extension sends pages.
+    let captureServer = CaptureServer()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         StallWatch.shared.start()
@@ -29,6 +31,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sync = SyncController(git: graph.git)
         let controller = MainWindowController(graph: graph, sync: sync)
         windowController = controller
+        captureServer.graphName = { root.lastPathComponent }
+        captureServer.onCapture = { [weak controller] page, screenshot in
+            guard let controller else { throw CocoaError(.fileWriteUnknown) }
+            return try controller.capture(page, screenshot: screenshot)
+        }
+        captureServer.onOpen = { [weak controller] path in
+            NSApp.activate()
+            controller?.window?.makeKeyAndOrderFront(nil)
+            controller?.workspace.open(OpenQuickly.target(for: path), inSplit: false)
+        }
+        captureServer.start()
         controller.showWindow(nil)
         sync.sync()
         Script.runIfRequested(controller)

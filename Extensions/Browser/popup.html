@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Capture to Reflect</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main id="capture" hidden>
+    <input id="title" type="text" spellcheck="false" aria-label="Title">
+    <div id="url"></div>
+
+    <section id="highlights-section">
+      <h2>Highlights <span id="count"></span></h2>
+      <ul id="highlights"></ul>
+      <p id="no-highlights" class="hint">Select text on the page and choose Highlight — or ⇧⌘H.</p>
+      <p id="selection" class="hint" hidden></p>
+    </section>
+
+    <label class="option"><input id="screenshot" type="checkbox" checked> Include a screenshot</label>
+
+    <button id="save" class="primary">Save to Reflect</button>
+    <p id="status" class="status" hidden></p>
+    <button id="open" class="link" hidden>Open in Reflect</button>
+  </main>
+
+  <main id="pair" hidden>
+    <h1>Connect to Reflect</h1>
+    <p>Reflect Mac will ask you to allow this browser to save pages into your notes.</p>
+    <button id="pair-button" class="primary">Connect</button>
+    <p id="pair-status" class="status" hidden></p>
+  </main>
+
+  <main id="offline" hidden>
+    <h1>Reflect isn’t open</h1>
+    <p>Open Reflect Mac, then try again: pages are saved through it, into your notes.</p>
+    <button id="retry" class="primary">Try Again</button>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>

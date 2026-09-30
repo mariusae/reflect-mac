@@ -857,6 +857,26 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     @objc func goToToday(_ sender: Any?) { workspace.showToday() }
 
+    // MARK: Pages captured in a browser
+
+    /// A page the browser extension captured: its screenshot kept in the
+    /// graph's assets, its note written — or, captured before, added to —
+    /// and linked from today; what is open shows it, and the sync takes it.
+    func capture(_ page: WebCapture.Page, screenshot: Data?) throws -> (path: String, title: String) {
+        saveAll()
+        var page = page
+        if let screenshot {
+            let name = "screenshot-" + Assets.slug(WebCapture.title(page.title, url: page.url)).prefix(40) + "-"
+                + Assets.pastedName(extension: "png").replacingOccurrences(of: "pasted-", with: "")
+            page.screenshot = try Assets.add(screenshot, named: name, to: graph.root)
+        }
+        let path = try WebCapture.save(page, in: graph, index: index)
+        reloadFromDisk()
+        sync.noteChanged()
+        sidebarNeedsReload()
+        return (path, index.entry(path)?.title ?? WebCapture.title(page.title, url: page.url))
+    }
+
     /// Go ▸ This Week: the week's note.
     @objc func goToThisWeek(_ sender: Any?) {
         workspace.show(NoteRef(path: GraphPaths.weeklyPath(for: .current)), inSplit: false)
