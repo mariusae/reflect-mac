@@ -6,10 +6,12 @@ import ReflectCore
 /// on this Mac alone — `127.0.0.1`, never the network — for as long as the
 /// app runs.
 ///
-/// Only browser extensions are answered, by the origin their requests come
-/// from, and only a browser the person allowed: the first time, the
-/// extension asks to pair, and the app asks the person; allowed, the
-/// browser gets a token to send with each capture after.
+/// Web pages are not answered: a browser always says which page a request
+/// comes from, and only an extension's origin — or none, as an extension's
+/// requests to a host it may reach often have — is let in. And only a
+/// browser the person allowed captures: the first time, the extension asks
+/// to pair, and the app asks the person; allowed, the browser gets a token
+/// to send with each capture after.
 ///
 ///     GET  /ping      the app, and the graph it writes to
 ///     POST /pair      {"browser"} → {"token"}, once allowed
@@ -104,16 +106,17 @@ final class CaptureServer {
         return Request(method: String(first[0]), path: String(first[1]), headers: headers, body: Data(body.prefix(length)))
     }
 
-    /// Only a browser extension's requests are answered: a page on the web
-    /// has an origin of its own, and gets nothing.
-    private static func isExtension(_ origin: String?) -> Bool {
-        guard let origin else { return false }
+    /// Whether a request may be answered: not from a page on the web, which
+    /// always has an origin of its own. An extension's has its own kind, or,
+    /// to a host it has permission for, often none at all.
+    private static func mayAnswer(_ origin: String?) -> Bool {
+        guard let origin else { return true }
         return ["chrome-extension://", "safari-web-extension://", "moz-extension://"].contains { origin.hasPrefix($0) }
     }
 
     private func handle(_ request: Request, on connection: NWConnection) {
         let origin = request.headers["origin"]
-        guard Self.isExtension(origin) else {
+        guard Self.mayAnswer(origin) else {
             respond(connection, status: 403, json: ["error": "Only the Reflect browser extension may capture."], origin: nil)
             return
         }
@@ -124,7 +127,9 @@ final class CaptureServer {
         let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
         switch (request.method, request.path) {
         case ("GET", "/ping"):
-            respond(connection, status: 200, json: ["app": "Reflect Mac", "graph": graphName(), "paired": isAllowed(request)], origin: origin)
+            // Which graph, only to a browser allowed to write to it.
+            let paired = isAllowed(request)
+            respond(connection, status: 200, json: (["app": "Reflect Mac", "paired": paired] as [String: Any]).merging(paired ? ["graph": graphName()] : [:]) { $1 }, origin: origin)
         case ("POST", "/pair"):
             let browser = (body["browser"] as? String).map { String($0.prefix(40)) } ?? "A browser"
             pair(browser) { token in

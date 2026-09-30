@@ -74,7 +74,12 @@ async function load() {
   let ping;
   try {
     ping = await call("/ping", null, "GET");
-  } catch {
+  } catch (error) {
+    // Not there at all, or there and saying no: which, it says.
+    $("offline-title").textContent = error.status ? "Reflect didn’t answer" : "Reflect isn’t open";
+    $("offline-message").textContent = error.status
+      ? `Reflect Mac said: ${error.message}`
+      : "Open Reflect Mac, then try again: pages are saved through it, into your notes.";
     show("offline");
     return;
   }
