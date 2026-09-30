@@ -256,6 +256,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sidebarReload?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
+                StallWatch.doing("reloading the sidebar after a rescan")
+                defer { StallWatch.doing("idle") }
                 self?.sidebars.forEach { $0.reload(); $0.refreshSearch() }
                 // Links may have come or gone.
                 self?.sidebars.forEach { $0.follow($0.linked, force: true) }

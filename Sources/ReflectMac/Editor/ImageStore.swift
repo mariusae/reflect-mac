@@ -215,6 +215,10 @@ final class ImageStore: @unchecked Sendable {
     }
 
     /// The picture itself, once it is known to be one.
+    /// Lets go of the pictures read, as the system does of an app in the
+    /// background. For scripts.
+    func forgetPictures() { images.removeAllObjects() }
+
     func image(_ source: String) -> NSImage? {
         if let image = images.object(forKey: source as NSString) { return image }
         guard naturalSize(source) != nil else { return nil }

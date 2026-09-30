@@ -445,6 +445,43 @@ enum Script {
                     print("hit \(index) \(text.prefix(20)) → \(hit === editor ? "editor" : hit.map { String(describing: type(of: $0)) } ?? "nothing")\(visible ? "" : " (scrolled away)")")
                 }
                 fflush(stdout)
+            case "activate":
+                // activate [n]: what coming back to the app does, timed, n times.
+                for _ in 0..<(Int(argument) ?? 1) {
+                    var parts: [String] = []
+                    func timed(_ name: String, _ work: () -> Void) {
+                        let start = Date()
+                        work()
+                        parts.append("\(name) \(Int(Date().timeIntervalSince(start) * 1000))ms")
+                    }
+                    timed("workspace") { controller.workspace.reloadFromDisk() }
+                    timed("all") { controller.reloadFromDisk() }
+                    timed("sync") { controller.sync.sync(becauseActivated: true) }
+                    print("activate: " + parts.joined(separator: ", "))
+                }
+                fflush(stdout)
+            case "draw-cold":
+                // draw-cold: the window drawn with the pictures let go of first, and again, timed.
+                for round in ["cold", "warm"] {
+                    if round == "cold" { controller.timeline.images.forgetPictures() }
+                    let start = Date()
+                    // Drawn into an image: a window behind others is not drawn at all.
+                    if let content = controller.window?.contentView, let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+                        content.cacheDisplay(in: content.bounds, to: bitmap)
+                    }
+                    print("draw-cold \(round): \(Int(Date().timeIntervalSince(start) * 1000))ms")
+                }
+                fflush(stdout)
+            case "stall":
+                // stall <seconds>: the main thread kept busy, to see it noticed.
+                StallWatch.doing("a script keeping the main thread busy")
+                Thread.sleep(forTimeInterval: Double(argument) ?? 1)
+                StallWatch.doing("idle")
+            case "stalls":
+                // stalls: each time the main thread stopped answering, and what it was doing.
+                let stalls = StallWatch.shared.stalls
+                print("stalls: " + (stalls.isEmpty ? "none" : stalls.map { String(format: "%.2fs (%@)", $0.seconds, $0.doing) }.joined(separator: ", ")))
+                fflush(stdout)
             case "overflow":
                 // overflow: days whose text reaches past their frame.
                 let days = controller.timeline.overflowingDays

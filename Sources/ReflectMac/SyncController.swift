@@ -97,7 +97,11 @@ final class SyncController {
                     Log.shared.warning("sync", "Left out of the backup, too large: \(file.path)",
                                        detail: ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file))
                 }
-                if report.pulled { onPulled?(report.changed) }
+                if report.pulled {
+                    StallWatch.doing("taking in what the sync pulled")
+                    onPulled?(report.changed)
+                    StallWatch.doing("idle")
+                }
                 if !report.conflicted.isEmpty { onConflicts?(report.conflicted) }
                 if !report.skippedLargeFiles.isEmpty { onLargeFiles?(report.skippedLargeFiles) }
                 status = .synced(Date())

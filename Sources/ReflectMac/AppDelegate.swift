@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowController: MainWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        StallWatch.shared.start()
         NSApp.mainMenu = MainMenu.build()
         if let path = UserDefaults.standard.string(forKey: Self.graphPathKey) {
             open(URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true))
@@ -69,8 +70,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
+        StallWatch.doing("coming forward: reading the notes on screen again")
         windowController?.reloadFromDisk()
+        StallWatch.doing("coming forward: syncing")
         windowController?.sync.sync(becauseActivated: true)
+        StallWatch.doing("idle")
     }
 
     func applicationDidResignActive(_ notification: Notification) {

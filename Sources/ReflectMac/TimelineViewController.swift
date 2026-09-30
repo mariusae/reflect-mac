@@ -186,7 +186,11 @@ final class TimelineViewController: NSViewController, OutlineTextViewNavigator {
     func tile() {
         guard !tiling, count > 0 else { return }
         tiling = true
-        defer { tiling = false }
+        StallWatch.doing("laying out the days")
+        defer {
+            tiling = false
+            StallWatch.doing("idle")
+        }
 
         let visible = scrollView.contentView.bounds
         let margin = max(visible.height, 400)
