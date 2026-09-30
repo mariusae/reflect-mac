@@ -167,6 +167,9 @@ final class OutlineTextView: NSTextView {
         if !adjusting { tidy() }
         super.didChangeText()
         updateCaret()
+        // A box ticked, or a row moved, changes the rings of the bullets
+        // above it too, not only its own line.
+        needsDisplay = true
     }
 
     /// An edit that would take some of a span's markup, but not all of it,

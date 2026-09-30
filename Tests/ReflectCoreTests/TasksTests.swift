@@ -59,3 +59,23 @@ import Testing
         #expect(Tasks.setting(done: true, ordinal: 5, in: source) == nil)
     }
 }
+
+@Suite struct CheckboxProgressTests {
+    @Test func eachRowCountsWhatIsUnderIt() {
+        let rows = OutlineMarkdown.parse("- Groceries\n  - [ ] milk\n  - [x] eggs\n  - More\n    + [x] call\n- Nothing\n- [ ] alone\n").rows
+        let under = Checkboxes.underEach(rows)
+        #expect(under.map(\.total) == [3, 0, 0, 1, 0, 0, 0])
+        #expect(under.map(\.done) == [2, 0, 0, 1, 0, 0, 0])
+    }
+
+    @Test func foldedRowsCount() {
+        var rows = OutlineMarkdown.parse("- Trip\n  - [ ] passport\n  - [x] tickets\n").rows
+        OutlineEditing.fold(&rows, at: 0)
+        #expect(Checkboxes.underEach(rows)[0] == Checkboxes.Progress(done: 1, total: 2))
+    }
+
+    @Test func aNoteCountsAll() {
+        #expect(Checkboxes.progress(in: "- words\n") == nil)
+        #expect(Checkboxes.progress(in: "- [ ] a\n  + [x] b\n") == Checkboxes.Progress(done: 1, total: 2))
+    }
+}

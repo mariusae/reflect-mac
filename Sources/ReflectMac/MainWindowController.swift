@@ -875,6 +875,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         let current = workspace.current?.day ?? timeline.currentDay
         let picker = CalendarPickerView(selected: current)
         picker.marked = Set(index.all.compactMap(\.day))
+        let index = index
+        picker.progress = { day in index.body(GraphPaths.dailyPath(for: day)).flatMap(Checkboxes.progress(in:)) }
         picker.markedWeeks = Set(index.all.compactMap { GraphPaths.week(fromWeeklyPath: $0.path) })
         picker.currentWeek = workspace.current.flatMap { GraphPaths.week(fromWeeklyPath: $0.path) }
         let controller = NSViewController()

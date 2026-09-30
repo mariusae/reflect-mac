@@ -145,3 +145,65 @@ extension NoteIndex {
         }
     }
 }
+
+/// Checkboxes — tasks and checklist items — counted as progress: the done
+/// among them, and all.
+public enum Checkboxes {
+    public struct Progress: Equatable, Sendable {
+        public var done: Int
+        public var total: Int
+        public var isEmpty: Bool { total == 0 }
+        public var share: Double { total == 0 ? 0 : Double(done) / Double(total) }
+
+        public init(done: Int = 0, total: Int = 0) {
+            self.done = done
+            self.total = total
+        }
+    }
+
+    /// Those in some rows, and in what is folded in them.
+    public static func progress(of rows: [Row]) -> Progress {
+        var progress = Progress()
+        for row in Row.unfold(rows) where row.task != nil {
+            progress.total += 1
+            if row.task?.isDone == true { progress.done += 1 }
+        }
+        return progress
+    }
+
+    /// A note's, from its text; nil for one with none, found without
+    /// reading the rest of it.
+    public static func progress(in source: String) -> Progress? {
+        guard source.contains("[ ]") || source.contains("[x]") || source.contains("[X]") else { return nil }
+        let progress = progress(of: OutlineMarkdown.parse(source).rows)
+        return progress.isEmpty ? nil : progress
+    }
+
+    /// For each row, those under it — its children, theirs, and what is
+    /// folded in any of them — in one pass.
+    public static func underEach(_ rows: [Row]) -> [Progress] {
+        var under = [Progress](repeating: Progress(), count: rows.count)
+        var open: [Int] = []
+        for (index, row) in rows.enumerated() {
+            while let last = open.last, rows[last].depth >= row.depth { open.removeLast() }
+            let own = progress(of: row.folded)
+            if row.task != nil {
+                // The row's own box counts for those above it, not itself.
+                let box = Progress(done: row.task?.isDone == true ? 1 : 0, total: 1)
+                for ancestor in open {
+                    under[ancestor].done += box.done
+                    under[ancestor].total += box.total
+                }
+            }
+            under[index].done += own.done
+            under[index].total += own.total
+            for ancestor in open {
+                under[ancestor].done += own.done
+                under[ancestor].total += own.total
+            }
+            open.append(index)
+        }
+        return under
+    }
+}
+

@@ -54,6 +54,10 @@ final class OutlineLayoutManager: NSLayoutManager {
             }
         }
 
+        // What each row holds of tasks and checklist items, under it: once
+        // for the pass, from the rows' styles alone.
+        let under = Checkboxes.underEach(paragraphs.map { OutlineText.style(storage, at: $0.location).row })
+
         for (index, paragraph) in paragraphs.enumerated()
         where NSIntersectionRange(paragraph, covered).length > 0 || paragraph.location == covered.location {
             let row = OutlineText.style(storage, at: paragraph.location).row
@@ -88,7 +92,8 @@ final class OutlineLayoutManager: NSLayoutManager {
             // A row that shows no bullet is still a row: under the pointer,
             // it shows a ghost of one.
             if case .none = handle, index == view.hoveredRow, row.kind != .rule { handle = .ghost }
-            drawHandle(handle, row: row, paragraph: paragraph, origin: origin, indent: indent)
+            drawHandle(handle, row: row, paragraph: paragraph, origin: origin, indent: indent,
+                       progress: index < under.count ? under[index] : nil)
             drawPictures(in: paragraph, origin: origin)
             drawFilePills(in: paragraph, origin: origin)
             drawCodeBackgrounds(in: paragraph, origin: origin)
@@ -166,7 +171,8 @@ final class OutlineLayoutManager: NSLayoutManager {
         return rect.offsetBy(dx: origin.x, dy: origin.y)
     }
 
-    private func drawHandle(_ handle: Handle, row: Row, paragraph: NSRange, origin: NSPoint, indent: CGFloat) {
+    private func drawHandle(_ handle: Handle, row: Row, paragraph: NSRange, origin: NSPoint, indent: CGFloat,
+                            progress: Checkboxes.Progress?) {
         guard let view = outlineView else { return }
         let glyph = glyphIndexForCharacter(at: paragraph.location)
         guard glyph < numberOfGlyphs else { return }
@@ -194,6 +200,12 @@ final class OutlineLayoutManager: NSLayoutManager {
             NSColor.secondaryLabelColor.setFill()
             let dot = max(4, (font.pointSize * 0.34).rounded())
             NSBezierPath(ovalIn: NSRect(x: center.x - dot / 2, y: center.y - dot / 2, width: dot, height: dot)).fill()
+            // Tasks or checklist items under it: how far along they are, round it.
+            if let progress, !progress.isEmpty {
+                let side = (font.pointSize * 0.95).rounded()
+                ProgressRing.draw(progress, in: NSRect(x: center.x - side / 2, y: center.y - side / 2, width: side, height: side),
+                                  lineWidth: 1.6, flipped: true, tick: false)
+            }
         case .task(let done, let round):
             let name = round ? (done ? "checkmark.circle.fill" : "circle") : (done ? "checkmark.square.fill" : "square")
             let configuration = NSImage.SymbolConfiguration(pointSize: font.pointSize * 0.95, weight: .regular)

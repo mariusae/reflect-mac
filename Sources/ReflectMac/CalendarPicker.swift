@@ -13,6 +13,17 @@ final class CalendarPickerView: NSView {
     var onPick: ((Day, _ inSplit: Bool) -> Void)?
     /// The days with notes.
     var marked: Set<Day> = [] { didSet { needsDisplay = true } }
+    /// How far along a day's tasks and checklist items are; nil for a day
+    /// with none. Asked of the days shown, and kept.
+    var progress: ((Day) -> Checkboxes.Progress?)? { didSet { progresses.removeAll(); needsDisplay = true } }
+    private var progresses: [Day: Checkboxes.Progress?] = [:]
+
+    private func progress(of day: Day) -> Checkboxes.Progress? {
+        if let known = progresses[day] { return known }
+        let found = marked.contains(day) ? progress?(day) : nil
+        progresses[day] = .some(found)
+        return found
+    }
     /// Told the week picked, and whether in the split view.
     var onPickWeek: ((Week, _ inSplit: Bool) -> Void)?
     /// The weeks with notes.
@@ -192,6 +203,10 @@ final class CalendarPickerView: NSView {
             let inMonth = day.month == month.month
             let circle = NSRect(x: cell.midX - 13, y: cell.minY + 2, width: 26, height: 26)
             let isSelected = day == selected
+            // Its tasks: how far along, round it.
+            if let progress = progress(of: day) {
+                ProgressRing.draw(progress, in: circle.insetBy(dx: -2.5, dy: -2.5), lineWidth: 2, flipped: true, tick: false)
+            }
             if isSelected {
                 NSColor.controlAccentColor.setFill()
                 NSBezierPath(ovalIn: circle).fill()

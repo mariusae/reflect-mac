@@ -75,7 +75,17 @@ final class ProgressRingButton: NSButton {
     override func draw(_ dirtyRect: NSRect) {
         let side: CGFloat = 15
         let rect = NSRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side)
-        let width: CGFloat = 2.2
+        ProgressRing.draw(Checkboxes.Progress(done: progress.done, total: progress.total), in: rect, lineWidth: 2.2,
+                          flipped: isFlipped, dimmed: isHighlighted)
+    }
+}
+
+/// The ring the progress of some checkboxes is shown in: its rim filling,
+/// clockwise from the top, with the share done — and, all done, whole, with
+/// a tick in it when there is room for one.
+enum ProgressRing {
+    static func draw(_ progress: Checkboxes.Progress, in rect: NSRect, lineWidth width: CGFloat, flipped: Bool,
+                     tick: Bool = true, dimmed: Bool = false) {
         let ring = rect.insetBy(dx: width / 2, dy: width / 2)
         let center = NSPoint(x: ring.midX, y: ring.midY)
         let radius = ring.width / 2
@@ -86,29 +96,30 @@ final class ProgressRingButton: NSButton {
         track.stroke()
 
         guard progress.total > 0 else { return }
-        let share = CGFloat(progress.done) / CGFloat(progress.total)
-        let color: NSColor = isHighlighted ? .controlAccentColor.withAlphaComponent(0.6) : .controlAccentColor
-        color.setStroke()
+        let share = CGFloat(progress.share)
+        (dimmed ? NSColor.controlAccentColor.withAlphaComponent(0.6) : NSColor.controlAccentColor).setStroke()
         if share >= 1 {
             let full = NSBezierPath(ovalIn: ring)
             full.lineWidth = width
             full.stroke()
-            // A tick: down to the left, then up to the right, as seen.
-            let tick = NSBezierPath()
-            let down: CGFloat = isFlipped ? 1 : -1
-            tick.move(to: NSPoint(x: center.x - 3, y: center.y))
-            tick.line(to: NSPoint(x: center.x - 0.8, y: center.y + 2.3 * down))
-            tick.line(to: NSPoint(x: center.x + 3.2, y: center.y - 2.4 * down))
-            tick.lineWidth = 1.8
-            tick.lineCapStyle = .round
-            tick.lineJoinStyle = .round
-            tick.stroke()
+            guard tick else { return }
+            // Down to the left, then up to the right, as seen.
+            let mark = NSBezierPath()
+            let down: CGFloat = flipped ? 1 : -1
+            let scale = radius / 6.4
+            mark.move(to: NSPoint(x: center.x - 3 * scale, y: center.y))
+            mark.line(to: NSPoint(x: center.x - 0.8 * scale, y: center.y + 2.3 * down * scale))
+            mark.line(to: NSPoint(x: center.x + 3.2 * scale, y: center.y - 2.4 * down * scale))
+            mark.lineWidth = 1.8
+            mark.lineCapStyle = .round
+            mark.lineJoinStyle = .round
+            mark.stroke()
         } else if share > 0 {
             // From twelve o'clock, clockwise.
             let arc = NSBezierPath()
-            let start: CGFloat = isFlipped ? -90 : 90
-            let end = isFlipped ? start + 360 * share : start - 360 * share
-            arc.appendArc(withCenter: center, radius: radius, startAngle: start, endAngle: end, clockwise: !isFlipped)
+            let start: CGFloat = flipped ? -90 : 90
+            let end = flipped ? start + 360 * share : start - 360 * share
+            arc.appendArc(withCenter: center, radius: radius, startAngle: start, endAngle: end, clockwise: !flipped)
             arc.lineWidth = width
             arc.lineCapStyle = .round
             arc.stroke()
