@@ -155,8 +155,11 @@ final class OutlineStyler: NSObject, NSTextStorageDelegate {
             if case .code = row.kind {
                 CodeBlock.dimFences(storage, in: paragraph)
             } else if case .rule = row.kind {} else {
+                // In a heading, links are only coloured: a pill would crowd its large type.
+                var inHeading = false
+                if case .heading = row.kind { inHeading = true }
                 InlineMarkdown.style(storage, in: paragraph, base: metrics.font(for: row), done: row.task?.isDone == true,
-                                     images: images, caret: caret)
+                                     images: images, caret: caret, pills: !inHeading)
             }
             // A character the font set here lacks still needs a font that has it.
             storage.fixAttributes(in: paragraph)
@@ -247,7 +250,8 @@ enum CodeBlock {
 
 /// Inline Markdown, shown as what it means, its markup hidden.
 enum InlineMarkdown {
-    static func style(_ storage: NSTextStorage, in range: NSRange, base: NSFont, done: Bool, images: ImageStore?, caret: Int? = nil) {
+    static func style(_ storage: NSTextStorage, in range: NSRange, base: NSFont, done: Bool, images: ImageStore?, caret: Int? = nil,
+                      pills: Bool = true) {
         let text = storage.string as NSString
         let body = NSRange(location: range.location, length: max(0, range.length - 1))
         func font(at location: Int) -> NSFont {
@@ -278,7 +282,7 @@ enum InlineMarkdown {
                 if let url = URL(string: target) {
                     storage.addAttributes([.link: url, .foregroundColor: LinkPill.tint], range: content)
                 }
-                if images?.filePill(target) == nil { LinkPill.mark(storage, span.range, kind: .web) }
+                if pills, images?.filePill(target) == nil { LinkPill.mark(storage, span.range, kind: .web) }
                 // A file in the graph: a pill, its icon and size in the room
                 // its hidden brackets are given.
                 if let pill = images?.filePill(target), let open = span.markup.first, let close = span.markup.last,
@@ -297,7 +301,7 @@ enum InlineMarkdown {
                 if let url = URL(string: target) {
                     storage.addAttributes([.link: url, .foregroundColor: LinkPill.tint], range: content)
                 }
-                LinkPill.markBare(storage, span.range, revealed: caret)
+                if pills { LinkPill.markBare(storage, span.range, revealed: caret) }
                 // A post's or a video's bare link shows its card too, below the link.
                 if Tweet.id(from: target) != nil || Video.id(from: target) != nil, let size = images?.naturalSize(target) {
                     storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: size),
@@ -308,7 +312,7 @@ enum InlineMarkdown {
                     storage.addAttributes([.link: url, .foregroundColor: LinkPill.tint], range: content)
                 }
                 let name = title.components(separatedBy: "|").first?.trimmingCharacters(in: .whitespaces) ?? title
-                LinkPill.mark(storage, span.range, kind: Day(name) != nil || Week(name) != nil ? .day : .page)
+                if pills { LinkPill.mark(storage, span.range, kind: Day(name) != nil || Week(name) != nil ? .day : .page) }
             case .image(let reference):
                 // Pictures side by side: one carousel, drawn at the first's place.
                 if let group = carousels[span.range.location] {
@@ -324,7 +328,7 @@ enum InlineMarkdown {
                 storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: span.range)
             case .tag:
                 storage.addAttribute(.foregroundColor, value: LinkPill.tint, range: span.range)
-                LinkPill.mark(storage, span.range, kind: .tag)
+                if pills { LinkPill.mark(storage, span.range, kind: .tag) }
             case .comment:
                 break
             }
