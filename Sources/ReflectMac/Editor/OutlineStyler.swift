@@ -71,6 +71,8 @@ final class OutlineStyler: NSObject, NSTextStorageDelegate {
     var onCharactersEdited: (() -> Void)?
     /// Where pictures come from; without it, images stay as Markdown.
     var images: ImageStore?
+    /// Where the caret is: a shortened web address it is in is shown whole.
+    var caret: Int?
 
     init(metrics: OutlineMetrics) {
         self.metrics = metrics
@@ -91,6 +93,16 @@ final class OutlineStyler: NSObject, NSTextStorageDelegate {
         }
         if mask.contains(.editedCharacters) { unify(storage, in: range, inserted: edited) }
         style(storage, in: range)
+    }
+
+    /// Styles the paragraph a character is in again.
+    func restyle(_ storage: NSTextStorage, paragraphAt location: Int) {
+        guard storage.length > 0 else { return }
+        let text = storage.string as NSString
+        let paragraph = text.paragraphRange(for: NSRange(location: min(location, text.length - 1), length: 0))
+        storage.beginEditing()
+        style(storage, in: paragraph)
+        storage.endEditing()
     }
 
     func styleAll(_ storage: NSTextStorage) {
@@ -143,7 +155,8 @@ final class OutlineStyler: NSObject, NSTextStorageDelegate {
             if case .code = row.kind {
                 CodeBlock.dimFences(storage, in: paragraph)
             } else if case .rule = row.kind {} else {
-                InlineMarkdown.style(storage, in: paragraph, base: metrics.font(for: row), done: row.task?.isDone == true, images: images)
+                InlineMarkdown.style(storage, in: paragraph, base: metrics.font(for: row), done: row.task?.isDone == true,
+                                     images: images, caret: caret)
             }
             // A character the font set here lacks still needs a font that has it.
             storage.fixAttributes(in: paragraph)
@@ -234,7 +247,7 @@ enum CodeBlock {
 
 /// Inline Markdown, shown as what it means, its markup hidden.
 enum InlineMarkdown {
-    static func style(_ storage: NSTextStorage, in range: NSRange, base: NSFont, done: Bool, images: ImageStore?) {
+    static func style(_ storage: NSTextStorage, in range: NSRange, base: NSFont, done: Bool, images: ImageStore?, caret: Int? = nil) {
         let text = storage.string as NSString
         let body = NSRange(location: range.location, length: max(0, range.length - 1))
         func font(at location: Int) -> NSFont {
@@ -263,8 +276,9 @@ enum InlineMarkdown {
                 ], range: content)
             case .link(let target):
                 if let url = URL(string: target) {
-                    storage.addAttributes([.link: url, .foregroundColor: NSColor.linkColor], range: content)
+                    storage.addAttributes([.link: url, .foregroundColor: LinkPill.tint], range: content)
                 }
+                if images?.filePill(target) == nil { LinkPill.mark(storage, span.range, kind: .web) }
                 // A file in the graph: a pill, its icon and size in the room
                 // its hidden brackets are given.
                 if let pill = images?.filePill(target), let open = span.markup.first, let close = span.markup.last,
@@ -281,8 +295,9 @@ enum InlineMarkdown {
                 }
             case .url(let target):
                 if let url = URL(string: target) {
-                    storage.addAttributes([.link: url, .foregroundColor: NSColor.linkColor], range: content)
+                    storage.addAttributes([.link: url, .foregroundColor: LinkPill.tint], range: content)
                 }
+                LinkPill.markBare(storage, span.range, revealed: caret)
                 // A post's or a video's bare link shows its card too, below the link.
                 if Tweet.id(from: target) != nil || Video.id(from: target) != nil, let size = images?.naturalSize(target) {
                     storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: size),
@@ -290,8 +305,10 @@ enum InlineMarkdown {
                 }
             case .wikiLink(let title):
                 if let url = URL.wiki(title) {
-                    storage.addAttributes([.link: url, .foregroundColor: NSColor.linkColor], range: content)
+                    storage.addAttributes([.link: url, .foregroundColor: LinkPill.tint], range: content)
                 }
+                let name = title.components(separatedBy: "|").first?.trimmingCharacters(in: .whitespaces) ?? title
+                LinkPill.mark(storage, span.range, kind: Day(name) != nil || Week(name) != nil ? .day : .page)
             case .image(let reference):
                 // Pictures side by side: one carousel, drawn at the first's place.
                 if let group = carousels[span.range.location] {
@@ -306,7 +323,8 @@ enum InlineMarkdown {
             case .imageText:
                 storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: span.range)
             case .tag:
-                storage.addAttribute(.foregroundColor, value: NSColor.controlAccentColor, range: span.range)
+                storage.addAttribute(.foregroundColor, value: LinkPill.tint, range: span.range)
+                LinkPill.mark(storage, span.range, kind: .tag)
             case .comment:
                 break
             }
@@ -384,7 +402,10 @@ final class HiddenMarkupGlyphs: NSObject, NSLayoutManagerDelegate {
         guard let storage = layoutManager.textStorage else { return action }
         // A file pill's icon and size take room where its brackets are hidden.
         if storage.attribute(.outlineFileLead, at: index, effectiveRange: nil) != nil
-            || storage.attribute(.outlineFileTail, at: index, effectiveRange: nil) != nil {
+            || storage.attribute(.outlineFileTail, at: index, effectiveRange: nil) != nil
+            || storage.attribute(.outlineLinkLead, at: index, effectiveRange: nil) != nil
+            || storage.attribute(.outlineLinkTail, at: index, effectiveRange: nil) != nil
+            || storage.attribute(.outlineLinkEllipsis, at: index, effectiveRange: nil) != nil {
             return .whitespace
         }
         if storage.attribute(.outlineHidden, at: index, effectiveRange: nil) != nil {
@@ -403,6 +424,12 @@ final class HiddenMarkupGlyphs: NSObject, NSLayoutManagerDelegate {
             width = FilePill.leadWidth
         } else if let pill = storage.attribute(.outlineFileTail, at: characterIndex, effectiveRange: nil) as? FilePill {
             width = pill.tailWidth(for: font)
+        } else if let pill = storage.attribute(.outlineLinkLead, at: characterIndex, effectiveRange: nil) as? LinkPill {
+            width = pill.leadWidth(for: font)
+        } else if storage.attribute(.outlineLinkTail, at: characterIndex, effectiveRange: nil) != nil {
+            width = LinkPill.tailWidth
+        } else if storage.attribute(.outlineLinkEllipsis, at: characterIndex, effectiveRange: nil) != nil {
+            width = LinkPill.ellipsisWidth(for: font)
         }
         return NSRect(x: glyphPosition.x, y: glyphPosition.y, width: width, height: ceil(font.ascender - font.descender))
     }

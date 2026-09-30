@@ -477,6 +477,15 @@ enum Script {
                 StallWatch.doing("a script keeping the main thread busy")
                 Thread.sleep(forTimeInterval: Double(argument) ?? 1)
                 StallWatch.doing("idle")
+            case "caret-at":
+                // caret-at <text>: the caret in the middle of that text in the main note, as a click would put it.
+                if let editor = controller.workspace.main?.noteView.editor {
+                    let range = (editor.string as NSString).range(of: argument)
+                    if range.location != NSNotFound {
+                        editor.window?.makeFirstResponder(editor)
+                        editor.setSelectedRange(NSRange(location: range.location + range.length / 2, length: 0))
+                    }
+                }
             case "stalls":
                 // stalls: each time the main thread stopped answering, and what it was doing.
                 let stalls = StallWatch.shared.stalls

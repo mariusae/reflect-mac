@@ -97,6 +97,7 @@ final class OutlineLayoutManager: NSLayoutManager {
             drawPictures(in: paragraph, origin: origin)
             drawFilePills(in: paragraph, origin: origin)
             drawCodeBackgrounds(in: paragraph, origin: origin)
+            drawLinkPills(in: paragraph, origin: origin)
         }
     }
 

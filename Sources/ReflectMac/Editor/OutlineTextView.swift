@@ -59,6 +59,8 @@ final class OutlineTextView: NSTextView {
     private var adjusting = false
     /// The picture being dragged from here, while it is.
     var draggedPicture: DraggedPicture?
+    /// The web address shown whole, the caret being in it.
+    private var revealedLink: NSRange?
     /// The rows being dragged from this view, by their bullets.
     var draggedRows: Range<Int>?
     /// Where a dragged picture's new row would go.
@@ -342,6 +344,30 @@ final class OutlineTextView: NSTextView {
 
     var isSelectingRows: Bool { selectedRows != nil }
 
+    /// A shortened web address the caret goes into is shown whole, to be
+    /// edited; left, it is shortened again.
+    private func revealLink(at location: Int) {
+        let span = spans(atRowOf: location).first { span in
+            guard case .url = span.kind else { return false }
+            return NSLocationInRange(location, span.range) || location == NSMaxRange(span.range)
+        }
+        let caret = span == nil ? nil : location
+        let was = revealedLink
+        revealedLink = span?.range
+        styler.caret = caret
+        guard was != span?.range else { return }
+        // Once the selection has settled: restyling moves nothing, but not
+        // in the middle of setting it.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let storage = textStorage else { return }
+            for range in [was, span?.range].compactMap({ $0 }) where range.location < storage.length {
+                styler.restyle(storage, paragraphAt: range.location)
+            }
+            // The text moved under the caret: it is drawn where it now is.
+            updateCaret()
+        }
+    }
+
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         guard let storage = textStorage, storage.length > 0, let first = ranges.first?.rangeValue else {
             super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
@@ -371,6 +397,7 @@ final class OutlineTextView: NSTextView {
         }
         if selectedRows != nil && !adjusting { leaveRowSelection() }
         super.setSelectedRanges([NSValue(range: range)], affinity: affinity, stillSelecting: stillSelecting)
+        revealLink(at: range.location)
         typingAttributes = storage.attributes(at: min(paragraphRanges[top].location, storage.length - 1), effectiveRange: nil)
             .filter { $0.key != .link && $0.key != .outlineHidden }
         updateCaret()
