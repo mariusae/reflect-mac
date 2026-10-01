@@ -117,6 +117,7 @@ enum MainMenu {
             item("Italic", #selector(OutlineTextView.toggleItalic(_:)), "i"),
             item("Code", #selector(OutlineTextView.toggleCode(_:)), "`", [.command, .shift]),
             item("Strikethrough", #selector(OutlineTextView.toggleStrikethrough(_:)), "-", [.command, .shift]),
+            item("Highlight", #selector(OutlineTextView.toggleHighlight(_:)), "h", [.command, .shift]),
             item("Link…", #selector(OutlineTextView.addLink(_:)), "k"),
             .separator(),
             item("Bullet", #selector(OutlineTextView.toggleBullet(_:)), "8", [.command, .shift]),
@@ -145,6 +146,10 @@ enum MainMenu {
             item("Collapse Completely", #selector(OutlineTextView.collapseCompletely(_:)), "9", [.command, .control]),
             item("Expand All", #selector(OutlineTextView.expandAll(_:)), "0", [.command, .option]),
             item("Collapse All", #selector(OutlineTextView.collapseAll(_:)), "9", [.command, .option]),
+            .separator(),
+            item("Focus In", #selector(OutlineTextView.focusIn(_:)), arrow(NSRightArrowFunctionKey), [.command, .option]),
+            item("Focus Out", #selector(OutlineTextView.focusOut(_:)), arrow(NSLeftArrowFunctionKey), [.command, .option]),
+            item("Unfocus", #selector(OutlineTextView.unfocus(_:))),
         ]))
 
         main.addItem(submenu("View", [

@@ -72,6 +72,7 @@ final class DayView: NSView, NSTextViewDelegate {
         editor = OutlineTextView(metrics: metrics)
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 200))
         editor.delegate = self
+        editor.onFocusChange = { [weak self] in self?.focusChanged() }
         editor.images = images
         editor.onPicturesChanged = { [weak self] in
             guard let self else { return }
@@ -192,6 +193,10 @@ final class DayView: NSView, NSTextViewDelegate {
         badge.frame = NSRect(x: title.frame.maxX + 6, y: title.frame.maxY - ceil(badgeSize.height) - 3,
                              width: ceil(badgeSize.width) + 4, height: ceil(badgeSize.height))
         var y = editorTop
+        if let focusBar {
+            focusBar.frame = NSRect(x: column.minX + metrics.indent - 6, y: y, width: column.width - metrics.indent + 6, height: FocusBar.height)
+            y += focusBarRoom
+        }
         if let parkedNotice {
             let height = parkedNotice.height(forWidth: column.width)
             parkedNotice.frame = NSRect(x: column.minX, y: y, width: column.width, height: height)
@@ -214,6 +219,36 @@ final class DayView: NSView, NSTextViewDelegate {
 
     private var noticeSpacing: CGFloat { round(metrics.fontSize * 0.8) }
 
+    // MARK: Focus
+
+    /// The path to the row focused on, over the editor, while it is.
+    private var focusBar: FocusBar?
+
+    private func focusChanged() {
+        if let focus = editor.focus {
+            let bar = focusBar ?? {
+                let bar = FocusBar()
+                bar.onStep = { [weak self] index in
+                    guard let self else { return }
+                    if let index { editor.focusOn(fullRow: index) } else { editor.unfocus(nil) }
+                    window?.makeFirstResponder(editor)
+                }
+                addSubview(bar)
+                focusBar = bar
+                return bar
+            }()
+            let name = ref.day.map(OpenQuickly.dayTitle) ?? NoteIndex.entry(path: ref.path, source: savedText).title
+            bar.show(note: name, ancestors: focus.ancestors, fontSize: metrics.fontSize)
+        } else {
+            focusBar?.removeFromSuperview()
+            focusBar = nil
+        }
+        heightMayHaveChanged()
+    }
+
+    /// The room the path takes over the editor, in focus.
+    private var focusBarRoom: CGFloat { focusBar == nil ? 0 : FocusBar.height + round(metrics.fontSize * 0.4) }
+
     /// The height the text takes at a width, without the empty line a text
     /// view keeps after its last line break.
     private func editorHeight(width: CGFloat) -> CGFloat {
@@ -232,7 +267,7 @@ final class DayView: NSView, NSTextViewDelegate {
     /// The height the day wants at a width.
     func desiredHeight(width: CGFloat) -> CGFloat {
         let columnWidth = min(metrics.columnWidth, width - 48)
-        var height = editorTop + bottomPadding
+        var height = editorTop + bottomPadding + focusBarRoom
         if let parkedNotice { height += parkedNotice.height(forWidth: columnWidth) + noticeSpacing }
         height += conflictView?.height(forWidth: columnWidth) ?? editorHeight(width: columnWidth)
         return max(minimumHeight, height)
@@ -366,7 +401,8 @@ final class DayView: NSView, NSTextViewDelegate {
         saveTimer = nil
         guard isDirty, !isDiscarded, !isReadOnly, !hasConflict, parked == nil else { return }
         var outline = shell
-        outline.rows = editor.rows
+        // In focus, the rows set aside too: the note is written whole.
+        outline.rows = editor.fullRows
         let text = outline.isBlank ? "" : OutlineMarkdown.serialize(outline)
         guard text != savedText else {
             isDirty = false
@@ -420,7 +456,7 @@ final class DayView: NSView, NSTextViewDelegate {
 
     func textDidChange(_ notification: Notification) {
         // Folding is an edit to the text on screen, if not to the note.
-        SessionState.shared.setFolds(graph.root, ref, OutlineFolds.marks(editor.rows))
+        SessionState.shared.setFolds(graph.root, ref, OutlineFolds.marks(editor.fullRows))
         isDirty = true
         saveTimer?.invalidate()
         saveTimer = Timer.scheduledTimer(withTimeInterval: Self.saveDelay, repeats: false) { [weak self] _ in

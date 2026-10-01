@@ -121,3 +121,22 @@ private func shown(_ text: String) -> String {
         #expect(found.map(\.kind) == [.image(ImageReference(source: "assets/pasted-1790045733506.png", width: 425, height: 270))])
     }
 }
+
+@Suite struct HighlightTests {
+    private func kinds(_ text: String) -> [InlineSpan.Kind] {
+        let ns = text as NSString
+        return InlineMarkup.spans(in: ns, range: NSRange(location: 0, length: ns.length)).map(\.kind)
+    }
+
+    @Test func highlightsAreFound() {
+        #expect(kinds("a ==marked words== b") == [.highlight])
+        #expect(kinds("==**bold** in it==") == [.highlight, .strong])
+        #expect(InlineMarkup.plainText("a ==marked== b") == "a marked b")
+    }
+
+    @Test func runsOfEqualsAreNot() {
+        #expect(kinds("=======") == [])
+        #expect(kinds("a == b and c == d") == [])
+        #expect(kinds("=== not this ===") == [])
+    }
+}

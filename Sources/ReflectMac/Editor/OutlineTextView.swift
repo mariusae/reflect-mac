@@ -59,6 +59,10 @@ final class OutlineTextView: NSTextView {
     private var adjusting = false
     /// The picture being dragged from here, while it is.
     var draggedPicture: DraggedPicture?
+    /// The row focused on, and the rest of the note set aside; nil for the whole note.
+    var focus: OutlineFocus?
+    /// Told when the focus changes.
+    var onFocusChange: (() -> Void)?
     /// The web address shown whole, the caret being in it.
     private var revealedLink: NSRange?
     /// The rows being dragged from this view, by their bullets.
@@ -119,8 +123,13 @@ final class OutlineTextView: NSTextView {
 
     // MARK: Content
 
-    /// Puts rows on screen, forgetting what was there and how it got there.
-    func load(_ rows: [Row]) {
+    /// Puts rows on screen, forgetting what was there and how it got there —
+    /// and any focus, unless they are what is focused on.
+    func load(_ rows: [Row], keepingFocus: Bool = false) {
+        if !keepingFocus, focus != nil {
+            focus = nil
+            DispatchQueue.main.async { [weak self] in self?.onFocusChange?() }
+        }
         adjusting = true
         textStorage!.setAttributedString(OutlineText.attributed(rows.isEmpty ? [.blank] : rows))
         adjusting = false
@@ -779,6 +788,11 @@ final class OutlineTextView: NSTextView {
                     if isEditable { beginDraggingRows(from: index, event: event) }
                     return
                 }
+            }
+            // ⌥-clicked, a bullet is focused on.
+            if event.modifierFlags.contains(.option) {
+                focusOn(fullRow: fullIndex(of: index))
+                return
             }
             clickHandle(ofRow: index)
             return

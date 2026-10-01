@@ -5,6 +5,8 @@ import Foundation
 public struct InlineSpan: Equatable, Sendable {
     public enum Kind: Equatable, Sendable {
         case strong, emphasis, strikethrough, code
+        /// `==text==`: marked as with a highlighter.
+        case highlight
         /// `[text](url)`, and `<url>`.
         case link(String)
         /// `[[title]]` or `[[title|text]]`.
@@ -84,6 +86,8 @@ public enum InlineMarkup {
     private static let tag = try! NSRegularExpression(pattern: #"(?<=^|\s)#\p{L}[\p{L}\p{N}/_-]*"#)
     private static let strong = try! NSRegularExpression(pattern: #"(\*\*|__)(?=\S)(.+?)(?<=\S)\1"#)
     private static let strike = try! NSRegularExpression(pattern: #"~~(?=\S)(.+?)(?<=\S)~~"#)
+    /// Not a run of `=`, as a conflict's divider is.
+    private static let highlight = try! NSRegularExpression(pattern: #"(?<!=)==(?=[^\s=])(.+?)(?<=[^\s=])==(?!=)"#)
     private static let emphasis = try! NSRegularExpression(pattern: #"(?<![*_\w])([*_])(?=[^\s*_])(.+?)(?<=[^\s*_])\1(?![*_\w])"#)
 
     /// The spans in a range of text, outermost first where they nest.
@@ -138,6 +142,7 @@ public enum InlineMarkup {
         add(tag) { InlineSpan(kind: .tag, range: $0.range, content: $0.range) }
         add(strong) { InlineSpan(kind: .strong, range: $0.range, content: $0.range(at: 2)) }
         add(strike) { InlineSpan(kind: .strikethrough, range: $0.range, content: $0.range(at: 1)) }
+        add(highlight) { InlineSpan(kind: .highlight, range: $0.range, content: $0.range(at: 1)) }
         add(emphasis) { InlineSpan(kind: .emphasis, range: $0.range, content: $0.range(at: 2)) }
         return spans.sorted { ($0.range.location, -$0.range.length) < ($1.range.location, -$1.range.length) }
     }

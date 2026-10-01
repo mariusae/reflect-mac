@@ -19,6 +19,8 @@ extension OutlineTextView {
     @discardableResult
     func reveal(_ found: Found) -> Bool {
         if selectedRows != nil { leaveRowSelection() }
+        // What was found may be anywhere in the note: all of it, to find it in.
+        if focus != nil { unfocus(nil) }
         switch found {
         case .words(let words):
             let words = words.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }

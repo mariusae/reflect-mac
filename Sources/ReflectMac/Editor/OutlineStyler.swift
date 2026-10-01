@@ -272,6 +272,8 @@ enum InlineMarkdown {
                     .strikethroughStyle: NSUnderlineStyle.single.rawValue,
                     .foregroundColor: NSColor.secondaryLabelColor,
                 ], range: content)
+            case .highlight:
+                storage.addAttribute(.backgroundColor, value: NSColor.highlighter, range: content)
             case .code:
                 storage.addAttributes([
                     .font: NSFont.monospacedSystemFont(ofSize: round(base.pointSize * 0.9), weight: .regular),
@@ -436,6 +438,16 @@ final class HiddenMarkupGlyphs: NSObject, NSLayoutManagerDelegate {
             width = LinkPill.ellipsisWidth(for: font)
         }
         return NSRect(x: glyphPosition.x, y: glyphPosition.y, width: width, height: ceil(font.ascender - font.descender))
+    }
+}
+
+extension NSColor {
+    /// `==text==`'s ground: a highlighter's yellow, the text's own colour
+    /// still reading through it, light or dark.
+    static let highlighter = NSColor(name: "highlighter") { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor.systemYellow.withAlphaComponent(0.32)
+            : NSColor(srgbRed: 1, green: 0.86, blue: 0.3, alpha: 0.55)
     }
 }
 

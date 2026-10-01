@@ -91,6 +91,8 @@ enum BacklinkText {
                                       .foregroundColor: NSColor.secondaryLabelColor], range: span.content)
             case .code:
                 string.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: font.pointSize * 0.92, weight: .regular), range: span.content)
+            case .highlight:
+                string.addAttribute(.backgroundColor, value: NSColor.highlighter, range: span.content)
             case .wikiLink(let target):
                 let isTarget = NoteIndex.foldKey(target) == linked
                 string.addAttributes([.foregroundColor: NSColor.linkColor,

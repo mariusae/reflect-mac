@@ -481,6 +481,7 @@ extension OutlineTextView {
     @objc func toggleItalic(_ sender: Any?) { wrapSelection("*") }
     @objc func toggleCode(_ sender: Any?) { wrapSelection("`") }
     @objc func toggleStrikethrough(_ sender: Any?) { wrapSelection("~~") }
+    @objc func toggleHighlight(_ sender: Any?) { wrapSelection("==") }
 
     /// Puts Markdown around the selection, or takes it away when it is
     /// already there.
@@ -553,8 +554,12 @@ extension OutlineTextView {
             // A picture alone on the clipboard can be pasted, though it is
             // not text.
             return true
+        case #selector(focusIn(_:)):
+            return !(focus != nil && rows.count == 1)
+        case #selector(focusOut(_:)), #selector(unfocus(_:)):
+            return focus != nil
         case #selector(toggleBold(_:)), #selector(toggleItalic(_:)), #selector(toggleCode(_:)),
-             #selector(toggleStrikethrough(_:)), #selector(addLink(_:)):
+             #selector(toggleStrikethrough(_:)), #selector(toggleHighlight(_:)), #selector(addLink(_:)):
             return isEditable && !isSelectingRows
         case #selector(indentRows(_:)), #selector(outdentRows(_:)), #selector(moveRowsUp(_:)),
              #selector(moveRowsDown(_:)), #selector(deleteRows(_:)), #selector(duplicateRows(_:)),

@@ -486,6 +486,22 @@ enum Script {
                         editor.setSelectedRange(NSRange(location: range.location + range.length / 2, length: 0))
                     }
                 }
+            case "select-text":
+                // select-text <text>: that text selected in the main note.
+                if let editor = controller.workspace.main?.noteView.editor {
+                    let range = (editor.string as NSString).range(of: argument)
+                    if range.location != NSNotFound {
+                        editor.window?.makeFirstResponder(editor)
+                        editor.setSelectedRange(range)
+                    }
+                }
+            case "focus-state":
+                // focus-state: the rows on screen in the main note, and the path to them.
+                if let editor = controller.workspace.main?.noteView.editor {
+                    let path = editor.focus.map { $0.ancestors.map(\.text).joined(separator: " › ") } ?? "(whole note)"
+                    print("focus: [\(path)] rows: " + editor.rows.map { String(repeating: " ", count: $0.depth * 2) + $0.text }.joined(separator: " | "))
+                    fflush(stdout)
+                }
             case "stalls":
                 // stalls: each time the main thread stopped answering, and what it was doing.
                 let stalls = StallWatch.shared.stalls

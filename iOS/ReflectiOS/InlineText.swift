@@ -1,5 +1,5 @@
-import Foundation
 import ReflectCore
+import UIKit
 
 /// A row's inline Markdown as styled text: emphasis, code and struck text
 /// drawn, their marks taken out; links, `[[links]]` and tags made links the
@@ -29,6 +29,8 @@ enum InlineText {
             case .emphasis: add(.emphasized, span.content)
             case .strikethrough: add(.strikethrough, span.content)
             case .code: add(.code, span.content)
+            case .highlight:
+                styled.addAttribute(.backgroundColor, value: UIColor.systemYellow.withAlphaComponent(0.4), range: span.content)
             case .link(let target), .url(let target):
                 if let url = URL(string: target) { styled.addAttribute(.link, value: url, range: span.content) }
             case .wikiLink(let target):
@@ -56,7 +58,8 @@ enum InlineText {
         for range in merged.reversed() where NSMaxRange(range) <= styled.length {
             styled.deleteCharacters(in: range)
         }
-        let text = (try? AttributedString(styled, including: \.foundation)) ?? AttributedString(styled.string)
+        // UIKit's scope, which has the highlighter's ground as well as the rest.
+        let text = (try? AttributedString(styled, including: \.uiKit)) ?? AttributedString(styled.string)
         return Rendered(text: text, images: images)
     }
 
