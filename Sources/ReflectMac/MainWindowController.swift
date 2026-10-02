@@ -146,8 +146,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// Reads every note's name again, off the main thread.
     private func rescan() {
         let index = index
+        let rows = rowIndex
         Task.detached(priority: .utility) { [weak self] in
             index.scan()
+            // Every note's rows, ready for Go to Row before it is asked.
+            rows.update()
             await self?.sidebarNeedsReload()
         }
         pictureText.update()
@@ -407,10 +410,81 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         return (day.ref.path, editor.rows, editor.rowIndex(at: editor.selectedRange().location))
     }
 
+    // MARK: Go to Row
+
+    private lazy var rowChooser: RowChooser = RowChooser()
+    /// Every note's rows, for Go to Row across the graph: brought up to date
+    /// — the notes changed since, only — as it is searched.
+    private lazy var rowIndex = RowIndex(index: index)
+    var rowChooserForScripts: RowChooser { rowChooser }
+
+    /// Go ▸ Go to Row… (⌘J): the rows of the note the keyboard is in, to
+    /// find one by what it says and where, and go there — or focus on it,
+    /// or go there in the split view.
+    @objc func goToRow(_ sender: Any?) {
+        guard let editor = focusedEditor ?? lastEditor ?? workspace.main?.noteView.editor, editor.window === window,
+              let day = Self.dayView(of: editor) else { NSSound.beep(); return }
+        let ref = day.ref
+        let name = ref.day.map(OpenQuickly.dayTitle) ?? index.entry(ref.path)?.title ?? ""
+        rowChooser.onChoose = { [weak self, weak editor] target, action in
+            guard let self, let editor else { return }
+            switch action {
+            case .go:
+                guard let row = editor.showRow(unfolded: target) else { return }
+                jump(to: row, in: ref.path, editor: editor)
+            case .focus:
+                guard let row = editor.showRow(unfolded: target) else { return }
+                window?.makeFirstResponder(editor)
+                editor.focusOn(fullRow: row)
+            case .split:
+                workspace.show(ref, inSplit: true)
+                // Once the note is in the split view.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, let split = workspace.split?.noteView.editor,
+                          let row = split.showRow(unfolded: target) else { return }
+                    jump(to: row, in: ref.path, editor: split)
+                }
+            }
+        }
+        let rows = rowIndex
+        rowChooser.searchElsewhere = { query in
+            rows.update()
+            return rows.find(query, excluding: ref.path)
+        }
+        rowChooser.onChooseElsewhere = { [weak self] found, action in self?.go(to: found, action) }
+        rowChooser.show(editor.fullRows, in: name, over: window)
+        // Ready before the first word is typed, as far as it can be.
+        DispatchQueue.global(qos: .userInitiated).async { rows.update() }
+    }
+
+    /// A row of another note: the note opened — or in the split view — and
+    /// the row gone to, or focused on.
+    private func go(to found: RowIndex.Found, _ action: RowChooser.Action) {
+        let target = OpenQuickly.target(for: found.path)
+        workspace.open(target, inSplit: action == .split)
+        // Once the note is shown where it was opened.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let editor: OutlineTextView?
+            switch (action, target) {
+            case (.split, _): editor = workspace.split?.noteView.editor
+            case (_, .day(let day)): editor = timeline.view(for: day).editor
+            default: editor = workspace.main?.noteView.editor
+            }
+            guard let editor, let row = editor.showRow(unfolded: found.entry.index) else { return }
+            if action == .focus {
+                window?.makeFirstResponder(editor)
+                editor.focusOn(fullRow: row)
+            } else {
+                jump(to: row, in: found.path, editor: editor)
+            }
+        }
+    }
+
     /// Goes to a row of the note the outline is of: the caret at its start,
     /// and the row at the top of what is shown.
-    private func jump(to row: Int, in path: String) {
-        guard let editor = focusedEditor ?? lastEditor ?? workspace.main?.noteView.editor,
+    private func jump(to row: Int, in path: String, editor given: OutlineTextView? = nil) {
+        guard let editor = given ?? focusedEditor ?? lastEditor ?? workspace.main?.noteView.editor,
               Self.dayView(of: editor)?.ref.path == path else { return }
         let ranges = editor.paragraphRanges
         guard row < ranges.count else { return }

@@ -48,7 +48,7 @@ enum MainMenu {
             findItem("Find Next", .nextMatch, "g"),
             findItem("Find Previous", .previousMatch, "g", [.command, .shift]),
             findItem("Use Selection for Find", .setSearchString, "e"),
-            item("Jump to Selection", #selector(NSResponder.centerSelectionInVisibleArea(_:)), "j"),
+            item("Jump to Selection", #selector(NSResponder.centerSelectionInVisibleArea(_:)), "j", [.command, .option]),
         ])
         let spelling = submenu("Spelling and Grammar", [
             item("Show Spelling and Grammar", #selector(NSText.showGuessPanel(_:)), ":"),
@@ -178,6 +178,7 @@ enum MainMenu {
             item("Today", #selector(MainWindowController.goToToday(_:)), "t"),
             item("This Week", #selector(MainWindowController.goToThisWeek(_:)), "t", [.command, .option]),
             item("Go to Date…", #selector(MainWindowController.showCalendar(_:)), "t", [.command, .shift]),
+            item("Go to Row…", #selector(MainWindowController.goToRow(_:)), "j"),
             .separator(),
             item("Previous Day", #selector(MainWindowController.goToPreviousDay(_:)), up, [.control, .option]),
             item("Next Day", #selector(MainWindowController.goToNextDay(_:)), down, [.control, .option]),

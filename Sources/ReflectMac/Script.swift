@@ -511,6 +511,32 @@ enum Script {
                     pasteboard.setString(argument.replacingOccurrences(of: "\\n", with: "\n"), forType: .string)
                     editor.paste(from: pasteboard)
                 }
+            case "goto-row":
+                // goto-row open | type <query> | down | into | out | go | focus | split | list: Go to Row, driven.
+                let (verb, rest) = split(argument)
+                if verb == "open" {
+                    controller.goToRow(nil)
+                } else if verb == "list" {
+                    print("rows: " + controller.rowChooserForScripts.listed.joined(separator: " | "))
+                    fflush(stdout)
+                } else {
+                    controller.rowChooserForScripts.script(verb, rest)
+                }
+            case "rowindex-time":
+                // rowindex-time <query>: building every note's rows, and a search across them, timed.
+                let rows = RowIndex(index: controller.index)
+                var start = Date()
+                rows.update()
+                let built = Date().timeIntervalSince(start)
+                start = Date()
+                rows.update()
+                let again = Date().timeIntervalSince(start)
+                start = Date()
+                let found = rows.find(argument)
+                let searched = Date().timeIntervalSince(start)
+                print(String(format: "rowindex: %d notes built in %.0f ms, again in %.0f ms; “%@” found %d in %.0f ms",
+                             controller.index.all.count, built * 1000, again * 1000, argument, found.count, searched * 1000))
+                fflush(stdout)
             case "stalls":
                 // stalls: each time the main thread stopped answering, and what it was doing.
                 let stalls = StallWatch.shared.stalls

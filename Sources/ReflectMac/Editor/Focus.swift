@@ -159,3 +159,33 @@ final class FocusBar: NSView {
         onStep?(sender.tag < 0 ? nil : sender.tag)
     }
 }
+
+extension OutlineTextView {
+    /// Brings a row of the note into the editor — by its place among all
+    /// the note's rows, folded ones unfolded — leaving any focus and opening
+    /// the folds it is in. Returns where it now is among the rows shown.
+    @discardableResult
+    func showRow(unfolded target: Int) -> Int? {
+        if focus != nil { unfocus(nil) }
+        // Each pass opens the fold the row is in, nearest the top first.
+        for _ in 0..<64 {
+            var place = 0
+            var opened = false
+            for (index, row) in rows.enumerated() {
+                if place == target { return index }
+                let inside = Row.unfold(row.folded).count
+                if target > place, target <= place + inside {
+                    perform("Expand", on: index..<(index + 1)) { rows, selection in
+                        OutlineEditing.unfold(&rows, at: selection.lowerBound)
+                        return selection
+                    }
+                    opened = true
+                    break
+                }
+                place += 1 + inside
+            }
+            if !opened { return nil }
+        }
+        return nil
+    }
+}
