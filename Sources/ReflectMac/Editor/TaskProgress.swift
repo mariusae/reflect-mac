@@ -85,15 +85,15 @@ final class ProgressRingButton: NSButton {
 /// a tick in it when there is room for one.
 enum ProgressRing {
     static func draw(_ progress: Checkboxes.Progress, in rect: NSRect, lineWidth width: CGFloat, flipped: Bool,
-                     tick: Bool = true, dimmed: Bool = false) {
+                     tick: Bool = true, track: NSColor = .quaternaryLabelColor, dimmed: Bool = false) {
         let ring = rect.insetBy(dx: width / 2, dy: width / 2)
         let center = NSPoint(x: ring.midX, y: ring.midY)
         let radius = ring.width / 2
 
-        let track = NSBezierPath(ovalIn: ring)
-        track.lineWidth = width
-        NSColor.quaternaryLabelColor.setStroke()
-        track.stroke()
+        let rim = NSBezierPath(ovalIn: ring)
+        rim.lineWidth = width
+        track.setStroke()
+        rim.stroke()
 
         guard progress.total > 0 else { return }
         let share = CGFloat(progress.share)

@@ -80,6 +80,23 @@ final class CalendarPickerView: NSView {
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+    /// Drawn as it is: the popover's vibrancy would blend the faint label
+    /// colours darker than the dark ground under them.
+    override var allowsVibrancy: Bool { false }
+
+    /// The ink of the calendar, in its own appearance: full for the month's
+    /// days, faint for the rest, fainter for rims and hovering.
+    private struct Ink {
+        let text, secondary, faint, rim, hover: NSColor
+    }
+
+    private var ink: Ink {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let base: NSColor = dark ? .white : .black
+        return Ink(text: base.withAlphaComponent(dark ? 0.92 : 0.85), secondary: base.withAlphaComponent(0.55),
+                   faint: base.withAlphaComponent(dark ? 0.38 : 0.3), rim: base.withAlphaComponent(dark ? 0.22 : 0.12),
+                   hover: base.withAlphaComponent(dark ? 0.14 : 0.08))
+    }
 
     override func layout() {
         super.layout()
@@ -156,7 +173,7 @@ final class CalendarPickerView: NSView {
         // The weekdays, starting where the calendar starts its week.
         let symbols = calendar.veryShortStandaloneWeekdaySymbols
         let small: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                                                     .foregroundColor: NSColor.tertiaryLabelColor]
+                                                     .foregroundColor: ink.faint]
         for column in 0..<7 {
             let symbol = symbols[(column + calendar.firstWeekday - 1) % 7] as NSString
             let size = symbol.size(withAttributes: small)
@@ -177,24 +194,24 @@ final class CalendarPickerView: NSView {
                 NSColor.controlAccentColor.setFill()
                 NSBezierPath(roundedRect: pill, xRadius: 6, yRadius: 6).fill()
             } else if week == hoveredWeek {
-                NSColor.quaternaryLabelColor.setFill()
+                ink.hover.setFill()
                 NSBezierPath(roundedRect: pill, xRadius: 6, yRadius: 6).fill()
             }
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: week == thisWeek ? .bold : .medium),
-                .foregroundColor: chosen ? NSColor.white : week == thisWeek ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor,
+                .foregroundColor: chosen ? NSColor.white : week == thisWeek ? NSColor.controlAccentColor : ink.faint,
             ]
             let number = "\(week.week)" as NSString
             let size = number.size(withAttributes: attributes)
             number.draw(at: NSPoint(x: pill.midX - size.width / 2, y: pill.midY - size.height / 2 - 1), withAttributes: attributes)
             if markedWeeks.contains(week) {
                 let dot = NSRect(x: pill.midX - 2, y: pill.maxY - 5, width: 4, height: 4)
-                (chosen ? NSColor.white : NSColor.secondaryLabelColor).setFill()
+                (chosen ? NSColor.white : ink.secondary).setFill()
                 NSBezierPath(ovalIn: dot).fill()
             }
         }
         // A rule between the weeks and the days.
-        NSColor.separatorColor.setFill()
+        ink.rim.setFill()
         NSRect(x: Self.margin + Self.weekColumn - 2, y: Self.header + Self.weekdays + 4, width: 1, height: Self.cell.height * 6 - 8).fill()
 
         let today = Day.today
@@ -205,18 +222,19 @@ final class CalendarPickerView: NSView {
             let isSelected = day == selected
             // Its tasks: how far along, round it.
             if let progress = progress(of: day) {
-                ProgressRing.draw(progress, in: circle.insetBy(dx: -2.5, dy: -2.5), lineWidth: 2, flipped: true, tick: false)
+                ProgressRing.draw(progress, in: circle.insetBy(dx: -2.5, dy: -2.5), lineWidth: 2, flipped: true, tick: false,
+                                  track: ink.rim, dimmed: !inMonth)
             }
             if isSelected {
                 NSColor.controlAccentColor.setFill()
                 NSBezierPath(ovalIn: circle).fill()
             } else if day == hovered {
-                NSColor.quaternaryLabelColor.setFill()
+                ink.hover.setFill()
                 NSBezierPath(ovalIn: circle).fill()
             }
             let color: NSColor = isSelected ? .white
                 : day == today ? .controlAccentColor
-                : inMonth ? .labelColor : .tertiaryLabelColor
+                : inMonth ? ink.text : ink.faint
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: day == today ? .bold : .regular),
                 .foregroundColor: color,
@@ -227,7 +245,7 @@ final class CalendarPickerView: NSView {
             // A note that day: a dot under its number.
             if marked.contains(day) {
                 let dot = NSRect(x: circle.midX - 2, y: circle.maxY - 6, width: 4, height: 4)
-                (isSelected ? NSColor.white : inMonth ? NSColor.secondaryLabelColor : NSColor.tertiaryLabelColor).setFill()
+                (isSelected ? NSColor.white : inMonth ? ink.secondary : ink.faint).setFill()
                 NSBezierPath(ovalIn: dot).fill()
             }
         }
