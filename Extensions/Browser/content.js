@@ -1,9 +1,9 @@
 // Highlights on the page, and what the page says of itself, for Reflect.
 //
-// A selection gets a small "Highlight" button; highlighted, a passage is
-// drawn with the CSS Custom Highlight API — the page's own DOM is not
-// touched — and kept, by the page's address, so it is there again when the
-// page is, and in the capture.
+// The selection is highlighted by the keyboard shortcut (⇧⌘H): drawn with
+// the CSS Custom Highlight API — the page's own DOM is not touched — and
+// kept, by the page's address, so it is there again when the page is, and
+// in the capture.
 (() => {
   if (window.__reflectCapture) return;
   window.__reflectCapture = true;
@@ -78,53 +78,10 @@
       save();
     }
     selection.removeAllRanges();
-    hideButton();
     return true;
   }
 
-  // MARK: The button beside a selection
-
-  let button = null;
-
-  function hideButton() {
-    button?.remove();
-    button = null;
-  }
-
-  function showButton() {
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed || selection.toString().trim().length < 2) return hideButton();
-    const rect = selection.getRangeAt(0).getBoundingClientRect();
-    if (!rect.width && !rect.height) return hideButton();
-    if (!button) {
-      button = document.createElement("div");
-      button.id = "reflect-capture-highlight-button";
-      button.textContent = "Highlight";
-      // Pressed before the selection is lost to the click.
-      button.addEventListener("mousedown", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        highlightSelection();
-      });
-      document.documentElement.appendChild(button);
-    }
-    button.style.left = `${window.scrollX + rect.right - 40}px`;
-    button.style.top = `${window.scrollY + rect.bottom + 8}px`;
-  }
-
-  document.addEventListener("mouseup", (event) => {
-    if (button && event.target === button) return;
-    setTimeout(showButton, 0);
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") hideButton();
-  });
-  document.addEventListener("selectionchange", () => {
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) hideButton();
-  });
-
-  // MARK: What the popup and the menu ask
+  // MARK: What the popup and the shortcut ask
 
   function describe() {
     const meta = (name) =>

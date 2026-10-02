@@ -3,7 +3,7 @@
   "name": "Reflect Capture",
   "version": "1.0",
   "description": "Save web pages into your Reflect notes: their highlights, and a screenshot.",
-  "permissions": ["activeTab", "storage", "contextMenus", "tabs"],
+  "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": ["<all_urls>", "http://127.0.0.1/*"],
   "background": { "service_worker": "background.js" },
   "action": {

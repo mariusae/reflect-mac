@@ -1,10 +1,6 @@
-// The menu item and the key that highlight a selection, and the count of a
-// page's highlights on the toolbar button.
+// The key that highlights a selection, and the count of a page's
+// highlights on the toolbar button.
 const api = globalThis.browser ?? globalThis.chrome;
-
-api.runtime.onInstalled.addListener(() => {
-  api.contextMenus.create({ id: "reflect-highlight", title: "Highlight in Reflect", contexts: ["selection"] });
-});
 
 async function highlight(tabId) {
   try {
@@ -13,10 +9,6 @@ async function highlight(tabId) {
     // A page the extension cannot reach: the browser's own, or the store.
   }
 }
-
-api.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === "reflect-highlight" && tab?.id) highlight(tab.id);
-});
 
 api.commands.onCommand.addListener(async (command) => {
   if (command !== "highlight") return;

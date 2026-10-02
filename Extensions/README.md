@@ -5,8 +5,8 @@ Reflect's own clipper does: a note of its own — its title, address and
 description, the passages you highlighted, and a screenshot — linked from today
 under `[[Links]]`. Capturing a page again adds what is new to the same note.
 
-Highlight on any page by selecting text and choosing **Highlight** (or ⇧⌘H, or
-the context menu). Capture with the toolbar button (⇧⌘Y).
+Highlight on any page by selecting text and pressing ⇧⌘H. Capture with the
+toolbar button (⇧⌘Y). Both keys can be changed at `chrome://extensions/shortcuts`.
 
 Pages are saved through Reflect Mac, which must be running: it listens on
 `127.0.0.1:47811` for the extension alone. The first time, the extension asks to
