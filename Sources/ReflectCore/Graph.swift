@@ -56,27 +56,54 @@ public final class Graph: @unchecked Sendable {
         try Data(text.utf8).write(to: url, options: .atomic)
     }
 
-    /// Every day with a note, and roughly how many lines it runs to once
-    /// wrapped: enough to guess its height before it is laid out.
-    public func dailyNotes() -> [Day: Int] {
+    /// A daily note's file, as its folder lists it.
+    public struct DailyFile: Equatable, Sendable {
+        public var size: Int
+        public var modified: Date
+    }
+
+    /// Every day with a note, its size and when it was written — from the
+    /// folder's listing alone, no note opened: quick however many there are,
+    /// and however slowly each file opens.
+    public func dailyNoteFiles() -> [Day: DailyFile] {
         let directory = root.appendingPathComponent(GraphPaths.dailyDirectory)
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return [:] }
-        var notes: [Day: Int] = [:]
-        for name in names where name.hasSuffix(".md") {
-            guard let day = Day(name.dropLast(3)),
-                  let data = try? Data(contentsOf: directory.appendingPathComponent(name)) else { continue }
-            var lines = 0, width = 0
-            for byte in data {
-                if byte == 0x0a {
-                    lines += 1 + width / 90
-                    width = 0
-                } else if byte & 0xc0 != 0x80 {
-                    width += 1
-                }
-            }
-            notes[day] = lines + (width > 0 ? 1 + width / 90 : 0)
+        let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey]
+        guard let urls = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: keys) else { return [:] }
+        var files: [Day: DailyFile] = [:]
+        for url in urls where url.pathExtension == "md" {
+            guard let day = Day(url.deletingPathExtension().lastPathComponent),
+                  let values = try? url.resourceValues(forKeys: Set(keys)) else { continue }
+            files[day] = DailyFile(size: values.fileSize ?? 0, modified: values.contentModificationDate ?? .distantPast)
         }
-        return notes
+        return files
+    }
+
+    /// Roughly how many lines a day's note runs to once wrapped: enough to
+    /// guess its height before it is laid out. Reads the note.
+    public func lineCount(of day: Day) -> Int? {
+        (try? Data(contentsOf: url(for: day))).map(Self.lineCount(of:))
+    }
+
+    /// A guess at the same, from the note's size alone.
+    public static func lineEstimate(size: Int) -> Int { max(1, size / 50 + 1) }
+
+    static func lineCount(of data: Data) -> Int {
+        var lines = 0, width = 0
+        for byte in data {
+            if byte == 0x0a {
+                lines += 1 + width / 90
+                width = 0
+            } else if byte & 0xc0 != 0x80 {
+                width += 1
+            }
+        }
+        return lines + (width > 0 ? 1 + width / 90 : 0)
+    }
+
+    /// Every day with a note, and its line count. Reads every note: off
+    /// the main thread, or for scripts.
+    public func dailyNotes() -> [Day: Int] {
+        dailyNoteFiles().keys.reduce(into: [:]) { notes, day in notes[day] = lineCount(of: day) }
     }
 
     /// The notes carrying sync conflict markers, graph-relative, in order.

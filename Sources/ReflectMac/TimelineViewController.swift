@@ -26,6 +26,9 @@ final class TimelineViewController: NSViewController, OutlineTextViewNavigator {
     private var first: Day
     private var last: Day
     private var noteLines: [Day: Int] = [:]
+    /// Each day's line count, and the file it was counted from: counted
+    /// again only once the file changes.
+    private var counted: [Day: (file: Graph.DailyFile, lines: Int)] = [:]
     private var measured: [Day: CGFloat] = [:]
     /// The top of each day, and the end of the last.
     private var offsets: [CGFloat] = []
@@ -63,8 +66,50 @@ final class TimelineViewController: NSViewController, OutlineTextViewNavigator {
         view = scrollView
         NotificationCenter.default.addObserver(self, selector: #selector(dayChanged(_:)),
                                                name: .NSCalendarDayChanged, object: nil)
-        noteLines = graph.dailyNotes()
+        refreshNoteLines()
         recomputeOffsets()
+    }
+
+    /// How long each day is, to place the days not yet laid out: from the
+    /// daily folder's listing — guessed from a note's size, until it is
+    /// counted, in the background, once and again only when it changes.
+    /// Coming forward, nothing is read but the listing.
+    private func refreshNoteLines() {
+        let files = graph.dailyNoteFiles()
+        var lines: [Day: Int] = [:]
+        var stale: [Day: Graph.DailyFile] = [:]
+        for (day, file) in files {
+            if let known = counted[day], known.file == file {
+                lines[day] = known.lines
+            } else {
+                lines[day] = Graph.lineEstimate(size: file.size)
+                stale[day] = file
+            }
+        }
+        noteLines = lines
+        guard !stale.isEmpty else { return }
+        let graph = graph
+        DispatchQueue.global(qos: .utility).async {
+            var exact: [Day: (file: Graph.DailyFile, lines: Int)] = [:]
+            for (day, file) in stale { if let count = graph.lineCount(of: day) { exact[day] = (file, count) } }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { [weak self] in self?.counted(exact) }
+            }
+        }
+    }
+
+    private func counted(_ exact: [Day: (file: Graph.DailyFile, lines: Int)]) {
+        var changed = false
+        for (day, entry) in exact {
+            counted[day] = entry
+            if noteLines[day] != nil, noteLines[day] != entry.lines {
+                noteLines[day] = entry.lines
+                changed = true
+            }
+        }
+        guard changed else { return }
+        keepingTop {}
+        tile()
     }
 
     override func viewDidLayout() {
@@ -457,7 +502,7 @@ final class TimelineViewController: NSViewController, OutlineTextViewNavigator {
 
     /// Takes in notes changed on disk, by a sync or another app.
     func reloadFromDisk() {
-        noteLines = graph.dailyNotes()
+        refreshNoteLines()
         keepingTop {
             for day in measured.keys where views[day] == nil { measured[day] = nil }
         }

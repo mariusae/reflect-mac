@@ -1,9 +1,14 @@
-import Foundation
+import AppKit
 import ReflectCore
 
 /// Notes when the main thread stops answering — the app not responding to
 /// a click, a key, or being brought forward — for long enough to be felt:
 /// how long, and what it was last doing, in the Console window's log.
+///
+/// Only while the app is the one in use: in the background, macOS naps it,
+/// and its answers wait — which is not the app being stuck. A stall whose
+/// sample finds the main thread only waiting for something to do is not
+/// one either.
 ///
 /// Work that might take a while says what it is with `StallWatch.doing`;
 /// a stall names the last thing said. A stall of more than a second is
@@ -28,7 +33,27 @@ final class StallWatch: @unchecked Sendable {
     /// The stalls noted, for scripts.
     private(set) var stalls: [(seconds: Double, doing: String)] = []
 
+    /// Whether the app is the one in use; set as it comes forward — before
+    /// what it does then, which is watched — and as it goes back.
+    private var active = true
+
     func start() {
+        let center = NotificationCenter.default
+        center.addObserver(forName: NSApplication.willBecomeActiveNotification, object: nil, queue: nil) { [self] _ in
+            lock.withLock {
+                active = true
+                lastAnswer = Date()
+                stalledSince = nil
+                sampled = nil
+            }
+        }
+        center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: nil) { [self] _ in
+            lock.withLock {
+                active = false
+                stalledSince = nil
+                sampled = nil
+            }
+        }
         let thread = Thread { [self] in watch() }
         thread.name = "Stall watch"
         thread.qualityOfService = .utility
@@ -65,13 +90,26 @@ final class StallWatch: @unchecked Sendable {
         return tree.joined(separator: "\n")
     }
 
+    /// Whether a sample of the main thread finds it mostly waiting for
+    /// events — four in five of its samples in the run loop's wait.
+    static func isIdle(_ trace: String) -> Bool {
+        let lines = trace.components(separatedBy: "\n")
+        func count(_ line: String) -> Int? {
+            line.split(whereSeparator: { $0 == " " || $0 == "+" || $0 == "!" || $0 == ":" || $0 == "|" }).first.flatMap { Int($0) }
+        }
+        guard let total = lines.first(where: { $0.contains("Thread_") }).flatMap(count), total > 0,
+              let waiting = lines.first(where: { $0.contains("__CFRunLoopServiceMachPort") }).flatMap(count) else { return false }
+        return Double(waiting) >= 0.8 * Double(total)
+    }
+
     private func watch() {
         while true {
             Thread.sleep(forTimeInterval: Self.interval)
             DispatchQueue.main.async { [self] in
                 lock.withLock { lastAnswer = Date() }
             }
-            let (answered, doing) = lock.withLock { (lastAnswer, activity) }
+            let (answered, doing, active) = lock.withLock { (lastAnswer, activity, self.active) }
+            guard active else { continue }
             let silent = Date().timeIntervalSince(answered)
             if silent > Self.threshold {
                 lock.withLock {
@@ -94,6 +132,8 @@ final class StallWatch: @unchecked Sendable {
                     stalls.append((seconds, stalledDoing))
                     return found
                 }
+                // Sampled only waiting: it was not stuck, only not running.
+                if let trace, Self.isIdle(trace) { continue }
                 Log.shared.warning("app", String(format: "Not answering for %.1f s", seconds),
                                    detail: "Doing: \(doing)" + (trace.map { "\n\nThe main thread, sampled while stuck:\n" + $0 } ?? ""))
             }
