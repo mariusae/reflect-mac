@@ -225,6 +225,7 @@ final class DayView: NSView, NSTextViewDelegate {
     private var focusBar: FocusBar?
 
     private func focusChanged() {
+        rememberFocus()
         if let focus = editor.focus {
             let bar = focusBar ?? {
                 let bar = FocusBar()
@@ -244,6 +245,51 @@ final class DayView: NSView, NSTextViewDelegate {
             focusBar = nil
         }
         heightMayHaveChanged()
+    }
+
+    /// Notes the row focused on — or that there is none — so the note
+    /// opens so again, after a restart too.
+    private func rememberFocus() {
+        guard !restoringFocus else { return }
+        let mark = editor.focus.map { focus in
+            SessionState.FocusMark(index: focus.before.count, text: editor.rows.first?.text ?? "", path: focus.ancestors.map(\.text))
+        }
+        SessionState.shared.setFocus(graph.root, ref, mark)
+    }
+
+    /// Set while the focus is being put back, which is not a change to note.
+    private var restoringFocus = false
+
+    /// Focuses the note where it was left focused: on the row at the place
+    /// noted, when it still says what it did; else the first that says so,
+    /// in the same rows; else not at all.
+    private func restoreFocus() {
+        guard let mark = SessionState.shared.focus(graph.root, ref) else { return }
+        let all = editor.fullRows
+        let index: Int? = if mark.index < all.count, all[mark.index].text == mark.text {
+            mark.index
+        } else {
+            OutlineFind.entries(all).first { $0.row.text == mark.text && $0.path == mark.path }.map { entry in
+                // A place among the rows unfolded: the row's among those shown, when it shows.
+                Self.shownIndex(of: entry.index, in: all)
+            } ?? nil
+        }
+        guard let index else { return }
+        restoringFocus = true
+        editor.focusOn(fullRow: index)
+        restoringFocus = false
+    }
+
+    /// Where a row, by its place among the rows unfolded, is among the rows
+    /// shown — nil when it is folded away.
+    private static func shownIndex(of unfolded: Int, in rows: [Row]) -> Int? {
+        var place = 0
+        for (index, row) in rows.enumerated() {
+            if place == unfolded { return index }
+            place += 1 + Row.unfold(row.folded).count
+            if place > unfolded { return nil }
+        }
+        return nil
     }
 
     /// The room the path takes over the editor, in focus.
@@ -315,6 +361,7 @@ final class DayView: NSView, NSTextViewDelegate {
             outline.rows = []
             shell = outline
             editor.load(rows.isEmpty ? [.blank] : rows)
+            restoreFocus()
             editor.isEditable = !isReadOnly
             editor.isPrivateNote = NoteIndex.entry(path: ref.path, source: text).isPrivate
         }

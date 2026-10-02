@@ -49,6 +49,15 @@ final class SessionState {
         var height: Double
     }
 
+    /// The row a note was focused on: where it was among the note's rows,
+    /// and its words and the words of those it was in, to find it again
+    /// should the note have changed.
+    struct FocusMark: Codable, Equatable {
+        var index: Int
+        var text: String
+        var path: [String]
+    }
+
     struct Graph: Codable {
         var top: Place?
         var focus: Focus?
@@ -58,6 +67,8 @@ final class SessionState {
         var pdfs: [String: PDFPlace]?
         /// The picture each carousel shows, by its first picture's source.
         var carousels: [String: Int]?
+        /// The row each note is focused on, by the note's key.
+        var focuses: [String: FocusMark]?
         /// The size each picture, or carousel, was given here, by `ImageBox.sizeKey`.
         var pictureSizes: [String: PictureSize]?
         var consoleOpen: Bool?
@@ -109,6 +120,7 @@ final class SessionState {
         update(root) { state in
             if let marks = state.folds.removeValue(forKey: old.stateKey) { state.folds[new.stateKey] = marks }
             if let place = state.places?.removeValue(forKey: old.stateKey) { state.places?[new.stateKey] = place }
+            if let mark = state.focuses?.removeValue(forKey: old.stateKey) { state.focuses?[new.stateKey] = mark }
             if state.mainNote == old.path { state.mainNote = new.path }
             if state.splitNote == old.path { state.splitNote = new.path }
             state.noteWindows = state.noteWindows?.map { $0 == old.path ? new.path : $0 }
@@ -145,6 +157,19 @@ final class SessionState {
         change(&place)
         guard place != pdf(root, source) else { return }
         update(root) { $0.pdfs = ($0.pdfs ?? [:]).merging([source: place]) { $1 } }
+    }
+
+    func focus(_ root: URL, _ note: NoteRef) -> FocusMark? {
+        graph(root).focuses?[note.stateKey]
+    }
+
+    func setFocus(_ root: URL, _ note: NoteRef, _ mark: FocusMark?) {
+        guard focus(root, note) != mark else { return }
+        update(root) { state in
+            var focuses = state.focuses ?? [:]
+            focuses[note.stateKey] = mark
+            state.focuses = focuses.isEmpty ? nil : focuses
+        }
     }
 
     func carouselIndex(_ root: URL, _ first: String) -> Int {
