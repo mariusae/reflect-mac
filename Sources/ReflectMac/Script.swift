@@ -502,6 +502,15 @@ enum Script {
                     print("focus: [\(path)] rows: " + editor.rows.map { String(repeating: " ", count: $0.depth * 2) + $0.text }.joined(separator: " | "))
                     fflush(stdout)
                 }
+            case "paste-text":
+                // paste-text <text>: pasted where the caret is, "\n" for a line break — from a
+                // pasteboard of the script's own, the clipboard left alone.
+                if let editor = controller.window?.firstResponder as? OutlineTextView ?? controller.workspace.main?.noteView.editor {
+                    let pasteboard = NSPasteboard(name: .init("reflect.script.paste"))
+                    pasteboard.clearContents()
+                    pasteboard.setString(argument.replacingOccurrences(of: "\\n", with: "\n"), forType: .string)
+                    editor.paste(from: pasteboard)
+                }
             case "stalls":
                 // stalls: each time the main thread stopped answering, and what it was doing.
                 let stalls = StallWatch.shared.stalls

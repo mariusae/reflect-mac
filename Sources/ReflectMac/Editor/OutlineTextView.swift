@@ -1380,17 +1380,33 @@ final class OutlineTextView: NSTextView {
     }
 
     override func paste(_ sender: Any?) {
+        paste(from: .general, sender)
+    }
+
+    /// Pastes what a pasteboard holds — the general one, or, for scripts,
+    /// one of their own.
+    func paste(from pasteboard: NSPasteboard, _ sender: Any? = nil) {
         // A link pasted on words: the words link to it.
-        if let url = Self.pastedLink(.general), linkSelection(to: url) { return }
-        let files = incoming(from: .general)
+        if let url = Self.pastedLink(pasteboard), linkSelection(to: url) { return }
+        let files = incoming(from: pasteboard)
         if !files.isEmpty {
             add(files)
             return
         }
-        guard let text = NSPasteboard.general.string(forType: .string) else { super.paste(sender); return }
+        guard let text = pasteboard.string(forType: .string) else { super.paste(sender); return }
+        // In a code block, what is pasted is code: as it is, where the caret
+        // is, its lines the block's — not rows of the outline after it.
+        if selectedRows == nil, row(at: rowIndex(at: selectedRange().location)).kind == .code {
+            let code = (text.hasSuffix("\n") ? String(text.dropLast()) : text)
+                .replacingOccurrences(of: "\r\n", with: "\n")
+                .replacingOccurrences(of: "\n", with: OutlineText.lineSeparator)
+            insertText(code, replacementRange: selectedRange())
+            return
+        }
         let lines = text.hasSuffix("\n") ? String(text.dropLast()) : text
         if selectedRows == nil && !lines.contains("\n") {
-            pasteAsPlainText(sender)
+            // AppKit's own plain paste reads only the general pasteboard.
+            if pasteboard == .general { pasteAsPlainText(sender) } else { insertText(lines, replacementRange: selectedRange()) }
             return
         }
         pasteRows(OutlineMarkdown.parse(text).unfoldedRows)
