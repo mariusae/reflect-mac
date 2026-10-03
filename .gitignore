@@ -10,3 +10,5 @@ iOS/GitHub.local.xcconfig
 !Extensions/Safari/Reflect Capture/Reflect Capture.xcodeproj/
 Extensions/Safari/Reflect Capture/Reflect Capture.xcodeproj/xcuserdata/
 Extensions/Safari/Reflect Capture/Reflect Capture.xcodeproj/project.xcworkspace/xcuserdata/
+vendor/
+Frameworks/

@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// Keeps the graph's repository in step, on Reflect's schedule.
 ///

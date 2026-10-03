@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// One note on its own, in a scroll view: a note opened in the window, or
 /// beside the timeline in the split view.

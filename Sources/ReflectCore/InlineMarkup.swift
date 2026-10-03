@@ -153,6 +153,8 @@ public enum InlineMarkup {
     private static func fits(_ span: InlineSpan, among spans: [InlineSpan]) -> Bool {
         spans.allSatisfy { other in
             if NSIntersectionRange(span.range, other.range).length == 0 { return true }
+            // A bare address in a link's text is the link, not another.
+            if case .url = span.kind, case .link = other.kind { return false }
             let opaque: Bool
             switch other.kind {
             case .code, .url, .image, .imageText, .comment, .tag: opaque = true

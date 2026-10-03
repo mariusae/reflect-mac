@@ -23,6 +23,9 @@ public struct NoteEntry: Equatable, Sendable {
     /// Whether it is a topic note — frontmatter `topic: true` — whose
     /// backlinks show after it.
     public var isTopic = false
+    /// Whether it is in the inbox — frontmatter `inbox: true` — to be
+    /// dealt with.
+    public var isInInbox = false
 
     public enum Pin: Equatable, Sendable, Comparable {
         case order(Double)
@@ -166,11 +169,13 @@ public final class NoteIndex: @unchecked Sendable {
         if parts.count > 1 {
             for part in parts where !part.isEmpty && keys.insert(foldKey(part)).inserted { aliases.append(part) }
         }
-        let privacy = frontmatter.scalar("private").map { ["true", "yes", "on", "1"].contains($0.lowercased()) } ?? false
-        let topic = frontmatter.scalar("topic").map { ["true", "yes", "on", "1"].contains($0.lowercased()) } ?? false
+        func flag(_ key: String) -> Bool {
+            frontmatter.scalar(key).map { ["true", "yes", "on", "1"].contains($0.lowercased()) } ?? false
+        }
         return NoteEntry(path: path, title: title, aliases: aliases, day: day, modified: modified,
-                         isPrivate: privacy, titleIsHeading: titleIsHeading,
-                         pin: pin(frontmatter.scalar("pinned")), tags: tags(in: body), isTopic: topic)
+                         isPrivate: flag("private"), titleIsHeading: titleIsHeading,
+                         pin: pin(frontmatter.scalar("pinned")), tags: tags(in: body), isTopic: flag("topic"),
+                         isInInbox: flag("inbox"))
     }
 
     /// Reflect's reading of `pinned:`: `true` (or yes, on, 1) pins, a
@@ -217,6 +222,11 @@ public final class NoteIndex: @unchecked Sendable {
             if a.pin != b.pin { return a.pin! < b.pin! }
             return a.title.localizedStandardCompare(b.title) == .orderedAscending
         }
+    }
+
+    /// The notes in the inbox, the most lately changed first.
+    public var inbox: [NoteEntry] {
+        all.filter(\.isInInbox).sorted { $0.modified > $1.modified }
     }
 
     /// Every tag in the graph, and how many notes have it, by name.

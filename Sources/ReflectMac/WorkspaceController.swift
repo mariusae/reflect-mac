@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// What the window shows: the timeline, or a note in its place; and, in a
 /// pane of its own on the right, a second note — the split view.

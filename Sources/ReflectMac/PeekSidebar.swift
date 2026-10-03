@@ -1,4 +1,5 @@
 import AppKit
+import ReflectUI
 
 /// The sidebar, put away, peeking out: the pointer at the window's left edge
 /// slides it out over the notes — which stay where they are — on Liquid

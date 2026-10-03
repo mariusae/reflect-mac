@@ -29,6 +29,13 @@ private func shown(_ text: String) -> String {
         #expect(shown("**bold [link](u) more**") == "bold link more")
     }
 
+    @Test func anAddressInALinkIsTheLink() {
+        // One link, not a link and an address inside it: one pill.
+        #expect(spans("URL: <https://anthropic.com/research/x>").map(\.kind) == [.link("https://anthropic.com/research/x")])
+        #expect(spans("[https://a.b/c](https://a.b/c)").map(\.kind) == [.link("https://a.b/c")])
+        #expect(spans("see https://a.b/c").map(\.kind) == [.url("https://a.b/c")])
+    }
+
     @Test func leavesWhatIsNotMarkup() {
         #expect(shown("https://x.com/a_b_c_d") == "https://x.com/a_b_c_d")
         #expect(shown("`**not bold**`") == "**not bold**")

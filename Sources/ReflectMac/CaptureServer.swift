@@ -1,6 +1,7 @@
 import AppKit
 import Network
 import ReflectCore
+import ReflectUI
 
 /// Where the browser extension sends what it captures: a small HTTP server
 /// on this Mac alone — `127.0.0.1`, never the network — for as long as the

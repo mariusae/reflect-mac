@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// The backlinks of a topic note, under it: each note linking here, and
 /// around each link the block of the note it sits in — as the sidebar shows

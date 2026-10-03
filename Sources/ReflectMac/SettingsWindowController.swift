@@ -1,4 +1,5 @@
 import AppKit
+import ReflectUI
 
 /// The app's settings (⌘,), in the Mac's manner: a pane a tab, changes
 /// taking at once. Its first: Typography.

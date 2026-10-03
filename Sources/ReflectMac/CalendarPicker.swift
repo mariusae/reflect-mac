@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// A month to pick a day from, dropped down from the toolbar: the days
 /// with notes dotted, today in the accent colour, the day being looked at

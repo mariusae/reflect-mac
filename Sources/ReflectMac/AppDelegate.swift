@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {

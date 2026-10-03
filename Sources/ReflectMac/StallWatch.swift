@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// Notes when the main thread stops answering — the app not responding to
 /// a click, a key, or being brought forward — for long enough to be felt:

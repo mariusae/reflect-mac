@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// A backlink's context, as a little outline to read: bullets, numbers,
 /// checkboxes and headings as they are in the note, the Markdown inside

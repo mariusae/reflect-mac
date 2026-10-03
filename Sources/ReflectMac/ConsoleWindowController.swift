@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// Window ▸ Console: the app's log as it happens — syncs and how they
 /// ended, every git command and what it said, files added, pictures that

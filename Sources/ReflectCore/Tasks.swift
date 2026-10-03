@@ -55,7 +55,8 @@ public enum Tasks {
         return found
     }
 
-    static func isTask(_ row: Row) -> Bool { row.task != nil && row.kind == .bullet && row.marker == "+" }
+    /// Whether a row is one of Reflect's tasks: a `+ [ ]` item.
+    public static func isTask(_ row: Row) -> Bool { row.task != nil && row.kind == .bullet && row.marker == "+" }
 
     /// The first `[[YYYY-MM-DD]]` in a task's text: when it is due.
     static func dueDate(in text: String) -> Day? {

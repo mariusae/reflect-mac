@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// The window's left column, as a Mac source list, in one of three modes —
 /// as Drafter has Inbox, Archive and Timeline: the notes — the pinned, in

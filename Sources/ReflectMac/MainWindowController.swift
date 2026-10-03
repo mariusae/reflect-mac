@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// The window: the timeline, a toolbar, and how the sync is doing in the
 /// subtitle.

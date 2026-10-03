@@ -1,4 +1,5 @@
 import AppKit
+import ReflectUI
 
 let app = NSApplication.shared
 let delegate = MainActor.assumeIsolated { AppDelegate() }

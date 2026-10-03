@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// A note in a window of its own, just for writing in: the note, its
 /// title as the window's, and nothing else. Its size and place are kept

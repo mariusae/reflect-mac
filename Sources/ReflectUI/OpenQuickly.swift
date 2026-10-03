@@ -1,0 +1,493 @@
+import AppKit
+import ReflectCore
+
+/// File ▸ Open (⌘O): one field that finds anything — a note by its title
+/// or any of its names, a day by its date ("friday", "sep 24",
+/// "2026-09-24"), a note by words in it — and a note to make, when none
+/// has the name typed.
+///
+/// Return opens what is chosen; Option-Return, or an Option-click, opens it
+/// in the split view.
+@MainActor
+package final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    package enum Target {
+        case note(String)
+        case day(Day)
+        case create(String)
+    }
+
+    package struct Item {
+        package var target: Target
+        package var title: String
+        package var detail: NSAttributedString?
+        package var symbol: String
+        /// What a `[[link]]` to it says.
+        package var name: String = ""
+        /// What the search found in it, to show once it is open.
+        package var found: OutlineTextView.Found?
+
+        package init(target: Target, title: String, detail: NSAttributedString?, symbol: String, name: String = "",
+                     found: OutlineTextView.Found? = nil) {
+            self.target = target
+            self.title = title
+            self.detail = detail
+            self.symbol = symbol
+            self.name = name
+            self.found = found
+        }
+    }
+
+    package let index: NoteIndex
+    private let search: ReflectSearchIndex?
+    private let pictures: ImageTextIndex?
+    /// Told what to open, and whether in the split view.
+    package var onOpen: ((Target, _ inSplit: Bool, _ found: OutlineTextView.Found?) -> Void)?
+    /// Told what to open in a window of its own.
+    package var onOpenInWindow: ((Target, _ found: OutlineTextView.Found?) -> Void)?
+
+    private let panel: ChooserPanel
+    private let field = NSTextField()
+    private let table = NSTableView()
+    private let scroll = NSScrollView()
+    private let hint = NSTextField(labelWithString: "")
+    private var items: [Item] = []
+    private let runner: SearchRunner
+
+    private static let width: CGFloat = 640
+    private static let fieldHeight: CGFloat = 56
+    private static let rowHeight: CGFloat = 46
+    private static let visibleRows = 9
+
+    package init(index: NoteIndex, search: ReflectSearchIndex?, pictures: ImageTextIndex?) {
+        self.index = index
+        self.search = search
+        self.pictures = pictures
+        runner = SearchRunner(sources: SearchSources(index: index, search: search, pictures: pictures))
+        panel = ChooserPanel(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.fieldHeight),
+                             styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: true)
+        super.init()
+        build()
+    }
+
+    private func build() {
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.isMovableByWindowBackground = true
+        panel.level = .floating
+        panel.hidesOnDeactivate = true
+        panel.isReleasedWhenClosed = false
+        panel.animationBehavior = .utilityWindow
+        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            panel.standardWindowButton(button)?.isHidden = true
+        }
+        panel.onResign = { [weak self] in self?.close() }
+        panel.onCommandReturn = { [weak self] in self?.openSelected(inSplit: true) }
+        panel.onShiftCommandReturn = { [weak self] in self?.openSelectedInWindow() }
+
+        let background = NSVisualEffectView()
+        background.material = .popover
+        background.blendingMode = .behindWindow
+        background.state = .active
+        panel.contentView = background
+
+        let glass = NSImageView(image: NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)!
+            .withSymbolConfiguration(.init(pointSize: 20, weight: .regular))!)
+        glass.contentTintColor = .secondaryLabelColor
+        glass.frame = NSRect(x: 18, y: 0, width: 24, height: Self.fieldHeight)
+        glass.autoresizingMask = [.minYMargin]
+        background.addSubview(glass)
+
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .systemFont(ofSize: 22, weight: .regular)
+        field.placeholderString = "Open a note or a day, or search…"
+        field.delegate = self
+        field.cell?.usesSingleLineMode = true
+        field.cell?.lineBreakMode = .byTruncatingTail
+        background.addSubview(field)
+
+        table.headerView = nil
+        table.backgroundColor = .clear
+        table.rowHeight = Self.rowHeight
+        table.intercellSpacing = NSSize(width: 0, height: 2)
+        table.style = .inset
+        table.selectionHighlightStyle = .regular
+        table.addTableColumn(NSTableColumn(identifier: .init("item")))
+        table.dataSource = self
+        table.delegate = self
+        table.target = self
+        table.action = #selector(clicked(_:))
+        table.refusesFirstResponder = true
+        scroll.documentView = table
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        background.addSubview(scroll)
+
+        hint.font = .systemFont(ofSize: 11)
+        hint.textColor = .tertiaryLabelColor
+        hint.stringValue = "↩ Open    ⌘↩ Split View    ⇧⌘↩ New Window    ⌥↩ New Note    ⎋ Close"
+        hint.alignment = .right
+        background.addSubview(hint)
+    }
+
+    // MARK: Showing
+
+    package func show(over window: NSWindow?) {
+        field.stringValue = ""
+        // Today and the recent notes, at once: quick, and nothing to wait for.
+        show(StagedSearch(query: "", sources: runner.sources).first(), keepingSelection: false)
+        refresh()
+        if let window {
+            let frame = window.frame
+            panel.setFrameOrigin(NSPoint(x: frame.midX - Self.width / 2, y: frame.maxY - frame.height * 0.18 - panel.frame.height))
+        }
+        panel.makeKeyAndOrderFront(nil)
+        panel.makeFirstResponder(field)
+        layout()
+    }
+
+    package func close() {
+        runner.cancel()
+        panel.orderOut(nil)
+    }
+
+    /// Sizes the panel to its results, keeping its top where it is.
+    private func layout() {
+        let rows = min(items.count, Self.visibleRows)
+        let listHeight = rows == 0 ? 0 : CGFloat(rows) * (Self.rowHeight + 2) + 12
+        let hintHeight: CGFloat = rows == 0 ? 0 : 24
+        let height = Self.fieldHeight + listHeight + hintHeight
+        var frame = panel.frame
+        frame.origin.y += frame.height - height
+        frame.size.height = height
+        panel.setFrame(frame, display: true)
+        field.frame = NSRect(x: 52, y: height - Self.fieldHeight + 13, width: Self.width - 70, height: 30)
+        scroll.frame = NSRect(x: 0, y: hintHeight, width: Self.width, height: listHeight)
+        hint.frame = NSRect(x: 16, y: 4, width: Self.width - 32, height: 16)
+        hint.isHidden = rows == 0
+        panel.contentView?.subviews.first { $0 is NSImageView }?.frame.origin.y = height - Self.fieldHeight
+    }
+
+    // MARK: Finding
+
+    package func controlTextDidChange(_ notification: Notification) {
+        refresh()
+    }
+
+    /// Searches for what is typed, in the background: what was showing
+    /// stays until the first of it comes, then fills in as the rest does.
+    private func refresh() {
+        let query = field.stringValue.trimmingCharacters(in: .whitespaces)
+        var first = true
+        runner.run(query) { [weak self] items, _ in
+            // The first results for a new query start the list afresh; the
+            // rest add to it without moving what is chosen.
+            self?.show(items, keepingSelection: !first)
+            first = false
+        }
+    }
+
+    /// Puts results in the list — keeping the chosen one chosen, when asked
+    /// and it is still there; else choosing the first.
+    private func show(_ found: [Item], keepingSelection: Bool) {
+        let chosen = keepingSelection && table.selectedRow > 0 && table.selectedRow < items.count ? key(items[table.selectedRow]) : nil
+        items = found
+        table.reloadData()
+        if let chosen, let row = items.firstIndex(where: { key($0) == chosen }) {
+            table.selectRowIndexes([row], byExtendingSelection: false)
+        } else if !items.isEmpty {
+            table.selectRowIndexes([0], byExtendingSelection: false)
+            table.scrollRowToVisible(0)
+        }
+        layout()
+    }
+
+    private func key(_ item: Item) -> String { "\(item.target)" }
+
+    /// The results for what is typed now: those showing, if they are for
+    /// it; else its first stage, looked for here and now — quick — so that
+    /// Return never opens what an earlier query found.
+    private func currentItems() -> [Item] {
+        let query = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard runner.shownQuery != query else { return items }
+        show(StagedSearch(query: query, sources: runner.sources).first(), keepingSelection: false)
+        return items
+    }
+
+    /// Everything a query finds, all at once. For scripts and tests; the
+    /// chooser shows it as it comes, from `StagedSearch`.
+    package static func items(for query: String, index: NoteIndex, search: ReflectSearchIndex?, pictures: ImageTextIndex? = nil) -> [Item] {
+        var found: [Item] = []
+        StagedSearch(query: query, sources: SearchSources(index: index, search: search, pictures: pictures))
+            .run(isCurrent: { true }) { items, _ in found = items }
+        return found
+    }
+
+    package nonisolated static func target(for path: String) -> Target {
+        GraphPaths.day(fromDailyPath: path).map(Target.day) ?? .note(path)
+    }
+
+
+    /// A week a query names: `2026-W40`, or "this week", "last week",
+    /// "next week", "week 40".
+    package nonisolated static func week(from query: String) -> Week? {
+        if let week = Week(query) { return week }
+        let lowered = query.lowercased().trimmingCharacters(in: .whitespaces)
+        switch lowered {
+        case "this week", "week": return .current
+        case "last week": return Week.current.adding(-1)
+        case "next week": return Week.current.adding(1)
+        default: break
+        }
+        let parts = lowered.split(separator: " ")
+        if parts.count == 2, parts[0] == "week", let number = Int(parts[1]) {
+            return Week(year: Week.current.year, week: number)
+        }
+        return nil
+    }
+
+    nonisolated private static let rangeFormatter: DateIntervalFormatter = {
+        let formatter = DateIntervalFormatter()
+        formatter.dateTemplate = "MMMd"
+        return formatter
+    }()
+
+    /// "Sep 28 – Oct 4".
+    package nonisolated static func weekRange(_ week: Week) -> String {
+        guard let monday = week.monday?.date, let sunday = week.sunday?.date else { return week.description }
+        return rangeFormatter.string(from: monday, to: sunday)
+    }
+
+    /// A day a query names: a date written out, or said — "today", "next
+    /// friday", "sep 24".
+    package nonisolated static func day(from query: String) -> Day? {
+        if let day = Day(query) { return day }
+        let lowered = query.lowercased()
+        if ["today", "yesterday", "tomorrow"].contains(lowered) {
+            return Day.today.adding(lowered == "yesterday" ? -1 : lowered == "tomorrow" ? 1 : 0)
+        }
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue),
+              let match = detector.firstMatch(in: query, range: NSRange(location: 0, length: (query as NSString).length)),
+              match.range.length >= (query as NSString).length - 1, let date = match.date else { return nil }
+        return Day(date)
+    }
+
+    nonisolated private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEEEMMMMdyyyy")
+        return formatter
+    }()
+
+    package nonisolated static func dayTitle(_ day: Day) -> String { dayFormatter.string(from: day.date ?? Date()) }
+
+    nonisolated(unsafe) private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+
+    package nonisolated static func relative(_ date: Date) -> String {
+        date == .distantPast ? "" : "Edited " + relativeFormatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    package nonisolated static func plain(_ text: String) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: NSFont.systemFont(ofSize: 12)])
+    }
+
+    /// A snippet with the words found in it set in bold.
+    /// The words a snippet marks as found, in order, each once.
+    package nonisolated static func marked(_ snippet: String) -> [String] {
+        var words: [String] = []
+        var rest = Substring(snippet)
+        while let open = rest.firstIndex(of: "\u{1}"), let close = rest[open...].firstIndex(of: "\u{2}") {
+            let word = String(rest[rest.index(after: open)..<close])
+            if !word.isEmpty, !words.contains(word) { words.append(word) }
+            rest = rest[rest.index(after: close)...]
+        }
+        return words
+    }
+
+    /// A query's words.
+    package nonisolated static func words(_ query: String) -> [String] {
+        query.split(whereSeparator: \.isWhitespace).map(String.init)
+    }
+
+    package nonisolated static func highlighted(_ snippet: String) -> NSAttributedString {
+        let text = NSMutableAttributedString()
+        var bold = false
+        var current = ""
+        for character in snippet.replacingOccurrences(of: "\n", with: " ") {
+            if character == "\u{1}" || character == "\u{2}" {
+                text.append(NSAttributedString(string: current, attributes: [
+                    .foregroundColor: bold ? NSColor.labelColor : NSColor.secondaryLabelColor,
+                    .font: NSFont.systemFont(ofSize: 12, weight: bold ? .semibold : .regular),
+                ]))
+                current = ""
+                bold = character == "\u{1}"
+            } else {
+                current.append(character)
+            }
+        }
+        text.append(NSAttributedString(string: current, attributes: [.foregroundColor: NSColor.secondaryLabelColor,
+                                                                      .font: NSFont.systemFont(ofSize: 12)]))
+        return text
+    }
+
+    // MARK: Keys
+
+    package func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        switch selector {
+        case #selector(NSResponder.moveUp(_:)):
+            move(-1)
+        case #selector(NSResponder.moveDown(_:)):
+            move(1)
+        case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
+            let flags = NSApp.currentEvent?.modifierFlags ?? []
+            let query = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if flags.contains(.option), !query.isEmpty {
+                // ⌥Return: a note by the name typed — the one there is, or a new one.
+                let key = NoteIndex.foldKey(query)
+                let target = index.matches(query, limit: 1).first
+                    .flatMap { NoteIndex.foldKey($0.entry.title) == key ? Target.note($0.entry.path) : nil } ?? .create(query)
+                close()
+                if flags.contains(.command) && flags.contains(.shift) {
+                    onOpenInWindow?(target, nil)
+                } else {
+                    onOpen?(target, flags.contains(.command), nil)
+                }
+            } else {
+                openSelected(inSplit: flags.contains(.command))
+            }
+        case #selector(NSResponder.cancelOperation(_:)):
+            close()
+        default:
+            return false
+        }
+        return true
+    }
+
+    private func move(_ by: Int) {
+        guard !items.isEmpty else { return }
+        let row = min(max(table.selectedRow + by, 0), items.count - 1)
+        table.selectRowIndexes([row], byExtendingSelection: false)
+        table.scrollRowToVisible(row)
+    }
+
+    @objc private func clicked(_ sender: Any?) {
+        guard table.clickedRow >= 0 else { return }
+        table.selectRowIndexes([table.clickedRow], byExtendingSelection: false)
+        let flags = NSApp.currentEvent?.modifierFlags ?? []
+        if flags.contains(.command) && flags.contains(.shift) {
+            openSelectedInWindow()
+        } else {
+            openSelected(inSplit: flags.contains(.command))
+        }
+    }
+
+    /// ⇧⌘Return, or ⇧⌘-click: in a window of its own.
+    private func openSelectedInWindow() {
+        _ = currentItems()
+        guard table.selectedRow >= 0, table.selectedRow < items.count else { return }
+        let item = items[table.selectedRow]
+        close()
+        onOpenInWindow?(item.target, item.found)
+    }
+
+    private func openSelected(inSplit: Bool) {
+        _ = currentItems()
+        guard table.selectedRow >= 0, table.selectedRow < items.count else { return }
+        let item = items[table.selectedRow]
+        close()
+        onOpen?(item.target, inSplit, item.found)
+    }
+
+    // MARK: Table
+
+    package func numberOfRows(in tableView: NSTableView) -> Int { items.count }
+
+    package func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let cell = tableView.makeView(withIdentifier: ChooserCell.identifier, owner: nil) as? ChooserCell ?? ChooserCell()
+        cell.show(items[row])
+        return cell
+    }
+}
+
+/// A result: its kind's symbol, its name, and a line more.
+package final class ChooserCell: NSTableCellView {
+    package static let identifier = NSUserInterfaceItemIdentifier("ChooserCell")
+    private let symbol = NSImageView()
+    private let title = NSTextField(labelWithString: "")
+    private let detail = NSTextField(labelWithString: "")
+
+    package init() {
+        super.init(frame: .zero)
+        identifier = Self.identifier
+        symbol.symbolConfiguration = .init(pointSize: 16, weight: .regular)
+        symbol.contentTintColor = .secondaryLabelColor
+        title.font = .systemFont(ofSize: 14, weight: .medium)
+        for field in [title, detail] {
+            field.lineBreakMode = .byTruncatingTail
+            field.maximumNumberOfLines = 1
+            field.cell?.usesSingleLineMode = true
+            field.cell?.truncatesLastVisibleLine = true
+            field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+        for view in [symbol, title, detail] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            symbol.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            symbol.centerYAnchor.constraint(equalTo: centerYAnchor),
+            symbol.widthAnchor.constraint(equalToConstant: 22),
+            title.leadingAnchor.constraint(equalTo: symbol.trailingAnchor, constant: 10),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            title.topAnchor.constraint(equalTo: topAnchor, constant: 5),
+            detail.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            detail.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            detail.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 1),
+        ])
+    }
+
+    @available(*, unavailable)
+    package required init?(coder: NSCoder) { fatalError() }
+
+    package func show(_ item: OpenQuickly.Item) {
+        symbol.image = NSImage(systemSymbolName: item.symbol, accessibilityDescription: nil)
+        title.stringValue = item.title
+        detail.attributedStringValue = item.detail ?? NSAttributedString()
+        detail.isHidden = item.detail == nil || item.detail!.length == 0
+    }
+}
+
+/// The chooser's window: floating, with no title bar to speak of, that can
+/// take the keyboard and gives it back when it loses it.
+package final class ChooserPanel: NSPanel {
+    package var onResign: (() -> Void)?
+    /// ⌘Return: a key equivalent, so the field never sees it as a Return.
+    package var onCommandReturn: (() -> Void)?
+    /// ⇧⌘Return, likewise.
+    package var onShiftCommandReturn: (() -> Void)?
+
+    package override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.type == .keyDown, event.keyCode == 36 || event.keyCode == 76 {
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if flags == .command, let onCommandReturn {
+                onCommandReturn()
+                return true
+            }
+            if flags == [.command, .shift], let onShiftCommandReturn {
+                onShiftCommandReturn()
+                return true
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+    package override var canBecomeKey: Bool { true }
+    package override func resignKey() {
+        super.resignKey()
+        onResign?()
+    }
+}

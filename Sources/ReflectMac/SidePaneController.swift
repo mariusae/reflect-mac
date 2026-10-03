@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// The pane on the right: a note beside what the window shows, with its own
 /// way back and forward — in the window's toolbar, over the pane, with its

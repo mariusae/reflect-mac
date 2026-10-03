@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// Go to Row (⌘J): the rows of the note the keyboard is in, found by what
 /// they say and where they are — `proj alph` finds Alpha, in Projects — in

@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// Every day, one after another, oldest at the top: the daily notes as one
 /// long page, which grows at either end as it is scrolled.
@@ -509,9 +510,4 @@ final class TimelineViewController: NSViewController, OutlineTextViewNavigator {
         for view in views.values { view.reloadIfChanged() }
         tile()
     }
-}
-
-/// A view whose origin is at the top, as a document's is.
-final class FlippedView: NSView {
-    override var isFlipped: Bool { true }
 }

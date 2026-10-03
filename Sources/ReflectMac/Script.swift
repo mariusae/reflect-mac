@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import ReflectUI
 
 /// Drives the app from a script, for trying it without a person at the
 /// keyboard: with `REFLECT_SCRIPT=<file>` set, each line of the file is done

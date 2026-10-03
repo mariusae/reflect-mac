@@ -14,6 +14,15 @@ import Testing
         #expect(NoteIndex.entry(path: "notes/b.md", source: "---\nprivate: yes\n---\n").isPrivate)
     }
 
+    @Test func inboxIsAFrontmatterFlag() {
+        #expect(NoteIndex.entry(path: "notes/a.md", source: "---\ninbox: true\n---\n# A\n").isInInbox)
+        #expect(!NoteIndex.entry(path: "notes/a.md", source: "---\ninbox: false\n---\n# A\n").isInInbox)
+        #expect(!NoteIndex.entry(path: "notes/a.md", source: "# A\n- inbox: true\n").isInInbox)
+        // Taken out of the inbox, the frontmatter it was the only thing in goes too.
+        #expect(Frontmatter.setting("inbox", to: nil, in: "---\ninbox: true\n---\n# A\n") == "# A\n")
+        #expect(Frontmatter.setting("inbox", to: "true", in: "# A\n") == "---\ninbox: true\n---\n# A\n")
+    }
+
     @Test func linksResolveByDateThenTitleThenAlias() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("index-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
