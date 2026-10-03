@@ -7,23 +7,24 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		AA000000000000000000000D /* ReflectCore in Frameworks */ = {isa = PBXBuildFile; productRef = AA000000000000000000000C /* ReflectCore */; };
-		AA000000000000000000000F /* ReflectGit2 in Frameworks */ = {isa = PBXBuildFile; productRef = AA000000000000000000001A /* ReflectGit2 */; };
+		BB000000000000000000000D /* ReflectCore in Frameworks */ = {isa = PBXBuildFile; productRef = BB000000000000000000000C /* ReflectCore */; };
+		BB000000000000000000000F /* ReflectGit2 in Frameworks */ = {isa = PBXBuildFile; productRef = BB000000000000000000001A /* ReflectGit2 */; };
+		BB0000000000000000000021 /* PrismCore in Frameworks */ = {isa = PBXBuildFile; productRef = BB0000000000000000000020 /* PrismCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		AA0000000000000000000005 /* Reflect.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Reflect.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		AA000000000000000000001B /* GitHub.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = GitHub.xcconfig; sourceTree = "<group>"; };
-		AA000000000000000000001C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		BB0000000000000000000005 /* Prism.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Prism.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB000000000000000000001B /* GitHub.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = GitHub.xcconfig; sourceTree = "<group>"; };
+		BB000000000000000000001C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		AA0000000000000000000003 /* ReflectiOS */ = {
+		BB0000000000000000000003 /* PrismiOS */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = ReflectiOS;
+			path = PrismiOS;
 			sourceTree = "<group>";
 		};
-		AA000000000000000000001D /* Shared */ = {
+		BB000000000000000000001D /* Shared */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Shared;
 			sourceTree = "<group>";
@@ -31,33 +32,34 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		AA0000000000000000000008 /* Frameworks */ = {
+		BB0000000000000000000008 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				AA000000000000000000000D /* ReflectCore in Frameworks */,
-				AA000000000000000000000F /* ReflectGit2 in Frameworks */,
+				BB000000000000000000000D /* ReflectCore in Frameworks */,
+				BB000000000000000000000F /* ReflectGit2 in Frameworks */,
+				BB0000000000000000000021 /* PrismCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		AA0000000000000000000002 = {
+		BB0000000000000000000002 = {
 			isa = PBXGroup;
 			children = (
-				AA0000000000000000000003 /* ReflectiOS */,
-				AA000000000000000000001D /* Shared */,
-				AA000000000000000000001B /* GitHub.xcconfig */,
-				AA000000000000000000001C /* Info.plist */,
-				AA0000000000000000000004 /* Products */,
+				BB0000000000000000000003 /* PrismiOS */,
+				BB000000000000000000001D /* Shared */,
+				BB000000000000000000001B /* GitHub.xcconfig */,
+				BB000000000000000000001C /* Info.plist */,
+				BB0000000000000000000004 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		AA0000000000000000000004 /* Products */ = {
+		BB0000000000000000000004 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				AA0000000000000000000005 /* Reflect.app */,
+				BB0000000000000000000005 /* Prism.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -65,70 +67,72 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		AA0000000000000000000006 /* ReflectiOS */ = {
+		BB0000000000000000000006 /* PrismiOS */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = AA0000000000000000000010 /* Build configuration list for PBXNativeTarget "ReflectiOS" */;
+			buildConfigurationList = BB0000000000000000000010 /* Build configuration list for PBXNativeTarget "PrismiOS" */;
 			buildPhases = (
-				AA0000000000000000000007 /* Sources */,
-				AA0000000000000000000008 /* Frameworks */,
-				AA0000000000000000000009 /* Resources */,
+				BB0000000000000000000007 /* Sources */,
+				BB0000000000000000000008 /* Frameworks */,
+				BB0000000000000000000009 /* Resources */,
+				BB0000000000000000000022 /* Fonts */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				AA0000000000000000000003 /* ReflectiOS */,
-				AA000000000000000000001D /* Shared */,
+				BB0000000000000000000003 /* PrismiOS */,
+				BB000000000000000000001D /* Shared */,
 			);
-			name = ReflectiOS;
+			name = PrismiOS;
 			packageProductDependencies = (
-				AA000000000000000000000C /* ReflectCore */,
-				AA000000000000000000001A /* ReflectGit2 */,
+				BB000000000000000000000C /* ReflectCore */,
+				BB000000000000000000001A /* ReflectGit2 */,
+				BB0000000000000000000020 /* PrismCore */,
 			);
-			productName = ReflectiOS;
-			productReference = AA0000000000000000000005 /* Reflect.app */;
+			productName = PrismiOS;
+			productReference = BB0000000000000000000005 /* Prism.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		AA0000000000000000000001 /* Project object */ = {
+		BB0000000000000000000001 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
-					AA0000000000000000000006 = {
+					BB0000000000000000000006 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
 			};
-			buildConfigurationList = AA000000000000000000000E /* Build configuration list for PBXProject "ReflectiOS" */;
+			buildConfigurationList = BB000000000000000000000E /* Build configuration list for PBXProject "PrismiOS" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
 				Base,
 			);
-			mainGroup = AA0000000000000000000002;
+			mainGroup = BB0000000000000000000002;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				AA000000000000000000000B /* XCLocalSwiftPackageReference ".." */,
+				BB000000000000000000000B /* XCLocalSwiftPackageReference ".." */,
 			);
 			preferredProjectObjectVersion = 77;
-			productRefGroup = AA0000000000000000000004 /* Products */;
+			productRefGroup = BB0000000000000000000004 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				AA0000000000000000000006 /* ReflectiOS */,
+				BB0000000000000000000006 /* PrismiOS */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		AA0000000000000000000009 /* Resources */ = {
+		BB0000000000000000000009 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -137,8 +141,26 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		BB0000000000000000000022 /* Fonts */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = Fonts;
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# The fonts Prism bundles, fetched by scripts/fetch-fonts.sh.\nout=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Fonts\"\nmkdir -p \"$out\"\nfor family in monasans monaspace recursive gofont literata jetbrainsmono source plex fraunces alegreya; do\n  cp \"${SRCROOT}/../Frameworks/$family/\"*.[ot]tf \"$out/\" 2>/dev/null || true\ndone\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
-		AA0000000000000000000007 /* Sources */ = {
+		BB0000000000000000000007 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -148,7 +170,7 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		AA0000000000000000000011 /* Debug */ = {
+		BB0000000000000000000011 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -168,7 +190,7 @@
 			};
 			name = Debug;
 		};
-		AA0000000000000000000012 /* Release */ = {
+		BB0000000000000000000012 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -186,83 +208,87 @@
 			};
 			name = Release;
 		};
-		AA0000000000000000000013 /* Debug */ = {
+		BB0000000000000000000013 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = AA000000000000000000001B /* GitHub.xcconfig */;
+			baseConfigurationReference = BB000000000000000000001B /* GitHub.xcconfig */;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = G3V66M4637;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Reflect;
+				INFOPLIST_KEY_CFBundleDisplayName = Prism;
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.mariusae.Reflect;
-				PRODUCT_NAME = Reflect;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mariusae.Prism;
+				PRODUCT_NAME = Prism;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
-		AA0000000000000000000014 /* Release */ = {
+		BB0000000000000000000014 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = AA000000000000000000001B /* GitHub.xcconfig */;
+			baseConfigurationReference = BB000000000000000000001B /* GitHub.xcconfig */;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = G3V66M4637;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Reflect;
+				INFOPLIST_KEY_CFBundleDisplayName = Prism;
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.mariusae.Reflect;
-				PRODUCT_NAME = Reflect;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mariusae.Prism;
+				PRODUCT_NAME = Prism;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		AA000000000000000000000E /* Build configuration list for PBXProject "ReflectiOS" */ = {
+		BB000000000000000000000E /* Build configuration list for PBXProject "PrismiOS" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				AA0000000000000000000011 /* Debug */,
-				AA0000000000000000000012 /* Release */,
+				BB0000000000000000000011 /* Debug */,
+				BB0000000000000000000012 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		AA0000000000000000000010 /* Build configuration list for PBXNativeTarget "ReflectiOS" */ = {
+		BB0000000000000000000010 /* Build configuration list for PBXNativeTarget "PrismiOS" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				AA0000000000000000000013 /* Debug */,
-				AA0000000000000000000014 /* Release */,
+				BB0000000000000000000013 /* Debug */,
+				BB0000000000000000000014 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -270,22 +296,26 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		AA000000000000000000000B /* XCLocalSwiftPackageReference ".." */ = {
+		BB000000000000000000000B /* XCLocalSwiftPackageReference ".." */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ..;
 		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		AA000000000000000000000C /* ReflectCore */ = {
+		BB000000000000000000000C /* ReflectCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ReflectCore;
 		};
-		AA000000000000000000001A /* ReflectGit2 */ = {
+		BB000000000000000000001A /* ReflectGit2 */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ReflectGit2;
 		};
+		BB0000000000000000000020 /* PrismCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PrismCore;
+		};
 /* End XCSwiftPackageProductDependency section */
 	};
-	rootObject = AA0000000000000000000001 /* Project object */;
+	rootObject = BB0000000000000000000001 /* Project object */;
 }

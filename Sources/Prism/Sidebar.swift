@@ -1,4 +1,5 @@
 import AppKit
+import PrismCore
 import ReflectUI
 
 /// A place in the graph to go: a note, by its path.

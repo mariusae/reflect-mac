@@ -1,24 +1,23 @@
-import AppKit
-import ReflectCore
+import Foundation
 
 extension NSAttributedString.Key {
     /// The row a paragraph is, as a `RowStyle`. Every character of a
     /// paragraph, its line break included, carries the same one.
-    package static let outlineRow = NSAttributedString.Key("ReflectOutlineRow")
+    public static let outlineRow = NSAttributedString.Key("ReflectOutlineRow")
 }
 
 /// What a paragraph of the editor is: a row, less its text, which is the
 /// paragraph's. Immutable, so that undo can put an old one back.
-package final class RowStyle: NSObject {
-    package let row: Row
+public final class RowStyle: NSObject {
+    public let row: Row
 
-    package init(_ row: Row) {
+    public init(_ row: Row) {
         var row = row
         row.text = ""
         self.row = row
     }
 
-    package func with(_ change: (inout Row) -> Void) -> RowStyle {
+    public func with(_ change: (inout Row) -> Void) -> RowStyle {
         var row = row
         change(&row)
         return RowStyle(row)
@@ -28,10 +27,10 @@ package final class RowStyle: NSObject {
 /// The editor's text is the outline's: one paragraph a row, each ending in a
 /// line break — the last one too, so that every row has a character to carry
 /// its style. Lines within a row are broken with U+2028.
-package enum OutlineText {
-    package static let lineSeparator = "\u{2028}"
+public enum OutlineText {
+    public static let lineSeparator = "\u{2028}"
 
-    package static func attributed(_ rows: [Row]) -> NSMutableAttributedString {
+    public static func attributed(_ rows: [Row]) -> NSMutableAttributedString {
         let text = NSMutableAttributedString()
         for row in rows {
             let paragraph = row.text.replacingOccurrences(of: "\n", with: lineSeparator) + "\n"
@@ -41,7 +40,7 @@ package enum OutlineText {
     }
 
     /// The character range of each paragraph, its line break included.
-    package static func paragraphs(_ text: NSString) -> [NSRange] {
+    public static func paragraphs(_ text: NSString) -> [NSRange] {
         var ranges: [NSRange] = []
         var start = 0
         let length = text.length
@@ -54,13 +53,13 @@ package enum OutlineText {
         return ranges
     }
 
-    package static func style(_ text: NSAttributedString, at location: Int) -> RowStyle {
+    public static func style(_ text: NSAttributedString, at location: Int) -> RowStyle {
         guard text.length > 0 else { return RowStyle(.blank) }
         return text.attribute(.outlineRow, at: min(location, text.length - 1), effectiveRange: nil) as? RowStyle
             ?? RowStyle(.blank)
     }
 
-    package static func rows(_ text: NSAttributedString) -> [Row] {
+    public static func rows(_ text: NSAttributedString) -> [Row] {
         let string = text.string as NSString
         return paragraphs(string).map { range in
             var row = style(text, at: range.location).row

@@ -1,4 +1,5 @@
 import AppKit
+import PrismCore
 
 /// ⌘O: a note found by typing some of its name, over the page.
 final class Finder: NSView, NSTextFieldDelegate {

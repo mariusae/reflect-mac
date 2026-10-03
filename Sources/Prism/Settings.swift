@@ -1,4 +1,5 @@
 import AppKit
+import PrismCore
 import ReflectUI
 
 /// Prism ▸ Settings (⌘,): the font set, and how it is set — its faces, size,

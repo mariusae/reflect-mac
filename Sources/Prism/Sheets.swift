@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import PrismCore
 import ReflectUI
 
 /// A sheet of a column's stack: what a column showed — the timeline, a

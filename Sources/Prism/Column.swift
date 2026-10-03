@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import PrismCore
 import ReflectUI
 
 /// One mark on the scrubber: a day or week, a heading, or a topic.
@@ -318,9 +319,7 @@ final class Column: NSView, OutlineTextViewNavigator {
     }
 
     /// A query's words, as looked for.
-    static func words(_ query: String) -> [String] {
-        query.split(whereSeparator: \.isWhitespace).map(String.init)
-    }
+    static func words(_ query: String) -> [String] { NoteSearch.words(query) }
 
     /// Whether the keyboard is in the search's field.
     var isTypingQuery: Bool {

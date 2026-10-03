@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import PrismCore
 import ReflectUI
 
 /// The window: columns of notes, side by side — the first the days, the
@@ -656,24 +657,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     /// The timeline: every day and week there is a note for, today, and
     /// `including`, in order — a week before the days it covers.
     private func timelineEntries(including ref: NoteRef? = nil) -> [NoteRef] {
-        var entries: [(Day, Int, NoteRef)] = graph.dailyNoteFiles().keys.map { ($0, 1, .day($0)) }
-        var refs = Set(entries.map(\.2))
-        func add(_ ref: NoteRef) {
-            guard !refs.contains(ref), let day = day(of: ref) else { return }
-            refs.insert(ref)
-            entries.append((day, ref.day == nil ? 0 : 1, ref))
-        }
-        add(.day(.today))
-        for note in index.all where GraphPaths.week(fromWeeklyPath: note.path) != nil { add(.note(note.path)) }
-        if let ref { add(ref) }
-        entries.sort { $0.0 != $1.0 ? $0.0 < $1.0 : $0.1 < $1.1 }
-        return entries.map(\.2)
+        Timeline.entries(graph: graph, index: index, including: ref)
     }
 
     /// The day a note is placed at in the timeline, when it has a place there.
-    private func day(of ref: NoteRef) -> Day? {
-        ref.day ?? GraphPaths.week(fromWeeklyPath: ref.path)?.monday
-    }
+    private func day(of ref: NoteRef) -> Day? { Timeline.day(of: ref) }
 
     /// Where a column is: the note at its top.
     private func location(of column: Column) -> String? { column.current?.ref.path }
@@ -1068,16 +1056,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         if column.kind != .search(query) { column.showSearch(query, found: nil, names: backlinkName) }
         let index = index
         DispatchQueue.global(qos: .userInitiated).async { [weak self, weak column] in
-            let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
-            var found: [(path: String, slices: [TaskSlice], editable: Bool)] = []
-            for entry in index.all.sorted(by: { $0.modified > $1.modified }) where !entry.path.hasPrefix("templates/") {
-                guard let text = index.body(entry.path),
-                      words.allSatisfy({ text.range(of: $0, options: options) != nil }) else { continue }
-                let slices = TaskSlice.slices(finding: words, path: entry.path, in: text)
-                guard !slices.isEmpty else { continue }
-                found.append((entry.path, slices, OutlineMarkdown.roundTrips(text)))
-                if found.count == 60 { break }
-            }
+            let found = NoteSearch.find(words, in: index).map { ($0.path, $0.slices, $0.editable) }
             DispatchQueue.main.async {
                 guard let self, let column, self.searchGeneration[id] == generation, column.kind == .search(query) else { return }
                 column.showSearch(query, found: found, names: self.backlinkName)
@@ -1323,13 +1302,10 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     private func writeBack(_ editor: TaskEditor, in column: Column) {
         let path = editor.slice.path
         guard let source = graph.read(path: path) else { return }
-        var outline = OutlineMarkdown.parse(source)
-        let range = editor.slice.start..<(editor.slice.start + editor.slice.count)
-        guard range.upperBound <= outline.rows.count else { return refreshTasks(column, force: true) }
         let rows = editor.rowsInNote
-        outline.rows.replaceSubrange(range, with: rows)
+        guard let updated = editor.slice.writing(rows, into: source) else { return refreshTasks(column, force: true) }
         do {
-            try graph.write(OutlineMarkdown.serialize(outline), path: path)
+            try graph.write(updated, path: path)
         } catch {
             NSAlert(error: error).runModal()
             return

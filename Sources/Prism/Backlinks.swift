@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import PrismCore
 import ReflectUI
 
 /// What a column is made of: blocks one under another, each as tall as it

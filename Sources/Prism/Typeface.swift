@@ -1,4 +1,5 @@
 import AppKit
+import PrismCore
 import ReflectUI
 
 /// What notes are set in: a face for the text, one for headings — most

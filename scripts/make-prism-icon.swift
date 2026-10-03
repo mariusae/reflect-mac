@@ -4,6 +4,8 @@ import AppKit
 
 let size: CGFloat = 1024
 let output = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "prism-icon-1024.png"
+/// `--full`: the whole square, for iOS, which rounds its corners itself.
+let full = CommandLine.arguments.contains("--full")
 
 func color(_ hex: UInt32, _ alpha: CGFloat = 1) -> NSColor {
     NSColor(srgbRed: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255,
@@ -11,9 +13,9 @@ func color(_ hex: UInt32, _ alpha: CGFloat = 1) -> NSColor {
 }
 
 let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
-    let inset: CGFloat = 100
+    let inset: CGFloat = full ? 0 : 100
     let tile = NSRect(x: inset, y: inset, width: size - 2 * inset, height: size - 2 * inset)
-    let squircle = NSBezierPath(roundedRect: tile, xRadius: 185, yRadius: 185)
+    let squircle = NSBezierPath(roundedRect: tile, xRadius: full ? 0 : 185, yRadius: full ? 0 : 185)
 
     // The tile: warm black, a little lighter at the top.
     NSGraphicsContext.current?.saveGraphicsState()
@@ -25,6 +27,14 @@ let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { _
     NSGradient(starting: color(0x2c2824), ending: color(0x131110))!.draw(in: squircle, angle: -90)
     NSGraphicsContext.current?.restoreGraphicsState()
     squircle.addClip()
+    // Full-bleed, the drawing is made for the inset tile: grown to fill the square.
+    if full {
+        let grow = NSAffineTransform()
+        grow.translateX(by: size / 2, yBy: size / 2)
+        grow.scale(by: size / (size - 200))
+        grow.translateX(by: -size / 2, yBy: -size / 2)
+        grow.concat()
+    }
 
     // The prism.
     let apex = NSPoint(x: 455, y: 735), left = NSPoint(x: 265, y: 405), right = NSPoint(x: 645, y: 405)

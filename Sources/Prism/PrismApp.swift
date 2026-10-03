@@ -1,5 +1,6 @@
 import AppKit
 import ReflectCore
+import PrismCore
 import ReflectUI
 
 /// Prism: the same notes as Reflect Mac, set for reading and writing and

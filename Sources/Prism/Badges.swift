@@ -1,42 +1,14 @@
 import AppKit
 import ReflectCore
+import PrismCore
 
-/// What a note's frontmatter says of it, to show beside its name: in the
-/// inbox, pinned, private, a topic.
-struct NoteFlags: OptionSet, Hashable {
-    let rawValue: Int
-    static let inbox = NoteFlags(rawValue: 1)
-    static let pinned = NoteFlags(rawValue: 2)
-    static let `private` = NoteFlags(rawValue: 4)
-    static let topic = NoteFlags(rawValue: 8)
-
-    init(rawValue: Int) { self.rawValue = rawValue }
-
+extension NoteFlags {
     /// Whether a note says nothing but its title — a topic, too, shown by
     /// what links to it. The window says, from what the note holds.
     @MainActor static var isEmptyTopic: (NoteEntry) -> Bool = { _ in false }
 
     @MainActor init(_ entry: NoteEntry?) {
-        var flags: NoteFlags = []
-        if entry?.isInInbox == true { flags.insert(.inbox) }
-        if entry?.pin != nil { flags.insert(.pinned) }
-        if entry?.isPrivate == true { flags.insert(.private) }
-        if let entry, entry.isTopic || (entry.day == nil && Self.isEmptyTopic(entry)) { flags.insert(.topic) }
-        self = flags
-    }
-
-    /// Each flag set, in the order shown: its symbol, what it says, and
-    /// how strongly it shows: the inbox, which asks for something, in the
-    /// accent; a topic, which says what the note is, in ochre; the rest faint.
-    enum Weight { case calling, telling, quiet }
-
-    var shown: [(symbol: String, label: String, weight: Weight)] {
-        var shown: [(String, String, Weight)] = []
-        if contains(.inbox) { shown.append(("tray.fill", "In the Inbox", .calling)) }
-        if contains(.topic) { shown.append(("number", "Topic: what links here shows under it", .telling)) }
-        if contains(.pinned) { shown.append(("pin.fill", "Pinned", .quiet)) }
-        if contains(.private) { shown.append(("lock.fill", "Private", .quiet)) }
-        return shown
+        self.init(entry, isEmptyTopic: entry.map { $0.day == nil && Self.isEmptyTopic($0) } ?? false)
     }
 }
 

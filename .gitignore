@@ -6,6 +6,9 @@ build/
 !iOS/ReflectiOS.xcodeproj/
 iOS/ReflectiOS.xcodeproj/xcuserdata/
 iOS/ReflectiOS.xcodeproj/project.xcworkspace/xcuserdata/
+!iOS/PrismiOS.xcodeproj/
+iOS/PrismiOS.xcodeproj/xcuserdata/
+iOS/PrismiOS.xcodeproj/project.xcworkspace/xcuserdata/
 iOS/GitHub.local.xcconfig
 !Extensions/Safari/Reflect Capture/Reflect Capture.xcodeproj/
 Extensions/Safari/Reflect Capture/Reflect Capture.xcodeproj/xcuserdata/

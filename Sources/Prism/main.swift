@@ -1,4 +1,5 @@
 import AppKit
+import PrismCore
 
 let app = NSApplication.shared
 let delegate = MainActor.assumeIsolated { PrismApp() }

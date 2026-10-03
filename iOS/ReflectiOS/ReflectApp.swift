@@ -32,7 +32,7 @@ struct RootView: View {
 
     var body: some View {
         if !store.hasGraph {
-            ConnectView()
+            ConnectView(appName: "Reflect", clone: store.clone)
         } else if store.index == nil {
             ProgressView()
         } else {

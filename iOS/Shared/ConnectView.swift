@@ -2,9 +2,13 @@ import AuthenticationServices
 import SwiftUI
 
 /// Before there is a graph: sign in to GitHub, choose the repository the
-/// notes are kept in, and bring it down.
+/// notes are kept in, and bring it down. Shared by the apps that show a
+/// graph: each says what it is called, and how it brings one down.
 struct ConnectView: View {
-    @Environment(GraphStore.self) private var store
+    /// The app's name, as the page says it.
+    let appName: String
+    /// Brings a repository down into the app's graph.
+    let clone: (GitHubRepository) async throws -> Void
     @Environment(GitHubAccount.self) private var account
     @Environment(\.webAuthenticationSession) private var session
 
@@ -30,7 +34,7 @@ struct ConnectView: View {
                     choose
                 }
             }
-            .navigationTitle("Reflect")
+            .navigationTitle(appName)
             .toolbar {
                 if account.isSignedIn && cloning == nil {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -59,7 +63,7 @@ struct ConnectView: View {
         ContentUnavailableView {
             Label("Your Notes, from GitHub", systemImage: "books.vertical")
         } description: {
-            Text("Reflect keeps your graph in a GitHub repository. Sign in, and choose the one it is in.")
+            Text("\(appName) keeps your graph in a GitHub repository. Sign in, and choose the one it is in.")
         } actions: {
             Button {
                 run { try await account.signIn(session) }
@@ -78,7 +82,7 @@ struct ConnectView: View {
                 Section {
                     ForEach(repositories) { repository in
                         Button {
-                            clone(repository)
+                            bringDown(repository)
                         } label: {
                             Label {
                                 Text(repository.fullName).foregroundStyle(.primary)
@@ -91,7 +95,7 @@ struct ConnectView: View {
                     Text("Choose Your Graph")
                 } footer: {
                     Text(repositories.isEmpty
-                         ? "Reflect has not been given any repositories yet."
+                         ? "\(appName) has not been given any repositories yet."
                          : "The notes come down to this iPhone, and are kept in step with GitHub.")
                 }
             } else {
@@ -119,11 +123,11 @@ struct ConnectView: View {
         }
     }
 
-    private func clone(_ repository: GitHubRepository) {
+    private func bringDown(_ repository: GitHubRepository) {
         cloning = repository
         Task {
             do {
-                try await store.clone(repository)
+                try await clone(repository)
             } catch {
                 self.error = error.localizedDescription
             }

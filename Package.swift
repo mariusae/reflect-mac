@@ -12,6 +12,7 @@ let package = Package(
         .library(name: "ReflectGit2", targets: ["ReflectGit2"]),
         .executable(name: "ReflectMac", targets: ["ReflectMac"]),
         .executable(name: "Prism", targets: ["Prism"]),
+        .library(name: "PrismCore", targets: ["PrismCore"]),
     ],
     dependencies: [
         // libgit2, built from source: HTTPS through the system's TLS.
@@ -25,8 +26,10 @@ let package = Package(
         .target(name: "ReflectUI", dependencies: ["ReflectCore"]),
         .executableTarget(name: "ReflectMac", dependencies: ["ReflectCore", "ReflectUI"]),
         // A second face on the same notes: type first, and little else.
-        .executableTarget(name: "Prism", dependencies: ["ReflectCore", "ReflectUI"]),
-        .testTarget(name: "ReflectCoreTests", dependencies: ["ReflectCore", "ReflectGit2"]),
+        .executableTarget(name: "Prism", dependencies: ["ReflectCore", "ReflectUI", "PrismCore"]),
+        // What Prism does, whatever it is shown on: the Mac's, the phone's.
+        .target(name: "PrismCore", dependencies: ["ReflectCore"]),
+        .testTarget(name: "ReflectCoreTests", dependencies: ["ReflectCore", "ReflectGit2", "PrismCore"]),
     ],
     swiftLanguageModes: [.v5]
 )
