@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         StallWatch.shared.start()
+        SyncController.doing = { StallWatch.doing($0) }
         NSApp.mainMenu = MainMenu.build()
         if let path = UserDefaults.standard.string(forKey: Self.graphPathKey) {
             open(URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true))

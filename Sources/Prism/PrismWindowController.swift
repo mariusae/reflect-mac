@@ -11,12 +11,35 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     private let images: ImageStore
     private let page = PageView()
     private var columns: [Column] = []
-    private var dividers: [NSView] = []
+    private var dividers: [ColumnDivider] = []
+    /// Under the column the keyboard is in, when there are more than one.
+    private let activeBar = NSView()
+    private var responderWatch: NSKeyValueObservation?
     private let sidebar = Sidebar()
     private let finder = Finder()
     private let heading = NSTextField(labelWithString: "")
+    /// What a sync is doing, at the window's foot, for a moment.
+    private let syncStatus = NSTextField(labelWithString: "")
+    /// The graph's repository kept in step — only when asked, with ⌘S:
+    /// Reflect, or Reflect Mac, keeps it in step otherwise.
+    private lazy var sync: SyncController = {
+        let sync = SyncController(git: graph.git)
+        sync.flush = { [weak self] in self?.save() }
+        sync.onPulled = { [weak self] paths in self?.notesChanged(Set(paths)) }
+        sync.onStatus = { [weak self] status in self?.showSync(status) }
+        sync.onConflicts = { [weak self] paths in
+            guard let self, let window else { return }
+            let alert = NSAlert()
+            alert.messageText = "The sync left \(paths.count) \(paths.count == 1 ? "note" : "notes") to review"
+            alert.informativeText = paths.joined(separator: "\n") + "\n\nReflect Mac shows what each side wrote, to choose between."
+            alert.beginSheetModal(for: window)
+        }
+        return sync
+    }()
     /// The column the finder, Today and the sidebar open in.
-    private weak var active: Column?
+    private weak var active: Column? {
+        didSet { if active !== oldValue { page.needsLayout = true } }
+    }
 
 
     var face: Typeface {
@@ -67,6 +90,12 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         window.contentView = page
         heading.lineBreakMode = .byTruncatingTail
         page.addSubview(heading)
+        activeBar.wantsLayer = true
+        activeBar.layer?.cornerRadius = 1
+        page.addSubview(activeBar)
+        syncStatus.alphaValue = 0
+        syncStatus.lineBreakMode = .byTruncatingTail
+        page.addSubview(syncStatus)
         page.addSubview(sidebar)
         sidebar.pinned = sidebarPinned
         page.onLayout = { [weak self] in self?.layoutPage() }
@@ -80,6 +109,15 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         }
         finder.onClose = { [weak self] in self?.closeFinder() }
 
+        // The column the keyboard goes into is the one marked, and the one
+        // commands act on.
+        responderWatch = window.observe(\.firstResponder) { [weak self] window, _ in
+            MainActor.assumeIsolated {
+                guard let self, let view = window.firstResponder as? NSView,
+                      let column = self.columns.first(where: { view.isDescendant(of: $0) }) else { return }
+                self.active = column
+            }
+        }
         index.scan()
         watcher = GraphWatcher(root: graph.root) { [weak self] paths in self?.notesChanged(paths) }
         LinkCompletion.sources = SearchSources(index: index)
@@ -128,6 +166,9 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         column.onClose = { [weak self] column in self?.close(column) }
         column.onOpenPath = { [weak self] path, column, newColumn in self?.open(path, newColumn: newColumn, from: column) }
         column.onScroll = { [weak self] _ in self?.saveLayout() }
+        column.onViewMade = { [weak self] view in self?.noteShown(view) }
+        column.onViewGone = { [weak self] view in self?.noteLeft(view) }
+        column.onSave = { [weak self] view in self?.noteSaved(view) }
         column.onSliceEdit = { [weak self] editor, column in self?.writeBack(editor, in: column) }
         column.onSliceLeave = { [weak self] _ in
             self?.refreshBacklinks()
@@ -198,9 +239,16 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         saveLayout()
         for column in columns { column.closable = columns.count > 1 }
         dividers.forEach { $0.removeFromSuperview() }
-        dividers = columns.dropFirst().map { _ in
-            let divider = NSView()
-            divider.wantsLayer = true
+        dividers = columns.indices.dropFirst().map { i in
+            let divider = ColumnDivider()
+            divider.onDrag = { [weak self] x in self?.dragDivider(i, to: x) }
+            divider.onEnd = { [weak self] in self?.saveLayout() }
+            divider.onReset = { [weak self] in
+                guard let self else { return }
+                columns.forEach { $0.share = 1 }
+                page.needsLayout = true
+                saveLayout()
+            }
             page.addSubview(divider, positioned: .below, relativeTo: heading)
             return divider
         }
@@ -266,8 +314,12 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }
 
     private func writeLayout() {
-        let places = columns.map { columnPlace(Sheet(kind: $0.kind, place: $0.place, offset: $0.scrollOffset, title: "", snapshot: nil),
-                                               beneath: $0.beneath) }
+        let places = columns.map { column in
+            var place = columnPlace(Sheet(kind: column.kind, place: column.place, offset: column.scrollOffset, title: "", snapshot: nil),
+                                    beneath: column.beneath)
+            place.width = column.share == 1 ? nil : Double(column.share)
+            return place
+        }
         let activeIndex = active.flatMap { active in columns.firstIndex { $0 === active } }
         let key = (window?.firstResponder as? OutlineTextView).flatMap { editor in
             columns.lazy.flatMap(\.views).first { $0.editor === editor }?.ref.path
@@ -300,6 +352,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             guard let top = sheet(place) else { continue }
             let column = i == 0 ? columns[0] : addColumn(after: columns[i - 1])
             column.beneath = (place.beneath ?? []).compactMap(sheet)
+            column.share = place.width.map { CGFloat($0) } ?? 1
             materialize(top, in: column, key: key)
         }
         if let index = state.activeColumn, columns.indices.contains(index) { active = columns[index] }
@@ -515,28 +568,58 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         switcherColumn = nil
     }
 
+    /// A divider dragged: the columns either side of it shared out anew,
+    /// neither narrower than a column can be read in.
+    private func dragDivider(_ index: Int, to x: CGFloat) {
+        guard columns.indices.contains(index), index > 0 else { return }
+        let left = columns[index - 1], right = columns[index]
+        let span = left.frame.width + right.frame.width
+        let least: CGFloat = 280
+        let leftWidth = min(max(page.convert(NSPoint(x: x, y: 0), from: nil).x - left.frame.minX, least), span - least)
+        let shares = left.share + right.share
+        left.share = shares * leftWidth / span
+        right.share = shares - left.share
+        page.needsLayout = true
+        page.layoutSubtreeIfNeeded()
+    }
+
     // MARK: Layout
 
     private func layoutPage() {
         let bounds = page.bounds
         let left = sidebarPinned ? Sidebar.width + 16 : 0
-        let width = (bounds.width - left) / CGFloat(max(columns.count, 1))
+        // Each column its share of the width.
+        let total = columns.reduce(0) { $0 + $1.share }
+        var x = left
         for (i, column) in columns.enumerated() {
-            column.frame = NSRect(x: round(left + CGFloat(i) * width), y: 0, width: round(width), height: bounds.height)
+            let width = i == columns.count - 1 ? bounds.width - x : round((bounds.width - left) * column.share / max(total, 0.01))
+            column.frame = NSRect(x: round(x), y: 0, width: width, height: bounds.height)
+            x += width
         }
-        page.effectiveAppearance.performAsCurrentDrawingAppearance {
-            for (i, divider) in dividers.enumerated() {
-                divider.frame = NSRect(x: round(left + CGFloat(i + 1) * width), y: 0, width: 1, height: bounds.height)
-                divider.layer?.backgroundColor = Ink.rule.cgColor
+        for (i, divider) in dividers.enumerated() {
+            divider.frame = NSRect(x: columns[i + 1].frame.minX - ColumnDivider.reach, y: 0, width: 2 * ColumnDivider.reach,
+                                   height: bounds.height)
+        }
+        // The column the keyboard is in, marked at its foot.
+        if columns.count > 1, let active, columns.contains(where: { $0 === active }) {
+            activeBar.isHidden = false
+            activeBar.frame = NSRect(x: active.frame.minX + 24, y: 0, width: max(0, active.frame.width - 48), height: 2)
+            page.effectiveAppearance.performAsCurrentDrawingAppearance {
+                activeBar.layer?.backgroundColor = Ink.accent.withAlphaComponent(0.55).cgColor
             }
+        } else {
+            activeBar.isHidden = true
         }
         let height = ceil(heading.intrinsicContentSize.height)
         let first = columns.first?.frame ?? bounds
         // In the first column's top sheet, under any sheets beneath it.
         let inset = columns.first?.cardInset ?? 0
         heading.frame = NSRect(x: first.minX + 80, y: bounds.height - inset - 26 - height / 2, width: first.width - 160, height: height)
-        let x = sidebarShown ? 8 : -Sidebar.width - 24
-        sidebar.frame = NSRect(x: x, y: 8, width: Sidebar.width, height: bounds.height - 16)
+        let statusSize = syncStatus.attributedStringValue.size()
+        let statusWidth = min(ceil(statusSize.width) + 6, bounds.width / 2)
+        syncStatus.frame = NSRect(x: bounds.width - statusWidth - 16, y: 10, width: statusWidth, height: ceil(statusSize.height) + 2)
+        let sidebarX = sidebarShown ? 8 : -Sidebar.width - 24
+        sidebar.frame = NSRect(x: sidebarX, y: 8, width: Sidebar.width, height: bounds.height - 16)
         finder.frame = bounds
     }
 
@@ -733,7 +816,220 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// Opens a column, right of this one, of what links to the note the
     /// keyboard is in — or goes to the one already open.
+    // MARK: New notes, and their titles
+
+    /// Notes made here and not yet named: taken away again if left blank.
+    private var blankNotes: Set<String> = []
+    /// Each note's title as last settled, by path: a new one is told by it.
+    private var settledTitles: [String: String] = [:]
+    /// A title typed and waiting to settle, by path.
+    private var pendingTitles: [String: String] = [:]
+    private var retitleTimers: [String: Timer] = [:]
+    /// The aliases each note's last rename added, and the title it left the
+    /// note with: a rename from that title goes on the chain, and prunes them.
+    private var renameChains: [String: (title: String, added: [String])] = [:]
+    /// How long a title typed waits before the note takes it.
+    private static let retitleDelay: TimeInterval = 5
+
+    /// File ▸ New Note (⌘N): a note with no name yet, on top of the column
+    /// the keyboard is in, its title to type first. Named, its file is
+    /// named after it; left blank, it goes again.
+    @objc func newNote(_ sender: Any?) {
+        save()
+        do {
+            let path = try NoteCreation.createBlank(in: graph.root)
+            blankNotes.insert(path)
+            index.refresh(path)
+            open(path)
+            // The caret in the title, to type it.
+            if let editor = focusedColumn.view(for: NoteRef(path: path))?.editor {
+                window?.makeFirstResponder(editor)
+                editor.enter(from: .top, x: .greatestFiniteMagnitude, scrolling: false)
+            }
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
+    private func title(of view: DayView) -> String? {
+        view.ref.day == nil ? TitleRename.authoredTitle(path: view.ref.path, source: view.savedText) : nil
+    }
+
+    private func noteShown(_ view: DayView) {
+        guard view.ref.day == nil, settledTitles[view.ref.path] == nil, let title = title(of: view) else { return }
+        settledTitles[view.ref.path] = title
+    }
+
+    /// A note written: a title typed in it waits to settle, then is taken.
+    private func noteSaved(_ view: DayView) {
+        let path = view.ref.path
+        guard let title = title(of: view), title != settledTitles[path] else {
+            retitleTimers.removeValue(forKey: path)?.invalidate()
+            pendingTitles[path] = nil
+            return
+        }
+        pendingTitles[path] = title
+        retitleTimers[path]?.invalidate()
+        retitleTimers[path] = Timer.scheduledTimer(withTimeInterval: Self.retitleDelay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.settleTitle(path) }
+        }
+    }
+
+    /// A note no longer shown: its title settled now; a new one left blank,
+    /// taken away.
+    private func noteLeft(_ view: DayView) {
+        let path = view.ref.path
+        if pendingTitles[path] != nil { settleTitle(path) }
+        guard blankNotes.contains(path) else { return }
+        // Once the column has done letting it go: shown nowhere else, then.
+        DispatchQueue.main.async { [weak self] in self?.dropIfBlank(view.ref) }
+    }
+
+    private func dropIfBlank(_ ref: NoteRef) {
+        let path = ref.path
+        guard blankNotes.contains(path), graph.exists(path: path), !columns.contains(where: { $0.view(for: ref) != nil }) else { return }
+        let text = graph.read(path: path) ?? ""
+        guard TitleRename.authoredTitle(path: path, source: text) == nil, Backlinks.isEmpty(OutlineMarkdown.parse(text).rows) else { return }
+        blankNotes.remove(path)
+        try? FileManager.default.removeItem(at: graph.url(for: path))
+        index.refresh(path)
+        refreshSidebar()
+    }
+
+    private func settleTitle(_ path: String) {
+        retitleTimers.removeValue(forKey: path)?.invalidate()
+        guard let to = pendingTitles.removeValue(forKey: path) else { return }
+        let from = settledTitles[path]
+        settledTitles[path] = to
+        retitle(path, from: from, to: to)
+    }
+
+    /// A note's title settled on a new one, as Reflect does it: the links to
+    /// it follow, its old title stays on as an alias, and a note Reflect
+    /// manages moves to the file its title names. A note that had no title
+    /// (`from` nil) only moves: nothing links to a title never had.
+    private func retitle(_ path: String, from: String?, to: String) {
+        blankNotes.remove(path)
+        save()
+        guard graph.exists(path: path) else { return }
+        if let from {
+            let result = index.retitleLinks(to: path, from: from, to: to, read: graph.read(path:),
+                                             write: { [graph] text, source in try graph.write(text, path: source) })
+            // The old title, kept as an alias — unless it is another note's.
+            let chain = renameChains[path]
+            let previous = chain?.title == from ? chain?.added ?? [] : []
+            renameChains[path] = (to, [])
+            if !result.collision, let source = graph.read(path: path) {
+                let current = TitleRename.aliases(in: source)
+                if let aliases = TitleRename.nextAliases(current, from: from, to: to, previousAutoAliases: previous) {
+                    try? graph.write(Frontmatter.setting("aliases", toList: aliases, in: source), path: path)
+                    renameChains[path] = (to, TitleRename.added(current, aliases))
+                }
+            }
+            index.refresh(path)
+        }
+        // The file follows the title, for a note Reflect manages.
+        guard let source = graph.read(path: path), TitleRename.isManaged(path: path, source: source) else { return }
+        let destination = index.managedPath(for: to, current: path)
+        guard destination != path else { return }
+        do {
+            try FileManager.default.moveItem(at: graph.url(for: path), to: graph.url(for: destination))
+        } catch {
+            NSAlert(error: error).runModal()
+            return
+        }
+        index.refresh(path)
+        index.refresh(destination)
+        SessionState.shared.moved(graph.root, from: NoteRef(path: path), to: NoteRef(path: destination))
+        if let title = settledTitles.removeValue(forKey: path) { settledTitles[destination] = title }
+        if let chain = renameChains.removeValue(forKey: path) { renameChains[destination] = chain }
+        noteMoved(from: NoteRef(path: path), to: NoteRef(path: destination))
+    }
+
+    /// A note's file moved: every column and sheet showing it, showing it
+    /// where it is now, scrolled and with the caret as they were.
+    private func noteMoved(from old: NoteRef, to new: NoteRef) {
+        for column in columns {
+            column.beneath = column.beneath.map { sheet in
+                var sheet = sheet
+                if sheet.kind == .note(old) { sheet.kind = .note(new) }
+                if sheet.place?.ref == old { sheet.place?.ref = new }
+                return sheet
+            }
+            guard column.kind == .note(old) else { continue }
+            let place = column.place.map { Column.Place(ref: new, offset: $0.offset) }
+            let selection = column.view(for: old)?.editor.selectedRange()
+            let hadKeyboard = column.view(for: old).map { window?.firstResponder === $0.editor } ?? false
+            materialize(Sheet(kind: .note(new), place: place, offset: 0, title: "", snapshot: nil), in: column)
+            if let editor = column.view(for: new)?.editor, let selection {
+                if hadKeyboard { window?.makeFirstResponder(editor) }
+                let length = (editor.string as NSString).length
+                editor.setSelectedRange(NSRange(location: min(selection.location, length), length: 0))
+            }
+        }
+        saveLayout()
+        refreshSidebar()
+    }
+
+    // MARK: Syncing
+
+    /// Graph ▸ Sync Now (⌘S): what is written saved, committed, and the
+    /// graph's repository brought in step — fetched, merged, pushed.
+    @objc func syncNow(_ sender: Any?) {
+        guard graph.git != nil else {
+            showSync(.failed("This graph is not in a git repository"))
+            return
+        }
+        sync.sync()
+    }
+
+    private var syncFade: Timer?
+
+    private func showSync(_ status: SyncController.Status) {
+        let text: String
+        switch status {
+        case .idle: return
+        case .syncing: text = "Syncing…"
+        case .synced: text = "Synced"
+        case .failed(let message): text = "Sync failed: " + message
+        case .unavailable: text = "Not in a git repository"
+        }
+        syncStatus.attributedStringValue = NSAttributedString(string: text, attributes: [
+            .font: face.font(size: 12, weight: .medium),
+            .foregroundColor: { if case .failed = status { NSColor.systemRed } else { Ink.secondary } }(),
+        ])
+        syncStatus.toolTip = text
+        syncStatus.alphaValue = 1
+        page.needsLayout = true
+        syncFade?.invalidate()
+        guard status != .syncing else { return }
+        syncFade = Timer.scheduledTimer(withTimeInterval: { if case .failed = status { 8 } else { 2 } }(), repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.4
+                    self?.syncStatus.animator().alphaValue = 0
+                }
+            }
+        }
+    }
+
     // MARK: Searching
+
+    /// Edit ▸ Find (⌘F): in a search, its field — scrolled to, the words
+    /// in it chosen, to type over; anywhere else, the find bar of the note
+    /// the keyboard is in.
+    @objc func find(_ sender: Any?) {
+        let column = focusedColumn
+        if case .search = column.kind, let header = column.blocks.first as? SearchHeader {
+            column.scroll(toY: 0, animated: true)
+            window?.makeFirstResponder(header.field)
+            header.field.currentEditor()?.selectAll(nil)
+            return
+        }
+        let item = NSMenuItem()
+        item.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+        (window?.firstResponder as? NSTextView)?.performFindPanelAction(item)
+    }
 
     /// Opens a search in a column of its own, right of this one.
     @objc func showSearch(_ sender: Any?) {
@@ -1175,12 +1471,12 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     /// This week's note, before its days in the timeline — there to write
     /// in, if there is none yet.
     @objc func goThisWeek(_ sender: Any?) {
-        let timeline = columns.first { $0.isTimeline } ?? focusedColumn
+        let timeline = focusedColumn.isTimeline ? focusedColumn : columns.first { $0.isTimeline } ?? focusedColumn
         open(GraphPaths.weeklyPath(for: .current), from: timeline)
     }
 
     @objc func goToday(_ sender: Any?) {
-        let timeline = columns.first { $0.isTimeline } ?? focusedColumn
+        let timeline = focusedColumn.isTimeline ? focusedColumn : columns.first { $0.isTimeline } ?? focusedColumn
         open(GraphPaths.dailyPath(for: .today), from: timeline)
     }
 
@@ -1453,14 +1749,79 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
                 guard column.blocks.count > 1 || Date().timeIntervalSince(start) > 3 else { return }
                 timer.invalidate()
                 print("query \(column.kind), \(column.blocks.count - 1) notes")
+                if ProcessInfo.processInfo.environment["PRISM_FIND_KEY"] == "1", let editor = column.sliceEditors.last {
+                    self.window?.makeFirstResponder(editor.view)
+                    column.scrollForScript(by: 3000)
+                    print("before: scrolled \(column.scrolledForScript)")
+                    self.find(nil)
+                    let inField = (column.blocks.first as? SearchHeader)?.field.currentEditor() === self.window?.firstResponder
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        print("after: in field \(inField), scrolled \(column.scrolledForScript)")
+                    }
+                }
             }
         }
+    }
+
+    /// ⌘N, a title typed, a line under it, and the title settled at once.
+    func newNoteForScript(title: String) {
+        newNote(nil)
+        guard let view = focusedColumn.views.first else { return print("no note") }
+        let made = view.ref.path
+        view.editor.insertText(title, replacementRange: view.editor.selectedRange())
+        view.editor.insertNewline(nil)
+        view.editor.insertText("A first line.", replacementRange: view.editor.selectedRange())
+        view.save()
+        settleTitle(made)
+        print("made \(made), now \(focusedColumn.views.first?.ref.path ?? "-"), titled \(index.entry(focusedColumn.views.first?.ref.path ?? "")?.title ?? "-")")
+    }
+
+    /// ⌘N, and away again without a word.
+    func blankNoteForScript() {
+        newNote(nil)
+        let made = focusedColumn.views.first?.ref.path ?? "-"
+        goBack(nil)
+        DispatchQueue.main.async { print("blank \(made) still there: \(self.graph.exists(path: made))") }
     }
 
     func showSidebarForScript() { setSidebar(shown: true, animated: false); page.needsLayout = true }
 
     /// Hovers the first column's scrubber, at a place down it from 0 to 1.
     func hoverScrubberForScript(_ fraction: CGFloat) { columns.first?.hoverForScript(fraction) }
+}
+
+/// Between two columns: a hairline, and a grip either side of it that
+/// shares the width out anew as it is dragged; double-clicked, evens all.
+final class ColumnDivider: NSView {
+    var onDrag: ((CGFloat) -> Void)?
+    var onEnd: (() -> Void)?
+    var onReset: (() -> Void)?
+    /// How far either side of the line it can be taken hold of.
+    static let reach: CGFloat = 4
+    private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
+
+    override func draw(_ dirtyRect: NSRect) {
+        (hovering ? Ink.faint : Ink.rule).setFill()
+        NSRect(x: bounds.midX - (hovering ? 1 : 0.5), y: 0, width: hovering ? 2 : 1, height: bounds.height).fill()
+    }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }
+
+    override func updateTrackingAreas() {
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 { onReset?() }
+    }
+
+    override func mouseDragged(with event: NSEvent) { onDrag?(event.locationInWindow.x) }
+    override func mouseUp(with event: NSEvent) { onEnd?() }
 }
 
 /// Where a dragged sheet will land: a column outlined, for its stack; a

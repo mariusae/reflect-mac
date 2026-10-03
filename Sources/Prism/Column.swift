@@ -91,6 +91,8 @@ final class Column: NSView, OutlineTextViewNavigator {
         }
     }
     var face: Typeface = .mona
+    /// Its share of the window's width, among the columns'.
+    var share: CGFloat = 1
 
     /// A link to follow, from here: and whether to a column of its own.
     var onOpen: ((URL, Column, _ newColumn: Bool) -> Void)?
@@ -403,10 +405,7 @@ final class Column: NSView, OutlineTextViewNavigator {
         head.metrics = metrics
         head.count = ordered.count
         blocks = [head] + ordered.map { ref in existing.removeValue(forKey: ref) ?? makeView(ref) }
-        for view in existing.values {
-            view.save()
-            view.removeFromSuperview()
-        }
+        for view in existing.values { letGo(view) }
         for (ref, handle) in handles where !wanted.contains(ref) {
             handle.removeFromSuperview()
             handles[ref] = nil
@@ -605,10 +604,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             if let view = block as? DayView { existing[view.ref] = view } else { block.removeFromSuperview() }
         }
         blocks = refs.map { ref in existing.removeValue(forKey: ref) ?? makeView(ref) }
-        for view in existing.values {
-            view.save()
-            view.removeFromSuperview()
-        }
+        for view in existing.values { letGo(view) }
         relayout()
     }
 
@@ -710,13 +706,24 @@ final class Column: NSView, OutlineTextViewNavigator {
         rules.forEach { $0.removeFromSuperview() }
         rules = []
         for block in blocks {
-            (block as? DayView)?.save()
-            block.removeFromSuperview()
+            if let view = block as? DayView { letGo(view) } else { block.removeFromSuperview() }
         }
         blocks = []
     }
 
     func view(for ref: NoteRef) -> DayView? { views.first { $0.ref == ref } }
+
+    /// A note shown here, shown no more: written, and told of.
+    private func letGo(_ view: DayView) {
+        view.save()
+        view.removeFromSuperview()
+        onViewGone?(view)
+    }
+
+    /// A note began to be shown here: its title as it is, to tell a new one by.
+    var onViewMade: ((DayView) -> Void)?
+    /// A note is no longer shown here.
+    var onViewGone: ((DayView) -> Void)?
 
     private func makeView(_ ref: NoteRef) -> DayView {
         let view = DayView(ref: ref, graph: graph, images: images, metrics: metrics)
@@ -727,6 +734,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             self?.onSave?(view)
         }
         document.addSubview(view)
+        onViewMade?(view)
         return view
     }
 

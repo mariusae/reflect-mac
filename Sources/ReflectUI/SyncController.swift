@@ -1,6 +1,5 @@
 import AppKit
 import ReflectCore
-import ReflectUI
 
 /// Keeps the graph's repository in step, on Reflect's schedule.
 ///
@@ -11,8 +10,8 @@ import ReflectUI
 /// during one queues one more after it, and a full sync asked for then is
 /// not made a lesser one.
 @MainActor
-final class SyncController {
-    enum Status: Equatable {
+package final class SyncController {
+    package enum Status: Equatable {
         case idle
         case syncing
         case synced(Date)
@@ -20,19 +19,19 @@ final class SyncController {
         case unavailable
     }
 
-    let git: Git?
-    private(set) var status: Status {
+    package let git: Git?
+    package private(set) var status: Status {
         didSet { onStatus?(status) }
     }
-    var onStatus: ((Status) -> Void)?
+    package var onStatus: ((Status) -> Void)?
     /// Told of the files a merge wrote.
-    var onPulled: (([String]) -> Void)?
+    package var onPulled: (([String]) -> Void)?
     /// Asked to write what is unsaved, before a commit.
-    var flush: (() -> Void)?
+    package var flush: (() -> Void)?
     /// Told when a merge left notes needing review.
-    var onConflicts: (([String]) -> Void)?
+    package var onConflicts: (([String]) -> Void)?
     /// Told of files too large to commit.
-    var onLargeFiles: (([(path: String, size: Int)]) -> Void)?
+    package var onLargeFiles: (([(path: String, size: Int)]) -> Void)?
 
     private var idleTimer: Timer?
     private var firstUnsaved: Date?
@@ -45,13 +44,16 @@ final class SyncController {
     /// Coming to the front twice in a moment is one sync.
     private static let activationDedupe: TimeInterval = 1.5
 
-    init(git: Git?) {
+    /// Told what the app is busy with, for an app that watches for stalls.
+    package static var doing: (String) -> Void = { _ in }
+
+    package init(git: Git?) {
         self.git = git
         status = git == nil ? .unavailable : .idle
     }
 
     /// Something was written; commit it once writing pauses.
-    func noteChanged() {
+    package func noteChanged() {
         guard git != nil else { return }
         let now = Date()
         let first = firstUnsaved ?? now
@@ -64,10 +66,10 @@ final class SyncController {
     }
 
     /// Commits and pushes what is written, now.
-    func commitAndPush() { run(.push) }
+    package func commitAndPush() { run(.push) }
 
     /// The full round: commit, fetch, merge, push.
-    func sync(becauseActivated: Bool = false) {
+    package func sync(becauseActivated: Bool = false) {
         guard git != nil else { return }
         if becauseActivated && Date().timeIntervalSince(lastFullSync) < Self.activationDedupe { return }
         lastFullSync = Date()
@@ -99,9 +101,9 @@ final class SyncController {
                                        detail: ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file))
                 }
                 if report.pulled {
-                    StallWatch.doing("taking in what the sync pulled")
+                    Self.doing("taking in what the sync pulled")
                     onPulled?(report.changed)
-                    StallWatch.doing("idle")
+                    Self.doing("idle")
                 }
                 if !report.conflicted.isEmpty { onConflicts?(report.conflicted) }
                 if !report.skippedLargeFiles.isEmpty { onLargeFiles?(report.skippedLargeFiles) }
@@ -119,7 +121,7 @@ final class SyncController {
     }
 
     /// Commits and pushes on the way out, giving it a few seconds.
-    func finish() async {
+    package func finish() async {
         guard let git else { return }
         flush?()
         await withTaskGroup(of: Void.self) { group in

@@ -80,6 +80,8 @@ package final class SessionState {
         package var offset: Double
         /// The sheets beneath it, in a column that stacks them: the bottom first.
         package var beneath: [ColumnPlace]?
+        /// Its share of the window's width, when not an even one.
+        package var width: Double?
 
         package init(kind: String, note: String?, top: String?, offset: Double) {
             self.kind = kind

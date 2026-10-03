@@ -3,7 +3,7 @@ import ReflectCore
 import ReflectUI
 
 /// Prism: the same notes as Reflect Mac, set for reading and writing and
-/// little else. It writes notes, but leaves syncing to Reflect.
+/// little else. It writes notes, and syncs them when asked (⌘S).
 @MainActor
 final class PrismApp: NSObject, NSApplicationDelegate {
     private var controller: PrismWindowController?
@@ -30,7 +30,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         Typeface.registerBundled()
         NSApp.mainMenu = Self.menu()
         guard let root = graphRoot() else { return NSApp.terminate(nil) }
-        let controller = PrismWindowController(graph: Graph(root: root, git: nil))
+        let controller = PrismWindowController(graph: Graph(root: root))
         self.controller = controller
         let environment = ProcessInfo.processInfo.environment
         if environment["PRISM_SNAP"] != nil {
@@ -124,6 +124,9 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         if environment["PRISM_INBOX"] == "1" { controller.showInbox(nil) }
         if environment["PRISM_TASKS"] == "1" { controller.showTasks(nil) }
         if environment["PRISM_KEY"] == "1" { controller.becomeKeyForScript() }
+        if environment["PRISM_SYNC"] == "1" { controller.syncNow(nil) }
+        if let title = environment["PRISM_NEW"] { controller.newNoteForScript(title: title) }
+        if environment["PRISM_BLANK"] == "1" { controller.blankNoteForScript() }
         if let query = environment["PRISM_SEARCH"] { controller.searchForScript(query) }
         if let words = environment["PRISM_SEARCH_TYPE"] {
             controller.typeSearchForScript(words, enter: environment["PRISM_ENTER"] == "1")
@@ -219,7 +222,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             .separator(),
             item("Quit Prism", #selector(NSApplication.terminate(_:)), "q"),
         ])
-        let find = item("Find…", #selector(NSTextView.performFindPanelAction(_:)), "f")
+        let find = item("Find…", #selector(PrismWindowController.find(_:)), "f")
         find.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
         submenu("Edit", [
             item("Undo", Selector(("undo:")), "z"),
@@ -294,6 +297,12 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("Switch Sheets Backward", #selector(PrismWindowController.switchSheetsBackward(_:)), "e", [.command, .shift]),
             .separator(),
             item("Close Column", #selector(PrismWindowController.closeColumn(_:)), "w"),
+        ])
+        submenu("File", [
+            item("New Note", #selector(PrismWindowController.newNote(_:)), "n"),
+        ])
+        submenu("Graph", [
+            item("Sync Now", #selector(PrismWindowController.syncNow(_:)), "s"),
         ])
         submenu("Go", [
             item("Go to Note…", #selector(PrismWindowController.findNote(_:)), "o"),
