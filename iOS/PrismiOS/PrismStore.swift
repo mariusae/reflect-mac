@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import Observation
 import ReflectCore
 import ReflectGit2
@@ -98,6 +99,62 @@ final class PrismStore {
         revision += 1
     }
 
+    /// Sets or takes away a frontmatter key of a note — `inbox`, `topic`,
+    /// `pinned` — and has everything showing it follow.
+    func setFrontmatter(_ path: String, _ key: String, _ value: String?) {
+        let source = text(path)
+        let updated = Frontmatter.setting(key, to: value, in: source)
+        guard updated != source else { return }
+        write(updated, path: path)
+    }
+
+    // MARK: New notes
+
+    /// Notes made blank here, not yet named: those left blank go again.
+    private var blankNotes: Set<String> = []
+
+    /// A blank note, to type its title in.
+    func newNote() -> String? {
+        guard let graph else { return nil }
+        do {
+            let path = try NoteCreation.createBlank(in: graph.root)
+            blankNotes.insert(path)
+            noteChanged([path])
+            return path
+        } catch {
+            syncError = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// A note made here, left: gone, when nothing was written in it; else
+    /// moved to the file its title names — nothing links to it yet. Says
+    /// where it is now.
+    @discardableResult
+    func settleNewNote(_ path: String) -> String? {
+        guard blankNotes.contains(path), let graph, let index else { return path }
+        let source = text(path)
+        guard let title = TitleRename.authoredTitle(path: path, source: source) else {
+            guard Backlinks.isEmpty(OutlineMarkdown.parse(source).rows) else { return path }
+            blankNotes.remove(path)
+            try? FileManager.default.removeItem(at: graph.url(for: path))
+            noteChanged([path])
+            return nil
+        }
+        blankNotes.remove(path)
+        guard TitleRename.isManaged(path: path, source: source) else { return path }
+        let destination = index.managedPath(for: title, current: path)
+        guard destination != path else { return path }
+        do {
+            try FileManager.default.moveItem(at: graph.url(for: path), to: graph.url(for: destination))
+        } catch {
+            return path
+        }
+        noteChanged([path, destination])
+        written()
+        return destination
+    }
+
     /// Called whenever something was written: a sync is due soon. Set by
     /// the sync scheduler.
     var written: () -> Void = {}
@@ -107,11 +164,12 @@ final class PrismStore {
     /// Commit what is written, take in what other devices wrote, send it
     /// all: the full round. The notes it brought are taken in.
     func sync() async {
-        guard let git, account.isSignedIn, !isSyncing else { return }
+        guard let git, !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false }
         do {
-            _ = try await account.validAccessToken()
+            // Signed out, a remote that asks for nothing still syncs.
+            if account.isSignedIn { _ = try await account.validAccessToken() }
             let report = try await git.sync(.full)
             lastSynced = Date()
             syncError = nil
@@ -123,11 +181,11 @@ final class PrismStore {
 
     /// Commits and pushes what is written here, nothing more.
     func push() async {
-        guard let git, account.isSignedIn, !isSyncing else { return }
+        guard let git, !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false }
         do {
-            _ = try await account.validAccessToken()
+            if account.isSignedIn { _ = try await account.validAccessToken() }
             _ = try await git.sync(.push)
             lastSynced = Date()
             syncError = nil
@@ -141,5 +199,65 @@ final class PrismStore {
         try await GraphClone.clone(repository, account: account, into: root)
         await load()
         lastSynced = Date()
+    }
+}
+
+/// When Prism syncs, while it is open: what is written, sent a few seconds
+/// after writing stops; everything, on coming to the front and every few
+/// minutes after; what is written, once more, on going to the back.
+@MainActor
+final class SyncScheduler {
+    private let store: PrismStore
+    private var pushTimer: Timer?
+    private var roundTimer: Timer?
+    /// Called before each sync: what is typed, written first.
+    var beforeSync: () -> Void = {}
+    static let pushDelay: TimeInterval = 5
+    static let roundInterval: TimeInterval = 120
+
+    init(store: PrismStore) {
+        self.store = store
+        store.written = { [weak self] in self?.wrote() }
+    }
+
+    private func wrote() {
+        pushTimer?.invalidate()
+        pushTimer = Timer.scheduledTimer(withTimeInterval: Self.pushDelay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.push() }
+        }
+    }
+
+    private func push() {
+        pushTimer?.invalidate()
+        pushTimer = nil
+        beforeSync()
+        Task { await store.push() }
+    }
+
+    private func round() {
+        beforeSync()
+        Task { await store.sync() }
+    }
+
+    func becameActive() {
+        round()
+        roundTimer?.invalidate()
+        roundTimer = Timer.scheduledTimer(withTimeInterval: Self.roundInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.round() }
+        }
+    }
+
+    /// Gone to the back: what is written sent, in the time the system gives.
+    func wentToBackground() {
+        roundTimer?.invalidate()
+        roundTimer = nil
+        pushTimer?.invalidate()
+        pushTimer = nil
+        beforeSync()
+        let task = UIApplication.shared.beginBackgroundTask(withName: "Push")
+        Task {
+            await store.push()
+            UIApplication.shared.endBackgroundTask(task)
+        }
     }
 }
