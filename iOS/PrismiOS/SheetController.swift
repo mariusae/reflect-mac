@@ -243,8 +243,19 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         PhoneState.setPlace(path, offset: place.offset)
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        if StallWatch.enabled { StallWatch.mark("viewWillAppear \(kind)") }
+        if let changes = unseenChanges, isViewLoaded {
+            unseenChanges = nil
+            // Its window not yet set: taken in on the next turn.
+            DispatchQueue.main.async { self.notesChanged(changes) }
+        }
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        if StallWatch.enabled { StallWatch.mark("viewDidAppear \(kind)") }
         disappearing = false
         if case .search(let query) = kind, query.isEmpty {
             DispatchQueue.main.async { self.navigationItem.searchController?.searchBar.becomeFirstResponder() }
@@ -253,6 +264,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        if StallWatch.enabled { StallWatch.mark("viewWillDisappear \(kind)") }
         disappearing = true
         rememberPlaces()
         for case let note as NoteBlock in blocks where note.isLive {
@@ -442,9 +454,9 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         let paths = index.inbox.map(\.path)
         guard paths != inboxShown || blocks.isEmpty else { return }
         inboxShown = paths
-        let head = HeadBlock(title: "Inbox", kicker: paths.isEmpty ? "Nothing to deal with" : "\(paths.count) \(paths.count == 1 ? "note" : "notes") to deal with",
-                             metrics: metrics)
-        setBlocks(paths.map(NoteRef.init(path:)), showsHeaders: true, before: [head])
+        // The notes alone, no heading over them; when there are none, a word saying so.
+        let head = paths.isEmpty ? [HeadBlock(title: "Inbox", kicker: "Nothing to deal with", metrics: metrics)] : []
+        setBlocks(paths.map(NoteRef.init(path:)), showsHeaders: true, before: head)
         for block in noteBlocks where block.accessory == nil {
             let path = block.ref.path
             block.setAccessory(symbol: "checkmark.circle", label: "Done") { [weak self] in self?.onFlag?(path, "inbox", nil) }
@@ -587,7 +599,14 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     }
 
     /// Takes in what changed on disk.
+    /// Changes to take in once it is seen: a sheet out of sight does no work.
+    private var unseenChanges: Set<String>?
+
     func notesChanged(_ paths: Set<String>) {
+        guard isViewLoaded, view.window != nil else {
+            unseenChanges = paths.isEmpty || unseenChanges?.isEmpty == true ? [] : (unseenChanges ?? []).union(paths)
+            return
+        }
         for block in blocks { block.notesChanged(paths) }
         switch kind {
         case .timeline:
@@ -684,7 +703,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         if placing || pendingFocus != nil { applyPending() }
         // Just put where it was left: no other place to keep.
         if placing && pendingPlace == nil {
-            refreshMarks()
+            setNeedsMarks()
             wakeNearby()
             return
         }
@@ -698,33 +717,69 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
                 scroll.contentOffset.y = wanted
             }
         }
-        refreshMarks()
+        setNeedsMarks()
         wakeNearby()
+    }
+
+    // MARK: The scrubber's marks, when things settle
+
+    private var marksPending = false
+
+    /// The scrubber's marks found again — every heading of every note shown —
+    /// once what changed has settled, and not while scrolling: not for each
+    /// keystroke or frame.
+    private func setNeedsMarks() {
+        guard !marksPending else { return }
+        marksPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            self.marksPending = false
+            if self.scroll.isDragging || self.scroll.isDecelerating { return self.setNeedsMarks() }
+            self.refreshMarks()
+        }
     }
 
     // MARK: Building notes as they come near
 
     private var waking = false
+    private var lastWake: CGFloat = -.greatestFiniteMagnitude
+    private var lastWakeHeight: CGFloat = 0
 
     /// The notes on screen built now; those within a screen and a half,
     /// one a turn of the run loop — nearest first — so no frame waits on
     /// more than one.
     private func wakeNearby() {
-        guard !waking, scroll.bounds.height > 0 else { return }
-        let near = scroll.bounds.insetBy(dx: 0, dy: -scroll.bounds.height * 1.5)
-        let middle = scroll.bounds.midY
-        let asleep = blocks.filter { !$0.isLive && $0.frame.intersects(near) }
-            .sorted { abs($0.frame.midY - middle) < abs($1.frame.midY - middle) }
-        guard !asleep.isEmpty else { return }
-        let seen = asleep.filter { $0.frame.intersects(scroll.bounds) }
-        let now = seen.isEmpty ? [asleep[0]] : seen
-        now.forEach { $0.goLive() }
-        setNeedsRelayout()
-        guard asleep.count > now.count else { return }
-        waking = true
-        DispatchQueue.main.async { [weak self] in
-            self?.waking = false
-            self?.wakeNearby()
+        guard scroll.bounds.height > 0 else { return }
+        let seen = scroll.bounds
+        let near = seen.insetBy(dx: 0, dy: -seen.height * 2.5)
+        let middle = seen.midY
+        // In sight and not built: built now — it is wanted this frame.
+        // One being built ahead is left to come in — a moment, off this
+        // thread — not built twice.
+        let visible = blocks.filter { !$0.isLive && $0.frame.intersects(seen) && ($0 as? NoteBlock)?.preparing != true }
+        if !visible.isEmpty {
+            visible.forEach { $0.goLive() }
+            setNeedsRelayout()
+        }
+        // Gone out of sight: hidden, the tiles its text drew let go. Far
+        // away: its editor let go too, the text kept to put back when it
+        // comes near — the memory a long scroll takes bounded.
+        let drawn = seen
+        let far = seen.insetBy(dx: 0, dy: -seen.height * 4)
+        for case let note as NoteBlock in blocks {
+            if note.isLive, !note.frame.intersects(far) { note.sleep() }
+            let hidden = note.isLive && !note.frame.intersects(drawn) && !note.editor.isFirstResponder
+            if note.isHidden != hidden { note.isHidden = hidden }
+        }
+        // Coming near: built ahead, off the main thread, nearest first —
+        // looked for again once the page has moved some.
+        guard abs(seen.minY - lastWake) > 60 || !visible.isEmpty || lastWakeHeight != scroll.contentSize.height else { return }
+        lastWake = seen.minY
+        lastWakeHeight = scroll.contentSize.height
+        let width = view.bounds.width - 12
+        for block in blocks.filter({ !$0.isLive && $0.frame.intersects(near) })
+            .sorted(by: { abs($0.frame.midY - middle) < abs($1.frame.midY - middle) }) {
+            block.prepareLive(width: width)
         }
     }
 
@@ -830,16 +885,16 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
 /// short one for each heading — dragged along with the thumb, a tick of the
 /// phone at each day passed, the day said beside the thumb.
 final class ScrubberView: UIView {
-    struct Mark {
+    struct Mark: Equatable {
         var fraction: CGFloat
         var title: String
         var rank: Int
         var isWeek: Bool
     }
 
-    var marks: [Mark] = [] { didSet { setNeedsDisplay() } }
+    var marks: [Mark] = [] { didSet { if marks != oldValue { setNeedsDisplay() } } }
     /// Where the screen's top is, from 0 to 1.
-    var visible: CGFloat = 0 { didSet { setNeedsDisplay() } }
+    var visible: CGFloat = 0
     /// Dragged: where along it the thumb is, from 0 to 1.
     var onScrub: ((CGFloat) -> Void)?
     private let label = PaddedLabel()

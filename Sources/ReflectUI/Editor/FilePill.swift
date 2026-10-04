@@ -110,9 +110,7 @@ extension OutlineLayoutManager {
             guard let pill = value as? FilePill else { return }
             let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont ?? .systemFont(ofSize: 15)
-            var rects: [NSRect] = []
-            enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
-                                    in: container) { rect, _ in rects.append(rect) }
+            let rects = shownPieces(of: glyphs, in: container)
             // Each line's piece of the pill, around the text on that line.
             let ascent = ceil(font.ascender), descent = ceil(-font.descender)
             var pieces: [NSRect] = []

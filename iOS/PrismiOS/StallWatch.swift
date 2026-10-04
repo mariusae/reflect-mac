@@ -24,9 +24,11 @@ enum StallWatch {
         guard enabled else { return }
         mark("watch")
         // The main thread beats; the watcher reports the gaps.
-        Timer.scheduledTimer(withTimeInterval: 0.008, repeats: true) { _ in
+        // In every run-loop mode: a scroll being tracked is not a stall.
+        let timer = Timer(timeInterval: 0.008, repeats: true) { _ in
             lock.lock(); lastBeat = CACurrentMediaTime(); lock.unlock()
         }
+        RunLoop.main.add(timer, forMode: .common)
         Thread.detachNewThread {
             var reported = 0.0
             while true {

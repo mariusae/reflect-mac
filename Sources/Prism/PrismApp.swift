@@ -82,7 +82,8 @@ final class PrismApp: NSObject, NSApplicationDelegate {
     /// scrolling, up for under 0, `PRISM_SETTINGS_SNAP` where to draw the Settings
     /// window, `PRISM_SIDEBAR=1` the
     /// sidebar out, `PRISM_CLICKBOX=<n>` the nth checkbox of `PRISM_NOTE`
-    /// clicked with the caret at its top, and the scroll before and after printed.
+    /// clicked with the caret at its top, and the scroll before and after printed. `PRISM_BAR` the
+    /// last column's sheet bar shown, and one of its kinds (`inbox`, `tasks`…) chosen, unless `show`.
     private func runScript(_ controller: PrismWindowController, _ environment: [String: String]) {
         if environment["PRISM_DARK"] == "1" { NSApp.appearance = NSAppearance(named: .darkAqua) }
         if environment["PRISM_DARK"] == "0" { NSApp.appearance = NSAppearance(named: .aqua) }
@@ -116,7 +117,9 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             || environment["PRISM_DRAG"] != nil {
             print(controller.sheetsForScript)
         }
-        if let moves = environment["PRISM_SWITCH"].flatMap(Int.init) { controller.switchForScript(moves: moves) }
+        if let moves = environment["PRISM_SWITCH"].flatMap(Int.init) {
+            controller.switchForScript(moves: moves, pick: environment["PRISM_SWITCH_PICK"] == "1")
+        }
         for title in (environment["PRISM_COLUMN"] ?? "").split(separator: "|") { controller.openInColumnForScript(String(title)) }
         if environment["PRISM_COLUMN"] != nil { print(controller.sheetsForScript) }
         if let path = environment["PRISM_MOVE"] { controller.moveRowForScript(from: path) }
@@ -125,6 +128,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         if let path = environment["PRISM_INBOX_REMOVE"] { controller.removeFromInboxForScript(path) }
         if environment["PRISM_INBOX"] == "1" { controller.showInbox(nil) }
         if environment["PRISM_TASKS"] == "1" { controller.showTasks(nil) }
+        if let choice = environment["PRISM_BAR"] { controller.sheetBarForScript(choice) }
         if environment["PRISM_KEY"] == "1" { controller.becomeKeyForScript() }
         if environment["PRISM_SYNC"] == "1" { controller.syncNow(nil) }
         if let title = environment["PRISM_NEW"] { controller.newNoteForScript(title: title) }
@@ -225,8 +229,10 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             .separator(),
             item("Quit Prism", #selector(NSApplication.terminate(_:)), "q"),
         ])
-        let find = item("Find…", #selector(PrismWindowController.find(_:)), "f")
-        find.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+        let find = item("Search…", #selector(PrismWindowController.find(_:)), "f")
+        // The find bar of the note the keyboard is in, ⇧ held.
+        let findInNote = item("Find in Note…", #selector(PrismWindowController.findInNote(_:)), "f", [.command, .shift])
+        findInNote.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
         submenu("Edit", [
             item("Undo", Selector(("undo:")), "z"),
             item("Redo", Selector(("redo:")), "z", [.command, .shift]),
@@ -239,6 +245,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             EditorMenus.selection(),
             .separator(),
             find,
+            findInNote,
         ])
         main.addItem(EditorMenus.format())
         main.addItem(EditorMenus.outline())

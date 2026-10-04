@@ -321,9 +321,13 @@ package final class DayView: NSView, NSTextViewDelegate {
         return max(minimumHeight, height)
     }
 
+    /// Whether a day is ruled off from the one before it: not where each
+    /// note's heading says enough.
+    package var drawsRule = true { didSet { needsDisplay = true } }
+
     package override func draw(_ dirtyRect: NSRect) {
         // Days are ruled apart; a note on its own needs no rule.
-        guard ref.day != nil else { return }
+        guard drawsRule, ref.day != nil else { return }
         let column = column
         metrics.typography.ink.rule.setFill()
         NSRect(x: column.minX, y: 0, width: column.width, height: 1).fill()

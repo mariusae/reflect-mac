@@ -9,7 +9,13 @@ final class NoteBlock: UIView {
     let ref: NoteRef
     /// Its editor: made when it is built — a text view is not cheap, and a
     /// sheet has dozens of notes not yet near.
-    private(set) lazy var editor: OutlineEditor = makeEditor()
+    var editor: OutlineEditor {
+        if let editorStorage { return editorStorage }
+        let editor = makeEditor()
+        editorStorage = editor
+        return editor
+    }
+    private var editorStorage: OutlineEditor?
     private var storedMetrics: PhoneMetrics
     private let header = UIButton(type: .system)
     /// A button at the header's end: the inbox's Done.
@@ -92,10 +98,110 @@ final class NoteBlock: UIView {
         return editor
     }
 
+    /// Building ahead, off the main thread: under way.
+    private(set) var preparing = false
+    private static let building = DispatchQueue(label: "prism.build", qos: .userInitiated)
+
+    /// Its text read, parsed, styled and laid out off the main thread, and
+    /// kept — for a note coming near, before it is in sight — to be put in
+    /// the editor once it is: cheap then, and drawn as seen. (A text view
+    /// first laid out out of sight draws its whole text as one picture: a
+    /// long day, a hundred megabytes.) Its height known exactly meanwhile.
+    func prepareLive(width: CGFloat) {
+        guard !isLive, !preparing, store != nil, width > Self.minimumWidth else { return }
+        if let ahead, ahead.text == savedText, ahead.metrics == storedMetrics, abs(ahead.width - width) < 0.5 { return }
+        preparing = true
+        build(width: width) { [weak self] text, shell, prepared, metrics in
+            guard let self else { return }
+            self.preparing = false
+            if !self.isLive, let prepared, text == self.savedText, metrics == self.storedMetrics {
+                self.ahead = Ahead(text: text, shell: shell, prepared: prepared, width: width, metrics: metrics)
+                self.estimate = (width, prepared.rows)
+            }
+            // Its height as built, or the sheet to ask again and build it
+            // the plain way if in sight.
+            if !self.isLive { self.onHeightChange?() }
+        }
+    }
+
+    /// A note built ahead, not yet put in its editor.
+    private struct Ahead {
+        var text: String
+        var shell: Outline
+        var prepared: OutlineEditor.Prepared
+        var width: CGFloat
+        var metrics: PhoneMetrics
+    }
+    private var ahead: Ahead?
+
+    /// The note read, parsed, styled and laid out at a width on the build
+    /// queue; what came of it handed back on the main thread — no editor
+    /// when it holds a conflict, which is shown another way.
+    private func build(width: CGFloat, done: @escaping @MainActor (String, Outline, OutlineEditor.Prepared?, PhoneMetrics) -> Void) {
+        let path = ref.path, isDay = ref.day != nil, metrics = storedMetrics, graph = store?.graph, showsHeader = showsHeader
+        let editorWidth = width - 2 * Self.side + metrics.indent
+        Self.building.async {
+            let text = graph?.read(path: path) ?? ""
+            let shell = OutlineMarkdown.parse(text)
+            var rows = shell.rows
+            if rows.isEmpty || isDay && rows.allSatisfy({ $0.text.isEmpty && $0.kind != .code }) {
+                rows = rows.isEmpty ? [.blank] : rows
+            }
+            let folds = PhoneState.folds(path)
+            if !folds.isEmpty { rows = OutlineFolds.apply(folds, to: rows) }
+            let prepared = ConflictMarkers.detect(text) ? nil
+                : OutlineEditor.prepare(rows, metrics: metrics, width: editorWidth,
+                                        hidesTitle: Self.hidesTitle(path: path, text: text, showsHeader: showsHeader))
+            DispatchQueue.main.async { MainActor.assumeIsolated { done(text, shell, prepared, metrics) } }
+        }
+    }
+
+    /// Text built ahead put in the editor.
+    private func put(_ prepared: OutlineEditor.Prepared, shell: Outline, width: CGFloat) {
+        self.shell = shell
+        // At its width first: an editor at none lays the text out again at
+        // a guess, then again at its width, on this thread.
+        placeEditor(width: width, height: prepared.fit)
+        editor.install(prepared)
+        dirty = false
+        styleHeader()
+        setNeedsLayout()
+        onHeightChange?()
+    }
+
+    /// Far from sight again: its editor let go — and the room its text
+    /// took drawn — standing as tall as it was till it comes near again.
+    /// Not while typed in, nor with writing not yet saved.
+    func sleep() {
+        guard isLive, !preparing, let editor = editorStorage, !editor.isFirstResponder, conflict == nil,
+              bounds.width > Self.minimumWidth else { return }
+        save()
+        guard !dirty else { return }
+        let width = bounds.width, editorWidth = width - 2 * Self.side + storedMetrics.indent
+        let rows = editor.rowsHeight(width: editorWidth)
+        // Its text kept as built, to be put back in a moment when it comes near.
+        ahead = Ahead(text: savedText, shell: shell,
+                      prepared: .init(text: NSAttributedString(attributedString: editor.textStorage), width: editorWidth,
+                                      fit: editor.fittingHeight(width: editorWidth), rows: rows, hidesTitle: editor.hidesTitle),
+                      width: width, metrics: storedMetrics)
+        estimate = (width, rows)
+        editor.removeFromSuperview()
+        editorStorage = nil
+        isLive = false
+    }
+
     /// Its text into the editor, to be seen and typed in.
     func goLive() {
         guard !isLive else { return }
         isLive = true
+        // Built ahead, and still as it was built: put in, not built again.
+        if let ahead, ahead.text == savedText, ahead.metrics == storedMetrics, abs(ahead.width - bounds.width) < 0.5 {
+            self.ahead = nil
+            put(ahead.prepared, shell: ahead.shell, width: ahead.width)
+            return
+        }
+        ahead = nil
+        if bounds.width > Self.minimumWidth { placeEditor(width: bounds.width, height: editor.frame.height) }
         load()
         styleHeader()
         setNeedsLayout()
@@ -115,7 +221,7 @@ final class NoteBlock: UIView {
 
     func setAccessory(symbol: String, label: String, action: @escaping () -> Void) {
         let button = UIButton(type: .system)
-        button.setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .regular)), for: .normal)
+        button.setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: round(storedMetrics.size * 0.88), weight: .regular)), for: .normal)
         button.tintColor = Ink.secondary
         button.accessibilityLabel = label
         button.addAction(UIAction { _ in action() }, for: .touchUpInside)
@@ -137,6 +243,7 @@ final class NoteBlock: UIView {
             rows = rows.isEmpty ? [.blank] : rows
         }
         let folds = PhoneState.folds(ref.path)
+        editor.hidesTitle = Self.hidesTitle(path: ref.path, text: text, showsHeader: showsHeader)
         editor.load(folds.isEmpty ? rows : OutlineFolds.apply(folds, to: rows))
         dirty = false
         styleHeader()
@@ -149,15 +256,55 @@ final class NoteBlock: UIView {
             if text != savedText {
                 savedText = text
                 estimate = nil
+                ahead = nil
                 onHeightChange?()
             }
             return
         }
-        guard !dirty, (store?.text(ref.path) ?? "") != savedText else { return }
+        let text = store?.text(ref.path) ?? ""
+        guard !dirty, text != savedText else { return }
+        // Out of sight: let go, to be built again as it comes near — not
+        // laid out where it is not seen.
+        if isHidden, let editor = editorStorage, !editor.isFirstResponder, conflict == nil {
+            editor.removeFromSuperview()
+            editorStorage = nil
+            isLive = false
+            savedText = text
+            estimate = nil
+            ahead = nil
+            onHeightChange?()
+            return
+        }
+        // Not being typed in, and plain: built again off the main thread —
+        // a sync bringing in changes to the notes in sight, no stutter.
+        if !editor.isFirstResponder, conflict == nil, !ConflictMarkers.detect(text), bounds.width > Self.minimumWidth {
+            let width = bounds.width
+            savedText = text
+            reloading += 1
+            let generation = reloading
+            build(width: width) { [weak self] built, shell, prepared, metrics in
+                guard let self, generation == self.reloading else { return }
+                // Typed in meanwhile: the typing kept, as when it came first.
+                guard !self.dirty else { return }
+                // Changed again, being typed in, or not plain after all: the plain way.
+                guard let prepared, built == self.savedText, !self.editor.isFirstResponder,
+                      metrics == self.storedMetrics, abs(self.bounds.width - width) < 0.5 else {
+                    let caret = self.editor.caret, editing = self.editor.isFirstResponder
+                    self.load()
+                    if editing { self.editor.setCaret(caret) }
+                    return
+                }
+                self.put(prepared, shell: shell, width: width)
+            }
+            return
+        }
         let caret = editor.caret
         load()
         if editor.isFirstResponder { editor.setCaret(caret) }
     }
+
+    /// Each reload built off the main thread, counted: only the last put in.
+    private var reloading = 0
 
     private func edited() {
         dirty = true
@@ -236,9 +383,12 @@ final class NoteBlock: UIView {
 
     private func styleHeader() {
         header.setAttributedTitle(Card.header(name: name, meta: Card.meta(for: ref.path, store: store), size: storedMetrics.size), for: .normal)
-        header.titleLabel?.lineBreakMode = .byTruncatingMiddle
+        // The note's name, whole: in a card, the only place it shows.
+        header.titleLabel?.numberOfLines = 0
+        header.titleLabel?.lineBreakMode = .byWordWrapping
         // Alone, a note whose first heading is its name needs no other.
         header.isHidden = !showsHeader && titleIsHeading
+        headerMeasure = nil
         setNeedsLayout()
     }
 
@@ -258,8 +408,29 @@ final class NoteBlock: UIView {
     /// Narrower than this, nothing is laid out: text at no width never ends.
     static let minimumWidth: CGFloat = 300
 
-    private var headerHeight: CGFloat {
-        header.isHidden ? 0 : ceil(header.intrinsicContentSize.height) + Card.gap
+    private func headerHeight(width: CGFloat) -> CGFloat {
+        header.isHidden ? 0 : ceil(headerSize(width: width).height) + Card.gap
+    }
+
+    /// The header's size at a block's width — the room left of the ⋯ —
+    /// kept: measuring its text is not free, and a sheet asks every note
+    /// its height often.
+    private func headerSize(width: CGFloat) -> CGSize {
+        if let headerMeasure, abs(headerMeasure.width - width) < 0.5 { return headerMeasure.size }
+        let room = width - 2 * Self.side - 36
+        let bounds = header.attributedTitle(for: .normal)?.boundingRect(with: CGSize(width: room, height: .greatestFiniteMagnitude),
+                                                                         options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil) ?? .zero
+        let size = CGSize(width: min(ceil(bounds.width), room), height: ceil(bounds.height))
+        headerMeasure = (width, size)
+        return size
+    }
+    private var headerMeasure: (width: CGFloat, size: CGSize)?
+
+    /// Whether a card hides a note's title row: its header says it — a note
+    /// named by its first heading, in a list. Any thread.
+    nonisolated static func hidesTitle(path: String, text: String, showsHeader: Bool) -> Bool {
+        showsHeader && GraphPaths.day(fromDailyPath: path) == nil && GraphPaths.week(fromWeeklyPath: path) == nil
+            && NoteIndex.entry(path: path, source: text).titleIsHeading
     }
 
     /// What its lines are guessed to take, before it is laid out.
@@ -289,10 +460,10 @@ final class NoteBlock: UIView {
 
     func height(width: CGFloat) -> CGFloat {
         guard width > Self.minimumWidth else { return 0 }
-        guard isLive else { return Card.top + headerHeight + estimatedHeight(width: width) + Card.bottom }
+        guard isLive else { return Card.top + headerHeight(width: width) + estimatedHeight(width: width) + Card.bottom }
         let editorWidth = width - 2 * Self.side + storedMetrics.indent
         let editorHeight = conflict.map { $0.height(width: width - 2 * Self.side) + 8 } ?? editor.rowsHeight(width: editorWidth)
-        return Card.top + headerHeight + editorHeight + Card.bottom
+        return Card.top + headerHeight(width: width) + editorHeight + Card.bottom
     }
 
     override func layoutSubviews() {
@@ -301,15 +472,16 @@ final class NoteBlock: UIView {
         let indent = storedMetrics.indent
         var y: CGFloat = Card.top
         if !header.isHidden {
-            let size = header.intrinsicContentSize
-            header.frame = CGRect(x: Self.side, y: y, width: min(size.width, bounds.width - 2 * Self.side - (accessory == nil ? 0 : 40) - 36), height: ceil(size.height))
-            y += headerHeight
+            let size = headerSize(width: bounds.width)
+            header.frame = CGRect(x: Self.side, y: y, width: size.width, height: size.height)
+            y += headerHeight(width: bounds.width)
         }
-        // The ⋯ at the header's end, on its middle; the inbox's Done before it.
+        // The ⋯ at the header's end, on its first line's middle; the inbox's
+        // Done hanging in the margin before the name, as a task's box does.
+        let firstLine = Card.top + ceil(UIFont.systemFont(ofSize: storedMetrics.size, weight: .bold).lineHeight) / 2
         menuButton.isHidden = noteMenu == nil || header.isHidden
-        let menuWidth: CGFloat = menuButton.isHidden ? 0 : 36
-        menuButton.frame = CGRect(x: bounds.width - Self.side - 8, y: header.frame.midY - 18, width: 36, height: 36)
-        accessory?.frame = CGRect(x: bounds.width - Self.side - 30 - menuWidth, y: Card.top - 6, width: 44, height: max(32, headerHeight - 6))
+        menuButton.frame = CGRect(x: bounds.width - Self.side - 8, y: firstLine - 18, width: 36, height: 36)
+        accessory?.frame = CGRect(x: Self.side - 28, y: firstLine - 16, width: 32, height: 32)
         // The text in line with the name; the markers hang in the margin.
         let width = bounds.width - 2 * Self.side + indent
         // The empty line after the last row hangs below the block: a text
@@ -321,7 +493,14 @@ final class NoteBlock: UIView {
         }
         guard isLive else { return }
         let height = editor.fittingHeight(width: width)
-        editor.frame = CGRect(x: Self.side - indent, y: y, width: width, height: height)
+        let frame = CGRect(x: Self.side - indent, y: y, width: width, height: height)
+        if editor.frame != frame { editor.frame = frame }
+    }
+
+    /// The editor set at the width the block's is at, before text goes in.
+    private func placeEditor(width: CGFloat, height: CGFloat) {
+        let indent = storedMetrics.indent
+        editor.frame = CGRect(x: Self.side - indent, y: editor.frame.minY, width: width - 2 * Self.side + indent, height: max(height, 1))
     }
 }
 

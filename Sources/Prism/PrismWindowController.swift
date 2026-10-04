@@ -165,6 +165,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         column.onOpen = { [weak self] url, column, newColumn in self?.follow(url, from: column, newColumn: newColumn) }
         column.onCurrent = { [weak self] _ in self?.showHeading() }
         column.onClose = { [weak self] column in self?.close(column) }
+        column.onAddSheet = { [weak self] column, choice in self?.addSheet(choice, on: column) }
         column.onOpenPath = { [weak self] path, column, newColumn in self?.open(path, newColumn: newColumn, from: column) }
         column.onScroll = { [weak self] _ in self?.saveLayout() }
         column.onViewMade = { [weak self] view in self?.noteShown(view) }
@@ -406,11 +407,15 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }
 
     /// Brings a sheet beneath to the top, what was there going beneath it.
+    /// Back down the stack to a sheet beneath: those over it taken off — a
+    /// stack is only gone back down, as Back goes.
     private func raise(_ index: Int, in column: Column) {
         guard column.beneath.indices.contains(index) else { return }
-        let sheet = column.beneath.remove(at: index)
-        push(column)
+        column.saveAll()
+        let sheet = column.beneath[index]
+        column.beneath.removeSubrange(index...)
         materialize(sheet, in: column)
+        saveLayout()
     }
 
     /// Takes the top sheet off, back to the one beneath.
@@ -1024,9 +1029,9 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     // MARK: Searching
 
-    /// Edit ▸ Find (⌘F): in a search, its field — scrolled to, the words
-    /// in it chosen, to type over; anywhere else, the find bar of the note
-    /// the keyboard is in.
+    /// Edit ▸ Search (⌘F): a search, as a new sheet on the column the
+    /// keyboard is in — or, in a search already, its field, the words in
+    /// it chosen, to type over.
     @objc func find(_ sender: Any?) {
         let column = focusedColumn
         if case .search = column.kind, let header = column.blocks.first as? SearchHeader {
@@ -1035,6 +1040,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             header.field.currentEditor()?.selectAll(nil)
             return
         }
+        showSearchSheet(sender)
+    }
+
+    /// Edit ▸ Find in Note (⇧⌘F): the find bar of the note the keyboard is in.
+    @objc func findInNote(_ sender: Any?) {
         let item = NSMenuItem()
         item.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
         (window?.firstResponder as? NSTextView)?.performFindPanelAction(item)
@@ -1099,8 +1109,8 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// A view opened as a new sheet on the column the keyboard is in, what
     /// was there going beneath it.
-    private func openSheet(_ kind: Column.Kind, at ref: NoteRef? = nil) {
-        let column = focusedColumn
+    private func openSheet(_ kind: Column.Kind, at ref: NoteRef? = nil, on target: Column? = nil) {
+        let column = target ?? focusedColumn
         push(column)
         materialize(Sheet(kind: kind, place: ref.map { Column.Place(ref: $0, offset: -12) }, offset: 0,
                           title: Column.title(of: kind, top: ref), snapshot: nil), in: column)
@@ -1113,6 +1123,24 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     @objc func showBacklinksSheet(_ sender: Any?) {
         guard let ref = focusedNote else { return NSSound.beep() }
         openSheet(.backlinks(ref))
+    }
+
+    /// A sheet put on a column from its bar: about what the column shows.
+    private func addSheet(_ choice: SheetBar.Choice, on column: Column) {
+        active = column
+        let note: NoteRef? = { if case .backlinks(let ref) = column.kind { return ref } else { return column.current?.ref } }()
+        switch choice {
+        case .timeline: openSheet(.timeline, at: note.flatMap { day(of: $0) != nil ? $0 : nil } ?? .day(.today), on: column)
+        case .backlinks:
+            guard let note else { return NSSound.beep() }
+            openSheet(.backlinks(note), on: column)
+        case .inbox: openSheet(.inbox, on: column)
+        case .tasks: openSheet(.tasks, on: column)
+        case .search:
+            push(column)
+            search("", in: column)
+            saveLayout()
+        }
     }
 
     @objc func showInboxSheet(_ sender: Any?) { openSheet(.inbox) }
@@ -1635,6 +1663,14 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }
 
     /// Opens the backlinks column of a note, from the column it is in.
+    func sheetBarForScript(_ choice: String) {
+        guard let column = columns.last else { return }
+        column.showSheetBar()
+        guard let pick = SheetBar.Choice.allCases.first(where: { $0.name.lowercased() == choice }) else { return }
+        addSheet(pick, on: column)
+        column.showSheetBar()
+    }
+
     func showBacklinksForScript(_ path: String) {
         if let view = columns.lazy.compactMap({ $0.view(for: NoteRef(path: path)) }).first {
             window?.makeFirstResponder(view.editor)
@@ -1645,8 +1681,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     /// Scrolls the first column a step at a time — up for steps under
     /// 0 — the app running between, as a person scrolling does; then `done`.
     func scrollForScript(steps: Int, done: @escaping () -> Void) {
-        guard steps != 0, let column = columns.first else { return done() }
-        column.scrollForScript(by: steps < 0 ? -500 : 500)
+        guard steps != 0, !columns.isEmpty else { return done() }
+        // The first column — the timeline — and, with others, the last too.
+        for column in Set([columns.first!, columns.last!].map(ObjectIdentifier.init)).compactMap({ id in columns.first { ObjectIdentifier($0) == id } }) {
+            column.scrollForScript(by: steps < 0 ? -500 : 500)
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self] in
             self?.scrollForScript(steps: steps < 0 ? steps + 1 : steps - 1, done: done)
         }
@@ -1690,10 +1729,20 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }
 
     /// Opens ⌘E's cards, moved down so many, settled, and left open.
-    func switchForScript(moves: Int) {
+    func switchForScript(moves: Int, pick: Bool = false) {
+        if pick {
+            window?.makeFirstResponder(nil)
+            active = columns.max { $0.beneath.count < $1.beneath.count }
+        }
         cycleSheets(backward: false)
-        for _ in 0..<moves { switcherColumn?.moveSwitcher(-1) }
+        for _ in 0..<abs(moves) { switcherColumn?.moveSwitcher(moves < 0 ? 1 : -1) }
         switcherColumn?.settleSwitcherForScript()
+        // ⌘ let go: the stack gone back down to the one chosen.
+        guard pick, let column = switcherColumn, let chosen = column.switcherSelection else { return }
+        print("before: " + sheetsForScript)
+        endSwitcher(choosing: nil)
+        if chosen < column.beneath.count { raise(chosen, in: column) }
+        print("after:  " + sheetsForScript)
     }
 
     var sheetsForScript: String {

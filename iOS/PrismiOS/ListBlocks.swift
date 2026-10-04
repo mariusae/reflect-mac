@@ -19,6 +19,12 @@ protocol SheetBlock: UIView {
     /// as tall as it guesses, till it comes near.
     var isLive: Bool { get }
     func goLive()
+    /// Built ahead, off the main thread, when it can be.
+    func prepareLive(width: CGFloat)
+}
+
+extension SheetBlock {
+    func prepareLive(width: CGFloat) {}
 }
 
 extension HeadBlock {
@@ -253,7 +259,21 @@ final class SliceBlock: UIView, SheetBlock {
 
     // MARK: Layout
 
-    private var titleHeight: CGFloat { ceil(title.intrinsicContentSize.height) }
+    /// The name's size and the crumbs' heights, measured once — at a width,
+    /// for the crumbs — not each time the sheet asks every block its height.
+    private lazy var titleSize = title.intrinsicContentSize
+    private var titleHeight: CGFloat { ceil(titleSize.height) }
+    private var crumbHeights: (width: CGFloat, heights: [CGFloat])?
+
+    private func crumbHeight(_ i: Int, inner: CGFloat) -> CGFloat? {
+        guard let label = crumbLabels[i] else { return nil }
+        if crumbHeights?.width != inner || crumbHeights?.heights.count != crumbLabels.count {
+            crumbHeights = (inner, crumbLabels.map { label in
+                label.map { ceil($0.sizeThatFits(CGSize(width: inner, height: .greatestFiniteMagnitude)).height) } ?? 0
+            })
+        }
+        return crumbHeights?.heights[i] ?? ceil(label.sizeThatFits(CGSize(width: inner, height: .greatestFiniteMagnitude)).height)
+    }
 
     func height(width: CGFloat) -> CGFloat {
         guard width > NoteBlock.minimumWidth else { return 0 }
@@ -269,7 +289,7 @@ final class SliceBlock: UIView, SheetBlock {
             return height + CGFloat(lines) * line + 4 * CGFloat(slices.count) + Card.bottom
         }
         for (i, editor) in editors.enumerated() {
-            if let label = crumbLabels[i] { height += ceil(label.sizeThatFits(CGSize(width: inner, height: .greatestFiniteMagnitude)).height) + 2 }
+            if let crumb = crumbHeight(i, inner: inner) { height += crumb + 2 }
             height += editor.rowsHeight(width: inner + metrics.indent) + 4
         }
         return height + Card.bottom - 4
@@ -281,11 +301,10 @@ final class SliceBlock: UIView, SheetBlock {
         guard bounds.width > NoteBlock.minimumWidth else { return }
         let inner = bounds.width - 2 * NoteBlock.side
         var y: CGFloat = Card.top
-        title.frame = CGRect(x: NoteBlock.side, y: y, width: min(title.intrinsicContentSize.width, inner), height: titleHeight)
+        title.frame = CGRect(x: NoteBlock.side, y: y, width: min(titleSize.width, inner), height: titleHeight)
         y += titleHeight + Card.gap
         for (i, editor) in editors.enumerated() {
-            if let label = crumbLabels[i] {
-                let height = ceil(label.sizeThatFits(CGSize(width: inner, height: .greatestFiniteMagnitude)).height)
+            if let label = crumbLabels[i], let height = crumbHeight(i, inner: inner) {
                 label.frame = CGRect(x: NoteBlock.side, y: y, width: inner, height: height)
                 y += height + 2
             }

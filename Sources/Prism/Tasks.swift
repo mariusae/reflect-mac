@@ -182,6 +182,7 @@ final class TaskGroupBlock: NSView, ColumnBlock {
                 let editor = TaskEditor(slice: slice, metrics: metrics, images: images, navigator: navigator)
                 editor.onEdit = onEdit
                 editor.onResize = onResize
+                editor.view.onRestyle = onResize
                 editor.onLeave = onLeave
                 addSubview(editor.view)
                 return editor
@@ -251,7 +252,7 @@ final class TaskGroupBlock: NSView, ColumnBlock {
 /// The head of a search: the words looked for, to change, and how many
 /// notes have them.
 final class SearchHeader: NSView, ColumnBlock, NSTextFieldDelegate {
-    private let kicker = NSTextField(labelWithString: "")
+    private let kicker: ColumnLabel
     let field = NSTextField()
     private let metrics: OutlineMetrics
     /// The words were changed: looked for again, a moment after typing stops.
@@ -262,6 +263,7 @@ final class SearchHeader: NSView, ColumnBlock, NSTextFieldDelegate {
 
     init(query: String, metrics: OutlineMetrics) {
         self.metrics = metrics
+        kicker = ColumnLabel("Search", metrics: metrics)
         super.init(frame: .zero)
         let typography = metrics.typography
         let font = typography.headingFont(size: round(metrics.fontSize * 1.9), weight: .bold)
@@ -284,15 +286,7 @@ final class SearchHeader: NSView, ColumnBlock, NSTextFieldDelegate {
 
     /// How many notes were found: nil while looking.
     func show(count: Int?) {
-        let words = field.stringValue.trimmingCharacters(in: .whitespaces)
-        let text = words.isEmpty ? "Type to search every note"
-            : count.map { $0 == 0 ? "No notes have it" : "\($0) \($0 == 1 ? "note has it" : "notes have it")" } ?? "Looking…"
-        let typography = metrics.typography
-        kicker.attributedStringValue = NSAttributedString(string: text.uppercased(), attributes: [
-            .font: Typography.font(typography.headingFamily, face: typography.headingFace, size: round(metrics.fontSize * 0.68),
-                                   weight: .semibold),
-            .foregroundColor: Ink.secondary, .kern: 1.0,
-        ])
+        kicker.count = field.stringValue.trimmingCharacters(in: .whitespaces).isEmpty ? nil : count
     }
 
     /// ↩ looks at once.

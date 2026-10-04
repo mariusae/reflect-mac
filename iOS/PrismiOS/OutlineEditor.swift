@@ -1,4 +1,6 @@
 import UIKit
+import UIKit.UIGestureRecognizerSubclass
+import UniformTypeIdentifiers
 import ReflectCore
 import PrismCore
 
@@ -21,6 +23,9 @@ extension NSAttributedString.Key {
     static let prismPill = NSAttributedString.Key("PrismPill")
     /// Where a link goes, as tapped: a note's title, or an address.
     static let prismLink = NSAttributedString.Key("PrismLink")
+    /// On a row not shown at all, its line no height: a note's title row,
+    /// in a card whose header says it already.
+    static let prismCollapsed = NSAttributedString.Key("PrismCollapsed")
 }
 
 /// The type and measures of the outline: a face at a size.
@@ -59,6 +64,9 @@ struct PhoneMetrics: Equatable {
 /// row: when an edit joins two, the one that was there first wins.
 final class PhoneStyler: NSObject, NSTextStorageDelegate {
     var metrics: PhoneMetrics
+    /// Whether a first row that is a top heading — the note's title — is
+    /// not shown: in a card, its header says it.
+    var hidesTitle = false
     /// Where the caret is: the span it is in shows its marks.
     var caret: Int?
     /// Rows folded inside a row an edit swallowed, with where they belong.
@@ -68,9 +76,13 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
         self.metrics = metrics
     }
 
+    /// While set, edits are taken as already styled: text styled elsewhere
+    /// being put in whole.
+    var paused = false
+
     func textStorage(_ storage: NSTextStorage, didProcessEditing mask: NSTextStorage.EditActions,
                      range edited: NSRange, changeInLength delta: Int) {
-        guard storage.length > 0 else { return }
+        guard storage.length > 0, !paused else { return }
         let text = storage.string as NSString
         var range = text.paragraphRange(for: NSRange(location: min(edited.location, text.length), length: min(edited.length, text.length - min(edited.location, text.length))))
         if NSMaxRange(range) < text.length {
@@ -133,8 +145,21 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             case .code, .rule: break
             default: styleInline(storage, in: paragraph, row: row)
             }
+            if hidesTitle, paragraph.location == 0, case .heading(1) = row.kind, NSMaxRange(paragraph) < text.length {
+                collapse(storage, paragraph)
+            }
             storage.fixAttributes(in: paragraph)
         }
+    }
+
+    /// A row not shown: its characters nothing, its line no height.
+    private func collapse(_ storage: NSTextStorage, _ paragraph: NSRange) {
+        for key: NSAttributedString.Key in [.prismImage, .prismIcon, .prismEllipsis, .prismBreak, .prismPill, .prismSpaceBefore] {
+            storage.removeAttribute(key, range: paragraph)
+        }
+        // The line break kept: a row's end, though not seen.
+        if paragraph.length > 1 { storage.addAttribute(.prismHidden, value: true, range: NSRange(location: paragraph.location, length: paragraph.length - 1)) }
+        storage.addAttribute(.prismCollapsed, value: true, range: paragraph)
     }
 
     func attributes(for row: Row, after previous: Row?) -> [NSAttributedString.Key: Any] {
@@ -225,7 +250,7 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
                 // for while the caret is in it, to edit what it says.
                 // (Text is styled on the main thread, where the pictures are kept.)
                 let inside = caret.map { $0 > span.range.location && $0 < NSMaxRange(span.range) } ?? false
-                if !inside, span.range.length > 2, let image = MainActor.assumeIsolated({ PhoneImages.image(reference.source) }) {
+                if !inside, span.range.length > 2, let image = PhoneImages.lookup(reference.source) {
                     // The `!` takes the rest of a line it follows text on —
                     // a line may not break before `!`, but may after it —
                     // and the `[` is the picture, on a line of its own; the
@@ -420,6 +445,12 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                        in textContainer: NSTextContainer, forGlyphRange glyphRange: NSRange) -> Bool {
         guard let storage = textStorage else { return false }
         let characters = characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+        if characters.location < storage.length, storage.attribute(.prismCollapsed, at: characters.location, effectiveRange: nil) != nil {
+            lineFragmentRect.pointee.size.height = 0
+            lineFragmentUsedRect.pointee.size.height = 0
+            baselineOffset.pointee = 0
+            return true
+        }
         var height: CGFloat?
         storage.enumerateAttribute(.prismImage, in: characters) { value, range, stop in
             guard let box = value as? PhoneImageBox else { return }
@@ -680,6 +711,30 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         }
     }
 
+    /// The characters of the title row not shown, when one is not.
+    private var collapsedTitle: NSRange? {
+        guard hidesTitle, textStorage.length > 0 else { return nil }
+        var title = NSRange()
+        guard textStorage.attribute(.prismCollapsed, at: 0, longestEffectiveRange: &title,
+                                    in: NSRange(location: 0, length: textStorage.length)) != nil else { return nil }
+        return title
+    }
+
+    /// Whether its first row, a top heading — the note's title — is not
+    /// shown: in a card whose header says it.
+    var hidesTitle: Bool {
+        get { styler.hidesTitle }
+        set {
+            guard newValue != styler.hidesTitle else { return }
+            styler.hidesTitle = newValue
+            guard textStorage.length > 0 else { return }
+            adjusting = true
+            styler.restyle(textStorage, around: 0)
+            adjusting = false
+            heightMayHaveChanged()
+        }
+    }
+
     init(metrics: PhoneMetrics) {
         styler = PhoneStyler(metrics: metrics)
         outlineLayout = PhoneLayoutManager()
@@ -719,22 +774,37 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         markerTap.addTarget(self, action: #selector(tapped(_:)))
         markerTap.delegate = self
         addGestureRecognizer(markerTap)
+        // A picture held: copied, or shared. The text's own presses wait on
+        // this one, which lets go at once anywhere but on a picture.
+        pictureHold.isOnPicture = { [weak self] point in
+            guard let self, case .image = self.target(at: point) else { return false }
+            return true
+        }
+        pictureHold.addTarget(self, action: #selector(heldPicture(_:)))
+        pictureHold.delegate = self
+        addGestureRecognizer(pictureHold)
+        addInteraction(pictureMenu)
         for direction in [UISwipeGestureRecognizer.Direction.left, .right] {
             let swipe = UISwipeGestureRecognizer(target: self, action: #selector(swiped(_:)))
             swipe.direction = direction
             swipe.delegate = self
             addGestureRecognizer(swipe)
         }
-        NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: textStorage, queue: nil) { [weak self] _ in
+        // Each kept, to be let go with the editor: an observer outlives what
+        // it watches, and a storage built later at the same address, off
+        // this thread, was taken for this one's.
+        observers.append(NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: textStorage, queue: nil) { [weak self] _ in
+            guard Thread.isMainThread else { return }
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.cachedRows = nil
+                self.cachedRanges = nil
                 guard self.localChanges == 0 else { return }
                 self.measured = nil
             }
-        }
+        })
         // A picture in: shown where this note shows it.
-        NotificationCenter.default.addObserver(forName: .prismImageLoaded, object: nil, queue: .main) { [weak self] note in
+        observers.append(NotificationCenter.default.addObserver(forName: .prismImageLoaded, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
                 guard let self, let source = note.object as? String else { return }
                 // Only the rows showing it, restyled.
@@ -750,7 +820,13 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
                 self.adjusting = false
                 self.heightMayHaveChanged()
             }
-        }
+        })
+    }
+
+    nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
+
+    deinit {
+        observers.forEach(NotificationCenter.default.removeObserver)
     }
 
     @available(*, unavailable)
@@ -761,8 +837,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     func load(_ rows: [Row]) {
         adjusting = true
         let text = OutlineText.attributed(rows.isEmpty ? [.blank] : rows)
+        // Styled as it goes in — the storage's edit is the styler's to style.
         textStorage.setAttributedString(text)
-        styler.styleAll(textStorage)
         adjusting = false
         undoManager?.removeAllActions()
         heightMayHaveChanged()
@@ -771,6 +847,78 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// The rows, as the text now says: kept till the text changes, as many
     /// ask for them — saving, the scrubber, the title — and a long note's
     /// take a while to find.
+    // MARK: Built ahead
+
+    /// A note's text, styled and measured off the main thread, to be put in
+    /// at once: what makes building a note cost a frame no longer.
+    struct Prepared: @unchecked Sendable {
+        let text: NSAttributedString
+        let width: CGFloat
+        let fit: CGFloat
+        let rows: CGFloat
+        var hidesTitle = false
+    }
+
+    /// Styles rows as the editor would, and lays them out at a width, all in
+    /// text objects of its own: any thread.
+    nonisolated static func prepare(_ rows: [Row], metrics: PhoneMetrics, width: CGFloat, hidesTitle: Bool = false) -> Prepared {
+        let styler = PhoneStyler(metrics: metrics)
+        styler.hidesTitle = hidesTitle
+        let storage = NSTextStorage()
+        storage.delegate = styler
+        let layout = PhoneLayoutManager()
+        layout.metrics = metrics
+        storage.addLayoutManager(layout)
+        let container = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        layout.addTextContainer(container)
+        storage.setAttributedString(OutlineText.attributed(rows.isEmpty ? [.blank] : rows))
+        layout.ensureLayout(for: container)
+        let used = layout.usedRect(for: container).height
+        let extra = layout.extraLineFragmentRect.height
+        // As `sizeThatFits` has it: the text's room and the insets about it.
+        let fit = ceil(used + 4)
+        let rows = max(0, fit - (extra > 0 ? extra : round(metrics.face.lineHeight * metrics.size)))
+        storage.delegate = nil
+        return Prepared(text: NSAttributedString(attributedString: storage), width: width, fit: fit, rows: rows, hidesTitle: hidesTitle)
+    }
+
+    /// Text built ahead put in, unstyled again, its height taken as found.
+    func install(_ prepared: Prepared) {
+        adjusting = true
+        styler.paused = true
+        styler.hidesTitle = prepared.hidesTitle
+        textStorage.setAttributedString(prepared.text)
+        styler.paused = false
+        adjusting = false
+        cachedRows = nil
+        cachedRanges = nil
+        undoManager?.removeAllActions()
+        measured = (prepared.width, prepared.fit, prepared.rows)
+        showPicturesLoadedMeanwhile()
+        heightMayHaveChanged()
+    }
+
+    private static let pictureMarkdown = try! NSRegularExpression(pattern: #"!\[[^\]]*\]\(<?([^)\s>]+)"#)
+
+    /// Text built off the main thread shows no picture not yet read then:
+    /// those read since, shown now; the others asked for, to be shown —
+    /// with this editor now here to hear — when they are in.
+    private func showPicturesLoadedMeanwhile() {
+        let text = textStorage.string as NSString
+        guard text.range(of: "![").location != NSNotFound else { return }
+        var restyled = Set<Int>()
+        adjusting = true
+        for match in Self.pictureMarkdown.matches(in: text as String, range: NSRange(location: 0, length: text.length)) {
+            let at = match.range.location
+            guard at + 1 < textStorage.length, textStorage.attribute(.prismImage, at: at + 1, effectiveRange: nil) == nil,
+                  PhoneImages.lookup(text.substring(with: match.range(at: 1))) != nil else { continue }
+            let paragraph = text.paragraphRange(for: NSRange(location: at, length: 0)).location
+            if restyled.insert(paragraph).inserted { styler.restyle(textStorage, around: at) }
+        }
+        adjusting = false
+    }
+
     var rows: [Row] {
         if let cachedRows { return cachedRows }
         let rows = OutlineText.rows(textStorage)
@@ -799,11 +947,25 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         return found
     }
 
-    var paragraphRanges: [NSRange] { OutlineText.paragraphs(textStorage.string as NSString) }
+    /// Each row's characters: kept till the text changes.
+    var paragraphRanges: [NSRange] {
+        if let cachedRanges { return cachedRanges }
+        let ranges = OutlineText.paragraphs(textStorage.string as NSString)
+        cachedRanges = ranges
+        return ranges
+    }
+    private var cachedRanges: [NSRange]?
 
     func rowIndex(at location: Int) -> Int {
         let ranges = paragraphRanges
-        return ranges.firstIndex { NSLocationInRange(location, $0) } ?? max(0, ranges.count - 1)
+        guard !ranges.isEmpty else { return 0 }
+        // The last row starting at or before the place.
+        var low = 0, high = ranges.count - 1
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if ranges[mid].location <= location { low = mid } else { high = mid - 1 }
+        }
+        return low
     }
 
     var caret: OutlineKeys.Caret {
@@ -852,7 +1014,10 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     private func heightMayHaveChanged() {
-        let height = rowsHeight(width: bounds.width > 0 ? bounds.width : 320)
+        // No width yet: nothing to measure at — laying a long note out at a
+        // guess, then again at its width, doubled the cost of opening it.
+        guard bounds.width > 0 else { return }
+        let height = rowsHeight(width: bounds.width)
         if abs(height - lastHeight) > 0.5 {
             lastHeight = height
             invalidateIntrinsicContentSize()
@@ -864,6 +1029,9 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
         guard !adjusting else { return true }
+        // A title not shown is not edited — a delete at the next row's start
+        // would join that row to it.
+        if let title = collapsedTitle, range.location < NSMaxRange(title) { return false }
         plainEdit = false
         // An edit allowed that never came: measured whole again, to be safe.
         if typedRowBefore != nil {
@@ -937,9 +1105,13 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         }
         // What is typed is of the row it is typed in: an empty row's style
         // is its line break's, not the one before it.
-        // Only when they differ: setting them re-lays the whole text out.
-        let rowAttributes = textStorage.attributes(at: NSMaxRange(paragraph) - 1, effectiveRange: nil)
-        if !NSDictionary(dictionary: typingAttributes).isEqual(to: rowAttributes) { typingAttributes = rowAttributes }
+        // Only at a row's start, where the character before is another
+        // row's: even reading them re-lays the whole text out, each key.
+        // Within a row, what is typed takes the row's style from the text.
+        if range.location == paragraph.location {
+            let rowAttributes = textStorage.attributes(at: NSMaxRange(paragraph) - 1, effectiveRange: nil)
+            if !NSDictionary(dictionary: typingAttributes).isEqual(to: rowAttributes) { typingAttributes = rowAttributes }
+        }
         if text == "@" || text == "[" { typedOpener = range.location }
         // Typing within a row leaves the outline as it was: no tidying after,
         // and only that row measured again.
@@ -1029,6 +1201,24 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     func textViewDidChangeSelection(_ textView: UITextView) {
+        // Never in a row not shown: to the start of the next.
+        if let title = collapsedTitle, selectedRange.location < NSMaxRange(title) {
+            selectedRange = NSRange(location: NSMaxRange(title), length: 0)
+            return
+        }
+        // A selection touching a picture takes all of it: its Markdown is
+        // mostly hidden, and a cut or a paste would leave half of it.
+        if selectedRange.length > 0, NSMaxRange(selectedRange) <= textStorage.length {
+            let paragraphs = (textStorage.string as NSString).paragraphRange(for: selectedRange)
+            var widened = selectedRange
+            for picture in outlineLayout.images(in: paragraphs) where NSIntersectionRange(picture.span, widened).length > 0 {
+                widened = NSUnionRange(widened, picture.span)
+            }
+            if widened != selectedRange {
+                selectedRange = widened
+                return
+            }
+        }
         onCaretMove?()
         if completing != nil, typedOpener == nil { refreshCompletion() }
         // The span the caret is in shows its marks; the one it left, not.
@@ -1098,7 +1288,11 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     @objc func indent() { perform("Indent") { OutlineEditing.indent(&$0, $1) } }
     @objc func outdent() { perform("Outdent") { OutlineEditing.outdent(&$0, $1) } }
-    @objc func moveUp() { perform("Move Up") { OutlineEditing.moveUp(&$0, $1) } }
+    @objc func moveUp() {
+        // Not above a title not shown: it stays the note's first row.
+        if collapsedTitle != nil, selectedRowRange.lowerBound <= 1 { return }
+        perform("Move Up") { OutlineEditing.moveUp(&$0, $1) }
+    }
     @objc func moveDown() { perform("Move Down") { OutlineEditing.moveDown(&$0, $1) } }
 
     @objc func cycleChecklist() {
@@ -1184,6 +1378,10 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         return super.gestureRecognizerShouldBegin(gesture)
     }
 
+    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+        gesture === pictureHold && other.view === self && other !== markerTap
+    }
+
     func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
         gesture is UISwipeGestureRecognizer
     }
@@ -1210,6 +1408,101 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         case nil:
             break
         }
+    }
+
+    // MARK: Pictures in and out
+
+    /// Paste offered for pictures too: a text view takes only text.
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)), isEditable, UIPasteboard.general.hasImages { return true }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    /// Pictures pasted — when there is no text with them — kept in the
+    /// graph's `assets/`, as the Mac keeps them, and put where the caret is.
+    override func paste(_ sender: Any?) {
+        let board = UIPasteboard.general
+        guard board.hasImages, !board.hasStrings, let root = PhoneImages.root else { return super.paste(sender) }
+        var markdown: [String] = []
+        for picture in Self.pictures(on: board) {
+            do {
+                let path = try Assets.add(picture.data, named: Assets.pastedName(extension: picture.ext), to: root)
+                markdown.append("![](\(path))")
+            } catch {
+                continue
+            }
+        }
+        guard !markdown.isEmpty else { return super.paste(sender) }
+        insertText(markdown.joined(separator: " "))
+    }
+
+    /// Each picture on the pasteboard, as its own bytes when they are a
+    /// type a note keeps — PNG, JPEG, GIF — else made a JPEG (a photo's HEIC).
+    private static func pictures(on board: UIPasteboard) -> [(data: Data, ext: String)] {
+        let kept: [(UTType, String)] = [(.png, "png"), (.jpeg, "jpg"), (.gif, "gif")]
+        return (0..<board.numberOfItems).compactMap { index -> (Data, String)? in
+            let item = IndexSet(integer: index)
+            // The bytes as they are, not as UIKit hands pictures back.
+            for (type, ext) in kept {
+                if let data = board.data(forPasteboardType: type.identifier, inItemSet: item)?.first { return (data, ext) }
+            }
+            let types = board.types(forItemSet: item)?.first ?? []
+            for type in types where UTType(type)?.conforms(to: .image) == true {
+                if let data = board.data(forPasteboardType: type, inItemSet: item)?.first,
+                   let jpeg = UIImage(data: data)?.jpegData(compressionQuality: 0.85) {
+                    return (jpeg, "jpg")
+                }
+            }
+            return nil
+        }
+    }
+
+    private let pictureHold = PictureHold()
+    private lazy var pictureMenu = UIEditMenuInteraction(delegate: self)
+
+    @objc private func heldPicture(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began, case .image(let span) = target(at: gesture.location(in: self)),
+              let frame = pictureFrame(span) else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        let configuration = UIEditMenuConfiguration(identifier: NSStringFromRange(span) as NSString,
+                                                    sourcePoint: CGPoint(x: frame.midX, y: frame.minY))
+        pictureMenu.presentEditMenu(with: configuration)
+    }
+
+    /// The file a picture's Markdown shows, in the graph.
+    private func pictureFile(_ span: NSRange) -> URL? {
+        guard NSMaxRange(span) <= textStorage.length else { return nil }
+        let markdown = (textStorage.string as NSString).substring(with: span)
+        guard let open = markdown.range(of: "]("), let close = markdown.range(of: ")", options: .backwards),
+              open.upperBound <= close.lowerBound else { return nil }
+        var source = String(markdown[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespaces)
+        // `![](path "title")` and `![](<path>)` alike.
+        if let space = source.firstIndex(of: " ") { source = String(source[..<space]) }
+        source = source.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
+        return PhoneImages.url(for: source).flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+    }
+
+    private func copyPicture(_ file: URL) {
+        guard let data = try? Data(contentsOf: file) else { return }
+        let type = UTType(filenameExtension: file.pathExtension) ?? .image
+        UIPasteboard.general.setItems([[type.identifier: data]])
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+
+    private func sharePicture(_ file: URL, from rect: CGRect) {
+        var presenter = window?.rootViewController
+        while let next = presenter?.presentedViewController { presenter = next }
+        let share = UIActivityViewController(activityItems: [file], applicationActivities: nil)
+        share.popoverPresentationController?.sourceView = self
+        share.popoverPresentationController?.sourceRect = rect
+        presenter?.present(share, animated: true)
+    }
+
+    /// Where a picture is drawn, in the editor, by its Markdown's range.
+    private func pictureFrame(_ span: NSRange) -> CGRect? {
+        let paragraph = (textStorage.string as NSString).paragraphRange(for: NSRange(location: span.location, length: 0))
+        guard let frame = outlineLayout.images(in: paragraph).first(where: { $0.span == span })?.frame else { return nil }
+        return frame.offsetBy(dx: textContainerInset.left, dy: textContainerInset.top)
     }
 
     /// A row swiped right goes in a level; left, out.
@@ -1276,7 +1569,12 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     private func measure(_ width: CGFloat) -> (fit: CGFloat, rows: CGFloat) {
         if let measured, abs(measured.width - width) < 0.5 { return (measured.fit, measured.rows) }
-        let fit = sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+        // At the width it is measured for, first: the container follows the
+        // frame, and a frame set after would lay the whole text out again.
+        if abs(bounds.width - width) >= 0.5 { frame.size.width = width }
+        outlineLayout.ensureLayout(for: textContainer)
+        // As `sizeThatFits` has it: the text's room and the insets about it.
+        let fit = ceil(outlineLayout.usedRect(for: textContainer).height + textContainerInset.top + textContainerInset.bottom)
         let extra = outlineLayout.extraLineFragmentRect.height
         let rows = max(0, fit - (extra > 0 ? extra : round(metrics.face.lineHeight * metrics.size)))
         measured = (width, fit, rows)
@@ -1394,4 +1692,35 @@ final class OutlineToolbar: UIInputView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+}
+
+extension OutlineEditor: UIEditMenuInteractionDelegate {
+    /// Copy and Share, for the picture held.
+    func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration,
+                             suggestedActions: [UIMenuElement]) -> UIMenu? {
+        guard let id = configuration.identifier as? NSString else { return nil }
+        let span = NSRangeFromString(id as String)
+        guard let file = pictureFile(span) else { return nil }
+        let rect = pictureFrame(span) ?? .zero
+        return UIMenu(children: [
+            UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in self?.copyPicture(file) },
+            UIAction(title: "Share…", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in self?.sharePicture(file, from: rect) },
+        ])
+    }
+
+    func editMenuInteraction(_ interaction: UIEditMenuInteraction, targetRectFor configuration: UIEditMenuConfiguration) -> CGRect {
+        guard let id = configuration.identifier as? NSString else { return .null }
+        return pictureFrame(NSRangeFromString(id as String)) ?? .null
+    }
+}
+
+/// A long press that is only ever on a picture: anywhere else it fails as
+/// the finger comes down, and what waits on it goes on as if it were not there.
+final class PictureHold: UILongPressGestureRecognizer {
+    var isOnPicture: ((CGPoint) -> Bool)?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesBegan(touches, with: event)
+        if let touch = touches.first, isOnPicture?(touch.location(in: view)) != true { state = .failed }
+    }
 }

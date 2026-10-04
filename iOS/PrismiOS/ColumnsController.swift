@@ -71,6 +71,12 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         observe()
         observeSync()
         openForScript()
+        // The tab left showing chosen before any is laid out: the others'
+        // sheets not built at launch at all.
+        if let page = pendingPage {
+            pendingPage = nil
+            selectedIndex = page
+        }
     }
 
     /// `-PrismOpen <kind>` — `search:<query>`, `backlinks:<path>`,
@@ -336,6 +342,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
 
     /// The days tab, tapped while showing them: back to today.
     func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
+        if StallWatch.enabled { StallWatch.mark("tab tapped") }
         if viewController === selectedViewController, let navigation = viewController as? UINavigationController,
            navigation.viewControllers.count == 1, let root = navigation.viewControllers.first as? SheetController, root.kind == .timeline {
             root.show(.day(.today))

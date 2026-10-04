@@ -112,6 +112,27 @@ extension NSAttributedString.Key {
 }
 
 extension OutlineLayoutManager {
+    /// The pieces of some glyphs on each line they run across: around what
+    /// is shown, not the hidden markup at a line's ends — laid out at the
+    /// line's very edge, it would draw a pill out into the margin.
+    package func shownPieces(of glyphs: NSRange, in container: NSTextContainer) -> [NSRect] {
+        var pieces: [NSRect] = []
+        enumerateLineFragments(forGlyphRange: glyphs) { _, _, _, lineGlyphs, _ in
+            var piece = NSIntersectionRange(lineGlyphs, glyphs)
+            // Room drawn in — an icon's, a picture's — counts; nothing does not.
+            while piece.length > 0, self.propertyForGlyph(at: piece.location) == .null {
+                piece = NSRange(location: piece.location + 1, length: piece.length - 1)
+            }
+            while piece.length > 0, self.propertyForGlyph(at: NSMaxRange(piece) - 1) == .null {
+                piece.length -= 1
+            }
+            guard piece.length > 0 else { return }
+            let rect = self.boundingRect(forGlyphRange: piece, in: container)
+            if rect.width > 0.5 { pieces.append(rect) }
+        }
+        return pieces
+    }
+
     /// Draws the pills of the links in some characters: on each line a
     /// link runs across, a rounded rectangle round its piece, the kind's
     /// icon in its lead, and a shortened address's ellipsis.
@@ -121,9 +142,7 @@ extension OutlineLayoutManager {
             guard let pill = value as? LinkPill else { return }
             let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont ?? .systemFont(ofSize: 15)
-            var rects: [NSRect] = []
-            enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
-                                    in: container) { rect, _ in rects.append(rect) }
+            let rects = shownPieces(of: glyphs, in: container)
             let ascent = ceil(font.ascender), descent = ceil(-font.descender)
             var pieces: [NSRect] = []
             for rect in rects where rect.width > 0.5 {

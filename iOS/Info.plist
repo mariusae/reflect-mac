@@ -8,5 +8,7 @@
 	<string>$(GITHUB_CLIENT_ID)</string>
 	<key>GitHubClientSecret</key>
 	<string>$(GITHUB_CLIENT_SECRET)</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>To save pictures from your notes to your photos.</string>
 </dict>
 </plist>

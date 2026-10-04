@@ -356,7 +356,11 @@ package final class OutlineTextView: NSTextView {
     /// A shortened web address the caret goes into is shown whole, to be
     /// edited; left, it is shortened again.
     private func revealLink(at location: Int) {
-        let span = spans(atRowOf: location).first { span in
+        // Only where the keyboard is: a caret left at a row's start in a
+        // view not typed in is no reason to show an address whole — the
+        // text grows past what it was measured at.
+        let focused = window?.firstResponder === self
+        let span = !focused ? nil : spans(atRowOf: location).first { span in
             guard case .url = span.kind else { return false }
             return NSLocationInRange(location, span.range) || location == NSMaxRange(span.range)
         }
@@ -374,8 +378,13 @@ package final class OutlineTextView: NSTextView {
             }
             // The text moved under the caret: it is drawn where it now is.
             updateCaret()
+            onRestyle?()
         }
     }
+
+    /// Told when a link shown whole, or shortened again, may have changed
+    /// how tall the text is.
+    package var onRestyle: (() -> Void)?
 
     package override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         guard let storage = textStorage, storage.length > 0, let first = ranges.first?.rangeValue else {
@@ -633,7 +642,11 @@ package final class OutlineTextView: NSTextView {
     package override func becomeFirstResponder() -> Bool {
         needsDisplay = true
         let became = super.becomeFirstResponder()
-        DispatchQueue.main.async { [weak self] in self?.updateCaret() }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            updateCaret()
+            if became { revealLink(at: selectedRange().location) }
+        }
         return became
     }
 
@@ -643,6 +656,11 @@ package final class OutlineTextView: NSTextView {
         if resigned {
             caret.hide()
             endLinkCompletion()
+            // Left: an address shown whole is shortened again.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, window?.firstResponder !== self else { return }
+                revealLink(at: selectedRange().location)
+            }
         }
         return resigned
     }

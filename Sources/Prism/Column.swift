@@ -43,6 +43,10 @@ final class Column: NSView, OutlineTextViewNavigator {
     private let tip = ScrubTip()
     private let close = CloseButton()
     private let fade = TopFade()
+    /// While the pointer is over the column: a sheet of each kind to add.
+    private let sheetBar = SheetBar()
+    /// A sheet of a kind asked for, from the bar, on this column.
+    var onAddSheet: ((Column, SheetBar.Choice) -> Void)?
     private let edges = SheetEdges()
     private var sheetList: SheetList?
     /// The sheets beneath the one shown, the bottom first: where the column
@@ -130,6 +134,14 @@ final class Column: NSView, OutlineTextViewNavigator {
         addSubview(tip)
         addSubview(close)
         addSubview(edges)
+        addSubview(sheetBar)
+        sheetBar.alphaValue = 0
+        sheetBar.isHidden = true
+        sheetBar.onChoose = { [weak self] choice in
+            guard let self else { return }
+            hideSheetBar()
+            onAddSheet?(self, choice)
+        }
         edges.onClick = { [weak self] in
             guard let self, !beneath.isEmpty else { return }
             hideSheetList()
@@ -157,6 +169,43 @@ final class Column: NSView, OutlineTextViewNavigator {
     required init?(coder: NSCoder) { fatalError() }
 
     @objc private func closeColumn() { onClose?(self) }
+
+    // MARK: The bar of sheets to add
+
+    private var barTracking: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        if let barTracking { removeTrackingArea(barTracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        barTracking = area
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard event.trackingArea === barTracking else { return super.mouseEntered(with: event) }
+        showSheetBar()
+    }
+
+    func showSheetBar() {
+        sheetBar.backlinksEnabled = current != nil || { if case .backlinks = kind { true } else { false } }()
+        sheetBar.isHidden = false
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.15; self.sheetBar.animator().alphaValue = 1 }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard event.trackingArea === barTracking else { return super.mouseExited(with: event) }
+        hideSheetBar()
+    }
+
+    private func hideSheetBar() {
+        NSAnimationContext.runAnimationGroup({ $0.duration = 0.15; self.sheetBar.animator().alphaValue = 0 }) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.sheetBar.alphaValue == 0 else { return }
+                self.sheetBar.isHidden = true
+            }
+        }
+    }
 
     // MARK: Contents
 
@@ -212,13 +261,13 @@ final class Column: NSView, OutlineTextViewNavigator {
         sheetList = nil
     }
 
-    /// Opens ⌘E's cards: from the sheet just beneath the top, or, going
-    /// backward, from the bottom.
+    /// Opens ⌘E's cards on the sheet just beneath the top — ⇧⌘E, on the
+    /// top itself, from where only going back down is left.
     func openSwitcher(backward: Bool) {
         guard switcher == nil, !beneath.isEmpty else { return }
         hideSheetList()
         let sheets = beneath + [currentSheet]
-        let switcher = SheetSwitcher(sheets: sheets, contentSize: bounds.size, selection: backward ? 0 : sheets.count - 2, face: face)
+        let switcher = SheetSwitcher(sheets: sheets, contentSize: bounds.size, selection: backward ? sheets.count - 1 : sheets.count - 2, face: face)
         switcher.frame = bounds
         switcher.onPick = { [weak self] index in self?.closeSwitcher(choosing: index) }
         addSubview(switcher)
@@ -229,8 +278,8 @@ final class Column: NSView, OutlineTextViewNavigator {
     /// Moves the choice: down the stack for E, up for ⇧E.
     func moveSwitcher(_ delta: Int) { switcher?.move(delta) }
 
-    /// Closes the cards on the one chosen — the top, for none — which comes
-    /// forward and is brought to the top.
+    /// Closes the cards on the one chosen — the top, for none: the sheets
+    /// over it taken off, as going back does.
     func closeSwitcher(choosing index: Int?) {
         guard let switcher, !switcher.isClosing else { return }
         let top = beneath.count
@@ -298,6 +347,7 @@ final class Column: NSView, OutlineTextViewNavigator {
                     onSliceEdit?(editor, self)
                 }
                 editor.onResize = { [weak self] in self?.relayout() }
+                editor.view.onRestyle = { [weak self] in self?.relayout() }
                 editor.onLeave = { [weak self] in
                     guard let self else { return }
                     onSliceLeave?(self)
@@ -351,7 +401,7 @@ final class Column: NSView, OutlineTextViewNavigator {
         let top = scroll.contentView.bounds.minY
         removeBlocks()
         kind = .tasks
-        let head = InboxHeader(metrics: metrics, title: "Tasks", describe: { $0 == 0 ? "Nothing to do" : "\($0) to do" })
+        let head = InboxHeader(metrics: metrics, title: "Tasks")
         head.count = count
         blocks = [head] + groups
         blocks.forEach(document.addSubview)
@@ -414,7 +464,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             handles[ref] = nil
         }
         for ref in ordered where handles[ref] == nil {
-            let handle = CloseButton(toolTip: "Remove from Inbox")
+            let handle = CloseButton(symbol: "checkmark.circle", pointSize: round(metrics.fontSize * 1.05), toolTip: "Done: Remove from Inbox")
             handle.target = self
             handle.action = #selector(removeFromInbox(_:))
             handle.identifier = NSUserInterfaceItemIdentifier(ref.path)
@@ -454,11 +504,12 @@ final class Column: NSView, OutlineTextViewNavigator {
                 rule.layer?.backgroundColor = Ink.rule.cgColor
             }
         }
+        // The check hangs in the margin before the name, where a task's box is.
         for view in notes {
             guard let handle = handles[view.ref] else { continue }
             let column = min(metrics.columnWidth, view.frame.width - 48)
-            let right = view.frame.minX + ((view.frame.width - column) / 2).rounded() + column
-            handle.frame = NSRect(x: right - 24, y: round(nameMiddle(of: view)) - 11, width: 22, height: 22)
+            let marker = view.frame.minX + ((view.frame.width - column) / 2).rounded() + metrics.indent / 2
+            handle.frame = NSRect(x: round(marker - 12), y: round(nameMiddle(of: view)) - 12, width: 24, height: 24)
         }
     }
 
@@ -547,12 +598,14 @@ final class Column: NSView, OutlineTextViewNavigator {
                 }()
                 button.identifier = NSUserInterfaceItemIdentifier(view.ref.path)
                 let column = min(metrics.columnWidth, view.frame.width - 48)
-                let right = view.frame.minX + ((view.frame.width - column) / 2).rounded() + column - (kind == .inbox ? 30 : 0)
+                let right = view.frame.minX + ((view.frame.width - column) / 2).rounded() + column
                 button.frame = NSRect(x: right - menuSide, y: round(nameMiddle(of: view) - menuSide / 2) + 3, width: menuSide, height: menuSide)
             }
         }
         for view in notes {
-            let flags = Self.flags(view.ref.path)
+            var flags = Self.flags(view.ref.path)
+            // In the inbox, being in it goes without saying: its check says so.
+            if kind == .inbox { flags.remove(.inbox) }
             guard !flags.isEmpty else {
                 badges[view.ref]?.removeFromSuperview()
                 badges[view.ref] = nil
@@ -567,7 +620,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             badge.flags = flags
             badge.size = round(metrics.fontSize * 0.8)
             let column = min(metrics.columnWidth, view.frame.width - 48)
-            let right = view.frame.minX + ((view.frame.width - column) / 2).rounded() + column - (kind == .inbox ? 30 : 4) - (listsNotes ? menuSide : 0)
+            let right = view.frame.minX + ((view.frame.width - column) / 2).rounded() + column - 4 - (listsNotes ? menuSide : 0)
             let size = badge.intrinsicContentSize
             badge.frame = NSRect(x: right - size.width, y: round(nameMiddle(of: view) - size.height / 2), width: size.width, height: size.height)
         }
@@ -699,6 +752,7 @@ final class Column: NSView, OutlineTextViewNavigator {
                     onSliceEdit?(editor, self)
                 }
                 editor.onResize = { [weak self] in self?.relayout() }
+                editor.view.onRestyle = { [weak self] in self?.relayout() }
                 editor.onLeave = { [weak self] in
                     guard let self else { return }
                     onSliceLeave?(self)
@@ -772,6 +826,8 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     private func makeView(_ ref: NoteRef) -> DayView {
         let view = DayView(ref: ref, graph: graph, images: images, metrics: metrics)
+        // The days' headings part them: no rule between.
+        view.drawsRule = false
         view.editor.navigator = self
         view.onHeightChange = { [weak self] _ in self?.setNeedsRelayout() }
         view.onSave = { [weak self, weak view] in
@@ -814,6 +870,9 @@ final class Column: NSView, OutlineTextViewNavigator {
         fade.frame = NSRect(x: 0, y: card.maxY - 64, width: card.width, height: 64)
         scrubber.frame = NSRect(x: 4, y: 56, width: 40, height: max(0, card.height - 112))
         close.frame = NSRect(x: bounds.width - 34, y: bounds.height - 34, width: 22, height: 22)
+        let bar = sheetBar.fittingSize
+        sheetBar.frame = NSRect(x: max(8, ((bounds.width - bar.width) / 2).rounded()), y: card.maxY - bar.height - 10,
+                                width: bar.width, height: bar.height)
         if stackDepth > 0 {
             // From the deepest sheet's edge down into the top sheet's.
             let band = CGFloat(stackDepth) * Self.sheetStep + 2
@@ -1313,14 +1372,15 @@ final class TopFade: NSView {
 /// A column's ×, or an inbox note's: faint until the pointer is on it.
 final class CloseButton: NSButton {
     private var hovering = false { didSet { needsDisplay = true } }
+    private lazy var restingTint = contentTintColor ?? Ink.faint
 
-    init(toolTip: String = "Close Column") {
+    init(symbol: String = "xmark", pointSize: CGFloat = 10, toolTip: String = "Close Column") {
         super.init(frame: .zero)
-        image = NSImage(systemSymbolName: "xmark", accessibilityDescription: toolTip)?
-            .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+        image = NSImage(systemSymbolName: symbol, accessibilityDescription: toolTip)?
+            .withSymbolConfiguration(.init(pointSize: pointSize, weight: symbol == "xmark" ? .semibold : .regular))
         imagePosition = .imageOnly
         isBordered = false
-        contentTintColor = Ink.faint
+        contentTintColor = symbol == "xmark" ? Ink.faint : Ink.secondary
         self.toolTip = toolTip
     }
 
@@ -1334,7 +1394,7 @@ final class CloseButton: NSButton {
     }
 
     override func mouseEntered(with event: NSEvent) { hovering = true; contentTintColor = Ink.text }
-    override func mouseExited(with event: NSEvent) { hovering = false; contentTintColor = Ink.faint }
+    override func mouseExited(with event: NSEvent) { hovering = false; contentTintColor = restingTint }
 
     override func draw(_ dirtyRect: NSRect) {
         if hovering {
@@ -1359,5 +1419,123 @@ final class NoteHeaderLink: NSView {
     override func mouseUp(with event: NSEvent) {
         guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
         onClick?(event.modifierFlags.contains(.command))
+    }
+}
+
+/// Over a column while the pointer is in it, as Mail shows its message's
+/// actions: a button for each kind of sheet that can be put on it.
+final class SheetBar: NSView {
+    enum Choice: CaseIterable {
+        case timeline, backlinks, inbox, tasks, search
+
+        var symbol: String {
+            switch self {
+            case .timeline: "calendar"
+            case .backlinks: "link"
+            case .inbox: "tray"
+            case .tasks: "checkmark.circle"
+            case .search: "magnifyingglass"
+            }
+        }
+
+        var name: String {
+            switch self {
+            case .timeline: "Timeline"
+            case .backlinks: "Backlinks"
+            case .inbox: "Inbox"
+            case .tasks: "Tasks"
+            case .search: "Search"
+            }
+        }
+    }
+
+    var onChoose: ((Choice) -> Void)?
+    var backlinksEnabled = true { didSet { buttons[Choice.allCases.firstIndex(of: .backlinks)!].isEnabled = backlinksEnabled } }
+    private var buttons: [NSButton] = []
+    private static let side: CGFloat = 30
+
+    override var isFlipped: Bool { true }
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = Self.side / 2 + 3
+        layer?.shadowOpacity = 0.12
+        layer?.shadowRadius = 6
+        layer?.shadowOffset = CGSize(width: 0, height: -1)
+        for choice in Choice.allCases {
+            let button = BarButton(symbol: choice.symbol, name: choice.name)
+            button.target = self
+            button.action = #selector(chose(_:))
+            addSubview(button)
+            buttons.append(button)
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func chose(_ sender: NSButton) {
+        guard let index = buttons.firstIndex(of: sender) else { return }
+        onChoose?(Choice.allCases[index])
+    }
+
+    override var fittingSize: NSSize {
+        NSSize(width: CGFloat(buttons.count) * (Self.side + 4) + 8, height: Self.side + 6)
+    }
+
+    override func layout() {
+        super.layout()
+        for (i, button) in buttons.enumerated() {
+            button.frame = NSRect(x: 6 + CGFloat(i) * (Self.side + 4), y: 3, width: Self.side, height: Self.side)
+        }
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            layer?.borderColor = Ink.rule.cgColor
+            layer?.borderWidth = 1
+        }
+    }
+
+    /// Clicks on the bar, between its buttons, are not the text's under it.
+    override func mouseDown(with event: NSEvent) {}
+}
+
+/// One of the bar's buttons: its symbol, its name on hover.
+private final class BarButton: NSButton {
+    private var hovering = false { didSet { needsDisplay = true } }
+
+    init(symbol: String, name: String) {
+        super.init(frame: .zero)
+        image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)?
+            .withSymbolConfiguration(.init(pointSize: 14, weight: .regular))
+        imagePosition = .imageOnly
+        isBordered = false
+        contentTintColor = Ink.secondary
+        toolTip = name
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func updateTrackingAreas() {
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true; contentTintColor = Ink.text }
+    override func mouseExited(with event: NSEvent) { hovering = false; contentTintColor = Ink.secondary }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if hovering, isEnabled {
+            Ink.hover.setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7).fill()
+        }
+        super.draw(dirtyRect)
     }
 }

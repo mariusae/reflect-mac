@@ -61,7 +61,7 @@ final class PrismStore {
             let graph = Graph(root: root, git: nil)
             let index = NoteIndex(root: root)
             index.scan()
-            return (graph, index, graph.notesNeedingReview())
+            return (graph, index, index.conflicted())
         }.value
         await Typeface.registration.value
         StallWatch.mark("index scanned")
@@ -269,9 +269,17 @@ final class PrismStore {
             StallWatch.mark("sync done, pulled \(report.pulled)")
             lastSynced = Date()
             syncError = nil
-            if report.pulled { noteChanged(report.changed) }
-            if let graph {
-                conflicted = await Task.detached(priority: .utility) { graph.notesNeedingReview() }.value
+            if report.pulled {
+                // What came in read into the index off the main thread.
+                let paths = report.changed
+                if let index { await Task.detached(priority: .userInitiated) { paths.forEach(index.refresh) }.value }
+                changed = Set(paths)
+                revision += 1
+            }
+            // Only what came in can bring a conflict: found in the texts
+            // the index holds, not every file read again each sync.
+            if report.pulled, let index {
+                conflicted = await Task.detached(priority: .utility) { index.conflicted() }.value
             }
         } catch {
             syncError = error.localizedDescription

@@ -55,41 +55,105 @@ extension DayView: ColumnBlock {
     }
 }
 
-/// The head of a column of many — the inbox, the tasks: its name, and how
-/// many there are in it.
-final class InboxHeader: NSView, ColumnBlock {
-    private let kicker = NSTextField(labelWithString: "")
-    private let title = NSTextField(labelWithString: "")
-    private let describe: (Int) -> String
-    var metrics: OutlineMetrics { didSet { if metrics.typography != oldValue.typography { style() } } }
-    var count = 0 { didSet { if count != oldValue { style() } } }
+/// A column's name, in small capitals, and how many are in it in a pill
+/// beside it — the rest is clear from what is under it.
+final class ColumnLabel: NSView {
+    private let label = NSTextField(labelWithString: "")
+    private let pill = NSView()
+    private let number = NSTextField(labelWithString: "")
+    var metrics: OutlineMetrics { didSet { if metrics.typography != oldValue.typography || metrics.fontSize != oldValue.fontSize { style() } } }
+    private var title: String
+    /// How many: none shown while nil or naught.
+    var count: Int? { didSet { if count != oldValue { style() } } }
 
     override var isFlipped: Bool { true }
 
-    init(metrics: OutlineMetrics, title: String = "Inbox",
-         describe: @escaping (Int) -> String = { $0 == 0 ? "Nothing to deal with" : "\($0) \($0 == 1 ? "note" : "notes") to deal with" }) {
+    init(_ title: String, metrics: OutlineMetrics) {
+        self.title = title
         self.metrics = metrics
-        self.describe = describe
-        self.title.stringValue = title
         super.init(frame: .zero)
-        addSubview(kicker)
-        addSubview(self.title)
+        pill.wantsLayer = true
+        number.alignment = .center
+        pill.addSubview(number)
+        addSubview(label)
+        addSubview(pill)
         style()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    private var size: CGFloat { round(metrics.fontSize * 0.68) }
+
     private func style() {
         let typography = metrics.typography
-        kicker.attributedStringValue = NSAttributedString(
-            string: describe(count).uppercased(),
-            attributes: [.font: Typography.font(typography.headingFamily, face: typography.headingFace, size: round(metrics.fontSize * 0.68), weight: .semibold),
-                         .foregroundColor: Ink.secondary, .kern: 1.0])
-        title.font = Typography.font(typography.headingFamily, face: typography.headingFace,
-                                     size: round(metrics.fontSize * 1.9), weight: .bold)
+        label.attributedStringValue = NSAttributedString(string: title.uppercased(), attributes: [
+            .font: Typography.font(typography.headingFamily, face: typography.headingFace, size: size, weight: .semibold),
+            .foregroundColor: Ink.secondary, .kern: 1.0,
+        ])
+        let centred = NSMutableParagraphStyle()
+        centred.alignment = .center
+        number.attributedStringValue = NSAttributedString(string: count.map(String.init) ?? "", attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: .semibold),
+            .foregroundColor: Ink.secondary, .paragraphStyle: centred,
+        ])
+        pill.isHidden = (count ?? 0) == 0
         needsLayout = true
+        needsDisplay = true
     }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: ceil(label.intrinsicContentSize.height) + 4)
+    }
+
+    override func layout() {
+        super.layout()
+        let labelSize = label.intrinsicContentSize
+        let height = ceil(labelSize.height) + 4
+        // Room for the last letter's spacing too, which the label leaves out.
+        let width = ceil(label.attributedStringValue.size().width) + 6
+        label.frame = NSRect(x: 0, y: 2, width: width, height: ceil(labelSize.height))
+        let numberSize = number.intrinsicContentSize
+        let pillWidth = max(height, ceil(numberSize.width) + 12)
+        pill.frame = NSRect(x: label.frame.maxX + 2, y: 0, width: pillWidth, height: height)
+        // Across the whole pill, centred: a label's own inset sets a
+        // narrow one's figures off to the right.
+        number.frame = NSRect(x: 0, y: ((height - ceil(numberSize.height)) / 2).rounded(), width: pillWidth, height: ceil(numberSize.height))
+        pill.layer?.cornerRadius = height / 2
+    }
+
+    override func updateLayer() {
+        super.updateLayer()
+        effectiveAppearance.performAsCurrentDrawingAppearance { pill.layer?.backgroundColor = Ink.rule.cgColor }
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+}
+
+/// The head of a column of many — the inbox, the tasks: its name, and how
+/// many there are in it.
+final class InboxHeader: NSView, ColumnBlock {
+    private let label: ColumnLabel
+    var metrics: OutlineMetrics { didSet { label.metrics = metrics; needsLayout = true } }
+    var count = 0 { didSet { label.count = count } }
+
+    override var isFlipped: Bool { true }
+
+    init(metrics: OutlineMetrics, title: String = "Inbox") {
+        self.metrics = metrics
+        label = ColumnLabel(title, metrics: metrics)
+        super.init(frame: .zero)
+        wantsLayer = true
+        addSubview(label)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
 
     private var column: NSRect {
         let column = min(metrics.columnWidth, bounds.width - 48)
@@ -97,18 +161,13 @@ final class InboxHeader: NSView, ColumnBlock {
     }
 
     func desiredHeight(width: CGFloat) -> CGFloat {
-        round(metrics.fontSize * 1.2) + ceil(kicker.intrinsicContentSize.height) + 4 + ceil(title.intrinsicContentSize.height)
-            + round(metrics.fontSize * 0.4)
+        round(metrics.fontSize * 1.2) + label.intrinsicContentSize.height + round(metrics.fontSize * 0.2)
     }
 
     override func layout() {
         super.layout()
         let x = column.minX + metrics.indent - 2
-        var y = round(metrics.fontSize * 1.2)
-        let kickerHeight = ceil(kicker.intrinsicContentSize.height)
-        kicker.frame = NSRect(x: x, y: y, width: column.maxX - x, height: kickerHeight)
-        y += kickerHeight + 4
-        title.frame = NSRect(x: x, y: y, width: column.maxX - x, height: ceil(title.intrinsicContentSize.height))
+        label.frame = NSRect(x: x, y: round(metrics.fontSize * 1.2), width: column.maxX - x, height: label.intrinsicContentSize.height)
     }
 
     func scrubMarks(listed: Bool) -> [ScrubMark] { [] }
@@ -116,34 +175,29 @@ final class InboxHeader: NSView, ColumnBlock {
 
 /// Over a topic's backlinks, under the topic: how many notes link to it.
 final class InlineBacklinksHeader: NSView, ColumnBlock {
-    private let kicker = NSTextField(labelWithString: "")
+    private let label: ColumnLabel
     private let metrics: OutlineMetrics
 
     override var isFlipped: Bool { true }
 
     init(count: Int, metrics: OutlineMetrics) {
         self.metrics = metrics
+        label = ColumnLabel("Backlinks", metrics: metrics)
+        label.count = count
         super.init(frame: .zero)
-        let typography = metrics.typography
-        kicker.attributedStringValue = NSAttributedString(
-            string: (count == 0 ? "No notes link here yet" : "Linked from \(count) \(count == 1 ? "note" : "notes")").uppercased(),
-            attributes: [.font: Typography.font(typography.headingFamily, face: typography.headingFace,
-                                                size: round(metrics.fontSize * 0.68), weight: .semibold),
-                         .foregroundColor: Ink.secondary, .kern: 1.0])
-        addSubview(kicker)
+        addSubview(label)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    func desiredHeight(width: CGFloat) -> CGFloat { round(metrics.fontSize * 2) + ceil(kicker.intrinsicContentSize.height) }
+    func desiredHeight(width: CGFloat) -> CGFloat { round(metrics.fontSize * 2) + label.intrinsicContentSize.height }
 
     override func layout() {
         super.layout()
         let column = min(metrics.columnWidth, bounds.width - 48)
         let x = ((bounds.width - column) / 2).rounded() + metrics.indent - 2
-        kicker.frame = NSRect(x: x, y: round(metrics.fontSize * 1.6), width: bounds.width - x - 24,
-                              height: ceil(kicker.intrinsicContentSize.height))
+        label.frame = NSRect(x: x, y: round(metrics.fontSize * 1.6), width: bounds.width - x - 24, height: label.intrinsicContentSize.height)
     }
 
     func scrubMarks(listed: Bool) -> [ScrubMark] {
@@ -154,7 +208,7 @@ final class InlineBacklinksHeader: NSView, ColumnBlock {
 /// The head of a backlinks column: the note whose links these are, and how
 /// many notes link to it.
 final class BacklinksHeader: NSView, ColumnBlock {
-    private let kicker = NSTextField(labelWithString: "")
+    private let kicker: ColumnLabel
     private let title = NSTextField(labelWithString: "")
     private let metrics: OutlineMetrics
     var onOpen: ((_ newColumn: Bool) -> Void)?
@@ -163,13 +217,10 @@ final class BacklinksHeader: NSView, ColumnBlock {
 
     init(note: String, count: Int?, metrics: OutlineMetrics) {
         self.metrics = metrics
+        kicker = ColumnLabel("Backlinks", metrics: metrics)
+        kicker.count = count
         super.init(frame: .zero)
         let typography = metrics.typography
-        kicker.attributedStringValue = NSAttributedString(
-            string: (count.map { $0 == 0 ? "No notes link to" : "\($0) \($0 == 1 ? "note links" : "notes link") to" } ?? "Finding what links to")
-                .uppercased(),
-            attributes: [.font: Typography.font(typography.headingFamily, face: typography.headingFace, size: round(metrics.fontSize * 0.68), weight: .semibold),
-                         .foregroundColor: Ink.secondary, .kern: 1.0])
         title.stringValue = note
         title.font = Typography.font(typography.headingFamily, face: typography.headingFace,
                                      size: round(metrics.fontSize * 1.45), weight: .bold)

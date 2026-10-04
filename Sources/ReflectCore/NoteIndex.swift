@@ -68,8 +68,9 @@ public final class NoteIndex: @unchecked Sendable {
     /// Reads every note's name. A few thousand notes take a moment; call it
     /// off the main thread.
     public func scan() {
-        var found: [String: NoteEntry] = [:]
-        var texts: [String: (text: String, folded: String)] = [:]
+        // The files found first; then read, and what they say found, on
+        // every core at once — a graph of thousands is read at launch.
+        var files: [(path: String, url: URL)] = []
         for directory in Self.directories {
             let base = root.appendingPathComponent(directory).resolvingSymlinksInPath()
             guard let walker = FileManager.default.enumerator(at: base, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
@@ -77,27 +78,37 @@ public final class NoteIndex: @unchecked Sendable {
             for case let url as URL in walker where url.pathExtension == "md" {
                 let full = url.resolvingSymlinksInPath().path
                 guard full.hasPrefix(base.path + "/") else { continue }
-                let path = directory + "/" + full.dropFirst(base.path.count + 1)
-                guard let entry = read(path, at: url) else { continue }
-                found[path] = entry.entry
-                texts[path] = entry.text
+                files.append((directory + "/" + full.dropFirst(base.path.count + 1), url))
             }
         }
+        typealias Scanned = (entry: NoteEntry, text: (text: String, folded: String), assets: Set<String>, links: Set<String>)
+        let scanned = UnsafeMutableBufferPointer<Scanned?>.allocate(capacity: files.count)
+        scanned.initialize(repeating: nil)
+        defer { scanned.deinitialize(); scanned.deallocate() }
+        DispatchQueue.concurrentPerform(iterations: files.count) { i in
+            guard let read = read(files[i].path, at: files[i].url) else { return }
+            scanned[i] = (read.entry, read.text, Self.assets(in: read.text.text), Backlinks.linkKeys(in: read.text.text))
+        }
+        var found: [String: NoteEntry] = [:]
+        var texts: [String: (text: String, folded: String)] = [:]
         var assets: [String: Set<String>] = [:]
         var notes: [String: Set<String>] = [:]
-        for (path, text) in texts {
-            let referenced = Self.assets(in: text.text)
-            guard !referenced.isEmpty else { continue }
-            assets[path] = referenced
-            for asset in referenced { notes[asset, default: []].insert(path) }
-        }
         var links: [String: Set<String>] = [:]
         var linkers: [String: Set<String>] = [:]
-        for (path, text) in texts {
-            let keys = Backlinks.linkKeys(in: text.text)
-            guard !keys.isEmpty else { continue }
-            links[path] = keys
-            for key in keys { linkers[key, default: []].insert(path) }
+        found.reserveCapacity(files.count)
+        texts.reserveCapacity(files.count)
+        for (i, file) in files.enumerated() {
+            guard let note = scanned[i] else { continue }
+            found[file.path] = note.entry
+            texts[file.path] = note.text
+            if !note.assets.isEmpty {
+                assets[file.path] = note.assets
+                for asset in note.assets { notes[asset, default: []].insert(file.path) }
+            }
+            if !note.links.isEmpty {
+                links[file.path] = note.links
+                for key in note.links { linkers[key, default: []].insert(file.path) }
+            }
         }
         lock.lock()
         entries = found
@@ -107,6 +118,20 @@ public final class NoteIndex: @unchecked Sendable {
         linksOf = links
         linking = linkers
         lock.unlock()
+    }
+
+    /// The days and notes holding a sync conflict still to be resolved,
+    /// found in the texts already read: as `Graph.notesNeedingReview`.
+    public func conflicted() -> [String] {
+        lock.lock()
+        let held = bodies
+        lock.unlock()
+        let folders = [GraphPaths.dailyDirectory + "/", GraphPaths.notesDirectory + "/"]
+        return held.compactMap { path, body in
+            guard folders.contains(where: { path.hasPrefix($0) && !path.dropFirst($0.count).contains("/") }),
+                  body.text.contains("<<<<<<< "), ConflictMarkers.detect(body.text) else { return nil }
+            return path
+        }.sorted()
     }
 
     /// Reads one note again, after it was written; or forgets it, when it

@@ -12,7 +12,18 @@ extension Notification.Name {
 enum PhoneImages {
     /// The graph the pictures' paths are under.
     static var root: URL?
-    private static let cache = NSCache<NSString, UIImage>()
+    nonisolated(unsafe) private static let cache = NSCache<NSString, UIImage>()
+
+    /// A picture when it is in, from any thread; when not, asked for on the
+    /// main thread, and `.prismImageLoaded` says when it is.
+    nonisolated static func lookup(_ source: String) -> UIImage? {
+        if let image = cache.object(forKey: source as NSString) { return image }
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated { image(source) }
+        }
+        DispatchQueue.main.async { _ = image(source) }
+        return nil
+    }
     private static var loading: Set<String> = []
     private static var missing: Set<String> = []
     /// The longest side a picture is read at, in pixels.

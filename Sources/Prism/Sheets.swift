@@ -328,7 +328,10 @@ final class SheetSwitcher: NSView {
     /// Moves the choice along: down the stack by default.
     func move(_ delta: Int) {
         guard !isClosing else { return }
-        selection = (selection + delta + cards.count) % cards.count
+        // A stack, not a ring: back down it, or up to the top, no further.
+        let next = min(max(selection + delta, 0), cards.count - 1)
+        guard next != selection else { return NSSound.beep() }
+        selection = next
         startAnimating()
     }
 
