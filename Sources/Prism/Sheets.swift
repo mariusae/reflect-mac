@@ -45,79 +45,151 @@ extension Column {
                                          bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                                          colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
         rep.size = bounds.size
+        // The sheet, without what floats over it: its bunch, its bar.
+        let floating = chrome.filter { !$0.isHidden }
+        floating.forEach { $0.isHidden = true }
         cacheDisplay(in: bounds, to: rep)
+        floating.forEach { $0.isHidden = false }
         let image = NSImage(size: bounds.size)
         image.addRepresentation(rep)
         return image
     }
 }
 
-/// The band at a column's top: the edges of the sheets beneath, peeking
-/// out over the top one like a stack of paper — each further back higher,
-/// a little narrower, a shade darker — and the top sheet's own edge; or,
-/// with no stacks, a handle when the pointer is near. Dragged, it picks up
-/// the top sheet; clicked, brings up the one just beneath; hovered, lists
-/// them.
-final class SheetEdges: NSView {
-    var count = 0 { didSet { if count != oldValue { needsDisplay = true } } }
-    /// The deepest stack's, among the columns: the band's height.
-    var depth = 0 { didSet { if depth != oldValue { needsDisplay = true } } }
-    var onClick: (() -> Void)?
-    var onHover: ((Bool) -> Void)?
+/// A grip at a column's top, shown as the pointer comes near: dragged, it
+/// picks up the column's sheet, to put on another column or one of its own.
+final class SheetGrip: NSView {
     /// The pointer went down here and moved: the top sheet is picked up.
     var onDrag: ((NSEvent) -> Void)?
 
-    static let most = 3
-    /// How far into the top sheet the band reaches.
-    static let reach: CGFloat = 8
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard hovering else { return }
+        let grip = NSRect(x: bounds.midX - 20, y: bounds.midY - 2, width: 40, height: 4)
+        Ink.faint.setFill()
+        NSBezierPath(roundedRect: grip, xRadius: 2, yRadius: 2).fill()
+    }
+
+    private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
+
+    override func updateTrackingAreas() {
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+        super.updateTrackingAreas()
+    }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+
+    private var downAt: NSPoint?
+
+    override func mouseDown(with event: NSEvent) { downAt = event.locationInWindow }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = downAt, hypot(event.locationInWindow.x - start.x, event.locationInWindow.y - start.y) > 4 else { return }
+        downAt = nil
+        onDrag?(event)
+    }
+
+    override func mouseUp(with event: NSEvent) { downAt = nil }
+}
+
+/// The sheets beneath a column's own, bunched in its title bar: the one
+/// going back would show, by its name, over the edges of those under it.
+/// Hovered, they are listed, each shown as it was; clicked, the column goes
+/// back to the nearest.
+final class StackPill: NSView {
+    /// The sheets beneath, the bottom first.
+    var sheets: [Sheet] = [] { didSet { restyle() } }
+    var face: Typeface = .mona { didSet { restyle() } }
+    var onClick: (() -> Void)?
+    var onHover: ((Bool) -> Void)?
+    /// Picked up and moved: the column's own sheet, to put elsewhere.
+    var onDrag: ((NSEvent) -> Void)?
+
+    private let icon = NSImageView()
+    private let title = NSTextField(labelWithString: "")
+    /// The edges of the sheets further down, up to so many.
+    private static let most = 3
+    private static let height: CGFloat = 24
+    private static let step: CGFloat = 4
 
     override var isFlipped: Bool { true }
 
-    private static let shades = [Ink.dynamic(NSColor(srgbRed: 0.937, green: 0.922, blue: 0.894, alpha: 1),
-                                             NSColor(srgbRed: 0.16, green: 0.149, blue: 0.137, alpha: 1)),
-                                 Ink.dynamic(NSColor(srgbRed: 0.91, green: 0.894, blue: 0.863, alpha: 1),
-                                             NSColor(srgbRed: 0.137, green: 0.125, blue: 0.114, alpha: 1)),
-                                 Ink.dynamic(NSColor(srgbRed: 0.882, green: 0.863, blue: 0.831, alpha: 1),
-                                             NSColor(srgbRed: 0.118, green: 0.106, blue: 0.098, alpha: 1))]
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        title.lineBreakMode = .byTruncatingTail
+        addSubview(icon)
+        addSubview(title)
+        restyle()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    private var behind: Int { min(max(sheets.count - 1, 0), Self.most - 1) }
+
+    private func restyle() {
+        guard let top = sheets.last else { return }
+        icon.image = NSImage(systemSymbolName: StackPill.symbol(for: top.kind), accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+        icon.contentTintColor = Ink.secondary
+        title.attributedStringValue = NSAttributedString(string: top.title, attributes: [
+            .font: face.font(size: 12.5, weight: .medium), .foregroundColor: Ink.text,
+        ])
+        toolTip = sheets.count == 1 ? "Back to “\(top.title)”" : "Back to “\(top.title)” — \(sheets.count) sheets beneath"
+        needsLayout = true
+        needsDisplay = true
+    }
+
+    static func symbol(for kind: Column.Kind) -> String {
+        switch kind {
+        case .timeline: "calendar"
+        case .note: "doc.text"
+        case .backlinks: "link"
+        case .inbox: "tray"
+        case .tasks: "checklist"
+        case .search: "magnifyingglass"
+        }
+    }
+
+    /// As wide as its name wants, within so much.
+    func fittingWidth(within most: CGFloat) -> CGFloat {
+        let text = ceil(title.attributedStringValue.size().width)
+        return min(most, text + 40 + CGFloat(behind) * Self.step)
+    }
+
+    static var fittingHeight: CGFloat { height + CGFloat(most - 1) * step }
+
+    /// Where the front one is: the others peek out above and to its left.
+    var front: NSRect {
+        let inset = CGFloat(behind) * Self.step
+        return NSRect(x: inset, y: inset, width: bounds.width - inset, height: Self.height)
+    }
+
+    override func layout() {
+        super.layout()
+        let front = front
+        icon.frame = NSRect(x: front.minX + 9, y: front.midY - 7, width: 15, height: 14)
+        let titleHeight = ceil(title.intrinsicContentSize.height)
+        title.frame = NSRect(x: front.minX + 27, y: (front.midY - titleHeight / 2).rounded(), width: front.width - 36, height: titleHeight)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard depth > 0 else {
-            // A sheet alone, and no stacks: a handle to pick it up by, when wanted.
-            guard hovering else { return }
-            let grip = NSRect(x: bounds.midX - 20, y: bounds.midY - 2, width: 40, height: 4)
-            Ink.faint.setFill()
-            NSBezierPath(roundedRect: grip, xRadius: 2, yRadius: 2).fill()
-            return
+        let front = front
+        // The furthest first, each a little up and left of the one before it.
+        for level in stride(from: behind, through: 0, by: -1) {
+            let offset = CGFloat(level) * Self.step
+            let rect = front.offsetBy(dx: -offset, dy: -offset).insetBy(dx: 0.5, dy: 0.5)
+            let path = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
+            (level == 0 ? (hovering ? Ink.shelf : Ink.paper) : Ink.shelf).setFill()
+            path.fill()
+            Ink.text.withAlphaComponent(level == 0 ? 0.14 : 0.1).setStroke()
+            path.lineWidth = 1
+            path.stroke()
         }
-        let top = bounds.height - Self.reach
-        let edge = hovering ? Ink.secondary.withAlphaComponent(0.55) : Ink.text.withAlphaComponent(0.16)
-        // The sheets beneath, the deepest first, each tucked under the nearer.
-        for level in (0..<min(count, Self.most)).reversed() {
-            let inset = 6 + CGFloat(level) * 6
-            let y = top - CGFloat(level + 1) * Column.sheetStep
-            let sheet = NSBezierPath(roundedRect: NSRect(x: inset, y: y, width: bounds.width - 2 * inset, height: top - y + 6),
-                                     xRadius: 6, yRadius: 6)
-            NSGraphicsContext.saveGraphicsState()
-            NSRect(x: 0, y: 0, width: bounds.width, height: top).clip()
-            Self.shades[level].setFill()
-            sheet.fill()
-            edge.setStroke()
-            sheet.lineWidth = 0.5
-            sheet.stroke()
-            NSGraphicsContext.restoreGraphicsState()
-        }
-        // The top sheet's own edge: a hairline over its rounded top.
-        let r: CGFloat = 6, w = bounds.width, y = top + 0.25
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: 0.25, y: bounds.height))
-        path.line(to: NSPoint(x: 0.25, y: y + r))
-        path.appendArc(withCenter: NSPoint(x: r + 0.25, y: y + r), radius: r, startAngle: 180, endAngle: 270, clockwise: false)
-        path.line(to: NSPoint(x: w - r - 0.25, y: y))
-        path.appendArc(withCenter: NSPoint(x: w - r - 0.25, y: y + r), radius: r, startAngle: 270, endAngle: 0, clockwise: false)
-        path.line(to: NSPoint(x: w - 0.25, y: bounds.height))
-        path.lineWidth = 0.5
-        edge.setStroke()
-        path.stroke()
     }
 
     private var hovering = false {
@@ -134,10 +206,6 @@ final class SheetEdges: NSView {
         super.updateTrackingAreas()
     }
 
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .openHand)
-    }
-
     override func mouseEntered(with event: NSEvent) { hovering = true }
     override func mouseExited(with event: NSEvent) { hovering = false }
 
@@ -146,9 +214,7 @@ final class SheetEdges: NSView {
     override func mouseDown(with event: NSEvent) { downAt = event.locationInWindow }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let start = downAt else { return }
-        let moved = hypot(event.locationInWindow.x - start.x, event.locationInWindow.y - start.y)
-        guard moved > 4 else { return }
+        guard let start = downAt, hypot(event.locationInWindow.x - start.x, event.locationInWindow.y - start.y) > 4 else { return }
         downAt = nil
         onDrag?(event)
     }
@@ -160,65 +226,77 @@ final class SheetEdges: NSView {
     }
 }
 
-/// The sheets beneath, listed under their edges, the most lately left first.
-final class SheetList: NSView {
+/// The bunched sheets, hovered: spread across the column's top, one after
+/// another, the oldest at the left and the column's own at the right — to
+/// scrub along, the column showing each as the pointer passes over it, and
+/// to click, going back to it.
+final class StackScrubber: NSView {
+    /// The sheet under the pointer, by its place (0 at the bottom; the
+    /// column's own last).
+    var onHover: ((Int) -> Void)?
     var onChoose: ((Int) -> Void)?
-    /// A row was picked up and moved: that sheet is being dragged.
+    /// A sheet picked up and moved: being dragged.
     var onDrag: ((Int, NSEvent) -> Void)?
-    /// Told when the pointer leaves it.
     var onLeave: (() -> Void)?
-    private var rows: [FinderRow] = []
+
+    private var sheets: [Sheet] = []
+    private var face: Typeface = .mona
+    private(set) var hovered: Int?
+    /// Whether its sheets are named: not while it spreads and gathers.
+    var spread = true { didSet { needsDisplay = true } }
 
     override var isFlipped: Bool { true }
 
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-        layer?.cornerRadius = 10
-        layer?.cornerCurve = .continuous
-        layer?.borderWidth = 0.5
-        shadow = {
-            let shadow = NSShadow()
-            shadow.shadowColor = NSColor.black.withAlphaComponent(0.16)
-            shadow.shadowBlurRadius = 18
-            shadow.shadowOffset = NSSize(width: 0, height: -4)
-            return shadow
-        }()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    static let rowHeight: CGFloat = 34
-
-    /// Shows sheets: their titles, and what kind each is.
+    /// `sheets` bottom to top, the column's own last.
     func show(_ sheets: [Sheet], face: Typeface) {
-        rows.forEach { $0.removeFromSuperview() }
-        rows = sheets.map { sheet in
-            let detail: String? = switch sheet.kind {
-            case .timeline: "Timeline"
-            case .note: nil
-            case .backlinks: "Backlinks"
-            case .inbox, .tasks: nil
-            case .search: "Search"
-            }
-            let row = FinderRow(place: Place(title: sheet.title, path: "", detail: detail), face: face)
-            addSubview(row)
-            return row
-        }
-        needsLayout = true
+        self.sheets = sheets
+        self.face = face
+        hovered = nil
+        needsDisplay = true
     }
 
-    var fittingHeight: CGFloat { CGFloat(rows.count) * Self.rowHeight + 12 }
+    private func segment(_ i: Int) -> NSRect {
+        let width = bounds.width / CGFloat(max(sheets.count, 1))
+        return NSRect(x: CGFloat(i) * width, y: 0, width: width, height: bounds.height).insetBy(dx: 2, dy: 2)
+    }
 
-    override func layout() {
-        super.layout()
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = Ink.paper.cgColor
-            layer?.borderColor = Ink.rule.cgColor
-        }
-        for (i, row) in rows.enumerated() {
-            row.frame = NSRect(x: 6, y: 6 + CGFloat(i) * Self.rowHeight, width: bounds.width - 12, height: Self.rowHeight)
+    override func draw(_ dirtyRect: NSRect) {
+        let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: bounds.height / 2, yRadius: bounds.height / 2)
+        Ink.paper.setFill()
+        outline.fill()
+        Ink.text.withAlphaComponent(0.14).setStroke()
+        outline.lineWidth = 1
+        outline.stroke()
+        guard spread else { return }
+        let own = sheets.count - 1
+        for (i, sheet) in sheets.enumerated() {
+            let rect = segment(i)
+            if i == hovered {
+                Ink.shelf.setFill()
+                NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
+            }
+            if i > 0, i != hovered, i - 1 != hovered {
+                Ink.rule.setFill()
+                NSRect(x: rect.minX - 2.5, y: rect.midY - 6, width: 1, height: 12).fill()
+            }
+            let color = i == own || i == hovered ? Ink.text : Ink.secondary
+            var x = rect.minX + 10
+            if rect.width > 48, let icon = NSImage(systemSymbolName: StackPill.symbol(for: sheet.kind), accessibilityDescription: nil)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10.5, weight: .regular)
+                    .applying(NSImage.SymbolConfiguration(paletteColors: [color]))) {
+                let size = icon.size
+                icon.draw(in: NSRect(x: x, y: (rect.midY - size.height / 2).rounded(), width: size.width, height: size.height),
+                          from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                x += size.width + 5
+            }
+            let style = NSMutableParagraphStyle()
+            style.lineBreakMode = .byTruncatingTail
+            let title = NSAttributedString(string: sheet.title, attributes: [
+                .font: face.font(size: 12, weight: i == own ? .semibold : .medium), .foregroundColor: color, .paragraphStyle: style,
+            ])
+            let height = ceil(title.size().height)
+            title.draw(with: NSRect(x: x, y: (rect.midY - height / 2).rounded(), width: max(0, rect.maxX - 8 - x), height: height),
+                       options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
         }
     }
 
@@ -229,41 +307,41 @@ final class SheetList: NSView {
         super.updateTrackingAreas()
     }
 
-    override func mouseExited(with event: NSEvent) { onLeave?() }
-
-    // Its rows are clicked to raise their sheets, or picked up and dragged.
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        frame.contains(point) ? self : nil
-    }
-
-    private func row(at event: NSEvent) -> Int? {
+    private func index(at event: NSEvent) -> Int? {
         let point = convert(event.locationInWindow, from: nil)
-        return rows.firstIndex { $0.frame.contains(point) }
+        guard bounds.insetBy(dx: -2, dy: -6).contains(point), !sheets.isEmpty else { return nil }
+        return min(sheets.count - 1, max(0, Int(point.x / (bounds.width / CGFloat(sheets.count)))))
     }
 
-    private var down: (row: Int, at: NSPoint)?
+    /// Points at a sheet, as the pointer does.
+    func hover(_ i: Int) {
+        guard sheets.indices.contains(i), i != hovered else { return }
+        hovered = i
+        needsDisplay = true
+        onHover?(i)
+    }
 
     override func mouseMoved(with event: NSEvent) {
-        let hovered = row(at: event)
-        for (i, row) in rows.enumerated() { row.selected = i == hovered }
+        if let i = index(at: event) { hover(i) }
     }
 
-    override func mouseDown(with event: NSEvent) {
-        down = row(at: event).map { ($0, event.locationInWindow) }
-    }
+    override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
+    override func mouseExited(with event: NSEvent) { onLeave?() }
+
+    private var down: (index: Int, at: NSPoint)?
+
+    override func mouseDown(with event: NSEvent) { down = index(at: event).map { ($0, event.locationInWindow) } }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let down else { return }
-        guard hypot(event.locationInWindow.x - down.at.x, event.locationInWindow.y - down.at.y) > 4 else { return }
+        guard let down, hypot(event.locationInWindow.x - down.at.x, event.locationInWindow.y - down.at.y) > 4 else { return }
         self.down = nil
-        onDrag?(down.row, event)
+        onDrag?(down.index, event)
     }
 
     override func mouseUp(with event: NSEvent) {
         guard let down else { return }
         self.down = nil
-        if row(at: event) == down.row { onChoose?(down.row) }
+        if index(at: event) == down.index { onChoose?(down.index) }
     }
 }
 
@@ -295,6 +373,9 @@ final class SheetSwitcher: NSView {
     private var onClosed: (() -> Void)?
     private(set) var isClosing = false
     private var scrolled: CGFloat = 0
+    /// Where the sheets beneath fly out from as it opens, and back into as
+    /// it closes: their bunch in the title bar, in its own coordinates.
+    var origin: NSRect?
 
     override var isFlipped: Bool { false }
 
@@ -463,6 +544,15 @@ final class SheetSwitcher: NSView {
                 fog *= p
                 alpha = pose.alpha + (1 - pose.alpha) * q
                 chrome = p
+            } else if let origin {
+                // Out of the bunch in the title bar, and back into it.
+                let e = p * p * (3 - 2 * p)
+                frame = NSRect(x: origin.minX + (frame.minX - origin.minX) * e,
+                               y: origin.minY + (frame.minY - origin.minY) * e,
+                               width: origin.width + (frame.width - origin.width) * e,
+                               height: origin.height + (frame.height - origin.height) * e)
+                tilt *= e
+                alpha = pose.alpha * min(1, p * 4)
             }
             card.chrome = chrome
             card.fog = fog

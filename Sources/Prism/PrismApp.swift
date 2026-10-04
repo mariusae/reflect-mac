@@ -128,7 +128,8 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         if let path = environment["PRISM_INBOX_REMOVE"] { controller.removeFromInboxForScript(path) }
         if environment["PRISM_INBOX"] == "1" { controller.showInbox(nil) }
         if environment["PRISM_TASKS"] == "1" { controller.showTasks(nil) }
-        if let choice = environment["PRISM_BAR"] { controller.sheetBarForScript(choice) }
+        for choice in (environment["PRISM_BAR"] ?? "").split(separator: "|") { controller.sheetBarForScript(String(choice)) }
+        if let peek = environment["PRISM_PEEK"] { controller.peekForScript(pointingAt: Int(peek)) }
         if environment["PRISM_KEY"] == "1" { controller.becomeKeyForScript() }
         if environment["PRISM_SYNC"] == "1" { controller.syncNow(nil) }
         if let title = environment["PRISM_NEW"] { controller.newNoteForScript(title: title) }

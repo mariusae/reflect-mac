@@ -47,38 +47,38 @@ final class Column: NSView, OutlineTextViewNavigator {
     private let sheetBar = SheetBar()
     /// A sheet of a kind asked for, from the bar, on this column.
     var onAddSheet: ((Column, SheetBar.Choice) -> Void)?
-    private let edges = SheetEdges()
-    private var sheetList: SheetList?
+    private let grip = SheetGrip()
+    /// The sheets beneath, bunched in the title bar.
+    private let stackPill = StackPill()
+    /// What floats over the sheet, left out of its picture.
+    var chrome: [NSView] { [stackPill, sheetBar, close, preview] + (stackScrubber.map { [$0] } ?? []) }
+    /// The bunch spread across the top, while hovered.
+    private var stackScrubber: StackScrubber?
+    /// Over the column while scrubbing: the sheet pointed at, as it was.
+    private let preview = NSImageView()
     /// The sheets beneath the one shown, the bottom first: where the column
     /// has been, to go back to.
     var beneath: [Sheet] = [] {
         didSet {
-            edges.count = beneath.count
-            needsLayout = true
-            if beneath.count != oldValue.count { onStackChange?() }
-        }
-    }
-    /// Its stack grew or shrank: the columns' top sheets lined up again.
-    var onStackChange: (() -> Void)?
-    /// How many sheets the deepest stack among the columns shows beneath its
-    /// top: room above every column's top sheet for that many, so the top
-    /// sheets line up, however many each has beneath.
-    var stackDepth = 0 {
-        didSet {
-            guard stackDepth != oldValue else { return }
-            edges.depth = stackDepth
+            stackPill.sheets = beneath
+            stackPill.isHidden = beneath.isEmpty || switcher != nil || stackScrubber != nil
+            if beneath.isEmpty { hideSheetList() }
             needsLayout = true
         }
     }
+    /// A picture drawn of a sheet, at the column's size: for one beneath
+    /// that has none, left before a restart.
+    var onNeedPicture: ((Sheet, NSSize) -> NSImage?)?
 
-    /// Room at the top for the window's buttons, over a stack.
-    static let titleRoom: CGFloat = 30
-    /// How much of each sheet beneath shows above the one in front of it.
-    static let sheetStep: CGFloat = 10
+    /// The sheet beneath at a place, its picture drawn if it has none.
+    private func pictured(_ index: Int) -> NSImage? {
+        guard beneath.indices.contains(index) else { return nil }
+        if let image = beneath[index].snapshot { return image }
+        let image = onNeedPicture?(beneath[index], bounds.size)
+        beneath[index].snapshot = image
+        return image
+    }
 
-    /// How far down the top sheet starts: the window's row of buttons and
-    /// the sheets beneath, when there are stacks; nothing, else.
-    var cardInset: CGFloat { stackDepth == 0 ? 0 : Self.titleRoom + CGFloat(stackDepth) * Self.sheetStep + 2 }
     /// Told to bring a sheet beneath to the top, by its place in `beneath`.
     var onRaise: ((Column, Int) -> Void)?
     /// A sheet was picked up: the top, for nil; else one beneath, by its place.
@@ -133,7 +133,14 @@ final class Column: NSView, OutlineTextViewNavigator {
         addSubview(scrubber)
         addSubview(tip)
         addSubview(close)
-        addSubview(edges)
+        addSubview(grip)
+        preview.imageScaling = .scaleProportionallyUpOrDown
+        preview.imageAlignment = .alignTop
+        preview.wantsLayer = true
+        preview.isHidden = true
+        addSubview(preview)
+        addSubview(stackPill)
+        stackPill.isHidden = true
         addSubview(sheetBar)
         sheetBar.alphaValue = 0
         sheetBar.isHidden = true
@@ -142,18 +149,22 @@ final class Column: NSView, OutlineTextViewNavigator {
             hideSheetBar()
             onAddSheet?(self, choice)
         }
-        edges.onClick = { [weak self] in
+        stackPill.onClick = { [weak self] in
             guard let self, !beneath.isEmpty else { return }
             hideSheetList()
             onRaise?(self, beneath.count - 1)
         }
-        edges.onDrag = { [weak self] event in
+        stackPill.onDrag = { [weak self] event in
             guard let self else { return }
             hideSheetList()
             onDragSheet?(self, nil, event)
         }
-        edges.onHover = { [weak self] inside in
-            if inside { self?.showSheetList() } else { self?.hideSheetListSoon() }
+        stackPill.onHover = { [weak self] inside in
+            if inside { self?.showSheetList() }
+        }
+        grip.onDrag = { [weak self] event in
+            guard let self else { return }
+            onDragSheet?(self, nil, event)
         }
         tip.isHidden = true
         close.isHidden = true
@@ -215,50 +226,89 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     // MARK: Sheets
 
-    private func showSheetList() {
-        hideTimer?.invalidate()
-        guard !beneath.isEmpty, switcher == nil else { return }
-        let list = sheetList ?? {
-            let list = SheetList()
-            list.onChoose = { [weak self] row in
-                guard let self else { return }
-                hideSheetList()
-                onRaise?(self, beneath.count - 1 - row)
-            }
-            list.onLeave = { [weak self] in self?.hideSheetListSoon() }
-            list.onDrag = { [weak self] row, event in
-                guard let self else { return }
-                hideSheetList()
-                onDragSheet?(self, beneath.count - 1 - row, event)
-            }
-            addSubview(list)
-            sheetList = list
-            return list
-        }()
-        list.show(beneath.reversed(), face: face)
-        let width = min(360, bounds.width - 48)
-        let height = min(list.fittingHeight, bounds.height - 120)
-        list.frame = NSRect(x: ((bounds.width - width) / 2).rounded(), y: edges.frame.minY - 6 - height, width: width, height: height)
+    /// The bunch spread, and a sheet pointed at: for a script's picture.
+    func showSheetListForScript(pointingAt index: Int?) {
+        showSheetList(animated: false)
+        if let index { stackScrubber?.hover(index) }
     }
 
-    private var hideTimer: Timer?
-
-    /// The list goes when the pointer has left both it and the edges.
-    private func hideSheetListSoon() {
-        hideTimer?.invalidate()
-        hideTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, let list = self.sheetList, let window = self.window else { return }
-                let point = self.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-                if !list.frame.contains(point), !self.edges.frame.contains(point) { self.hideSheetList() }
-            }
+    /// Spreads the bunched sheets across the top, to scrub along: the
+    /// column shows each pointed at, as it was; a click goes back to it.
+    private func showSheetList(animated: Bool = true) {
+        guard !beneath.isEmpty, switcher == nil, stackScrubber == nil else { return }
+        let sheets = beneath + [Sheet(kind: kind, place: nil, offset: 0, title: Self.title(of: kind, top: current?.ref), snapshot: nil)]
+        let scrubber = StackScrubber()
+        scrubber.show(sheets, face: face)
+        scrubber.onHover = { [weak self] index in self?.showPreview(index) }
+        scrubber.onChoose = { [weak self] index in
+            guard let self else { return }
+            hideSheetList(animated: false)
+            if index < beneath.count { onRaise?(self, index) }
+        }
+        scrubber.onDrag = { [weak self] index, event in
+            guard let self else { return }
+            hideSheetList(animated: false)
+            onDragSheet?(self, index < beneath.count ? index : nil, event)
+        }
+        scrubber.onLeave = { [weak self] in self?.hideSheetList() }
+        stackScrubber = scrubber
+        addSubview(scrubber)
+        stackPill.isHidden = true
+        sheetBar.isHidden = true
+        // Out from the bunch, leftward across the top.
+        let pill = stackPill.frame.offsetBy(dx: 0, dy: 0)
+        let front = NSRect(x: pill.maxX - stackPill.front.width, y: pill.maxY - stackPill.front.maxY,
+                           width: stackPill.front.width, height: stackPill.front.height)
+        let across = NSRect(x: 16, y: front.minY, width: front.maxX - 16, height: front.height)
+        guard animated else {
+            scrubber.frame = across
+            return
+        }
+        scrubber.spread = false
+        scrubber.frame = front
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.18
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            scrubber.animator().frame = across
+        }) { [weak scrubber] in
+            MainActor.assumeIsolated { scrubber?.spread = true }
         }
     }
 
-    private func hideSheetList() {
-        hideTimer?.invalidate()
-        sheetList?.removeFromSuperview()
-        sheetList = nil
+    /// The column shows a sheet beneath as it was; its own, as it is.
+    private func showPreview(_ index: Int) {
+        guard index < beneath.count, let image = pictured(index) else {
+            preview.isHidden = true
+            return
+        }
+        preview.image = image
+        preview.frame = bounds
+        effectiveAppearance.performAsCurrentDrawingAppearance { preview.layer?.backgroundColor = Ink.paper.cgColor }
+        preview.isHidden = false
+    }
+
+    private func hideSheetList(animated: Bool = true) {
+        guard let scrubber = stackScrubber else { return }
+        stackScrubber = nil
+        preview.isHidden = true
+        preview.image = nil
+        let done = { [weak self] in
+            scrubber.removeFromSuperview()
+            guard let self else { return }
+            stackPill.isHidden = beneath.isEmpty || switcher != nil
+        }
+        guard animated, !beneath.isEmpty else { return done() }
+        scrubber.spread = false
+        let pill = stackPill.frame
+        let front = NSRect(x: pill.maxX - stackPill.front.width, y: pill.maxY - stackPill.front.maxY,
+                           width: stackPill.front.width, height: stackPill.front.height)
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.15
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            scrubber.animator().frame = front
+        }) {
+            MainActor.assumeIsolated { done() }
+        }
     }
 
     /// Opens ⌘E's cards on the sheet just beneath the top — ⇧⌘E, on the
@@ -266,12 +316,17 @@ final class Column: NSView, OutlineTextViewNavigator {
     func openSwitcher(backward: Bool) {
         guard switcher == nil, !beneath.isEmpty else { return }
         hideSheetList()
+        // The nearest few drawn, where they have no pictures: the cards show them.
+        for index in beneath.indices.reversed().prefix(6) { _ = pictured(index) }
         let sheets = beneath + [currentSheet]
         let switcher = SheetSwitcher(sheets: sheets, contentSize: bounds.size, selection: backward ? sheets.count - 1 : sheets.count - 2, face: face)
         switcher.frame = bounds
+        // The sheets beneath come out of their bunch, and go back into it.
+        switcher.origin = stackPill.frame
         switcher.onPick = { [weak self] index in self?.closeSwitcher(choosing: index) }
         addSubview(switcher)
         self.switcher = switcher
+        stackPill.isHidden = true
         switcher.present()
     }
 
@@ -290,6 +345,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             guard let self else { return }
             self.switcher = nil
             if chosen != top { onRaise?(self, chosen) }
+            stackPill.isHidden = beneath.isEmpty
         }
     }
 
@@ -859,27 +915,22 @@ final class Column: NSView, OutlineTextViewNavigator {
     override func layout() {
         super.layout()
         // The top sheet: the column's notes, under the sheets beneath.
-        let card = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - cardInset)
+        let card = bounds
         scroll.frame = card
-        if let layer = scroll.layer {
-            // Over a stack, a sheet: its top corners rounded.
-            layer.cornerRadius = cardInset > 0 ? 6 : 0
-            layer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-            layer.masksToBounds = cardInset > 0
-        }
         fade.frame = NSRect(x: 0, y: card.maxY - 64, width: card.width, height: 64)
         scrubber.frame = NSRect(x: 4, y: 56, width: 40, height: max(0, card.height - 112))
         close.frame = NSRect(x: bounds.width - 34, y: bounds.height - 34, width: 22, height: 22)
         let bar = sheetBar.fittingSize
-        sheetBar.frame = NSRect(x: max(8, ((bounds.width - bar.width) / 2).rounded()), y: card.maxY - bar.height - 10,
-                                width: bar.width, height: bar.height)
-        if stackDepth > 0 {
-            // From the deepest sheet's edge down into the top sheet's.
-            let band = CGFloat(stackDepth) * Self.sheetStep + 2
-            edges.frame = NSRect(x: 0, y: card.maxY - SheetEdges.reach, width: bounds.width, height: band + SheetEdges.reach)
-        } else {
-            edges.frame = NSRect(x: 56, y: bounds.height - 30 - 12, width: max(0, bounds.width - 112), height: 12)
-        }
+        // Centred, or left of the bunched sheets where they would meet.
+        var barX = ((bounds.width - bar.width) / 2).rounded()
+        if !beneath.isEmpty { barX = min(barX, close.frame.minX - 6 - stackPill.fittingWidth(within: min(260, bounds.width * 0.45)) - 10 - bar.width) }
+        sheetBar.frame = NSRect(x: max(8, barX), y: card.maxY - bar.height - 10, width: bar.width, height: bar.height)
+        grip.frame = NSRect(x: 56, y: bounds.height - 12, width: max(0, bounds.width - 112), height: 12)
+        // The sheets beneath, bunched left of the ×, on its middle.
+        let pillHeight = StackPill.fittingHeight
+        let pillWidth = stackPill.fittingWidth(within: max(0, min(260, bounds.width * 0.45)))
+        stackPill.frame = NSRect(x: close.frame.minX - 6 - pillWidth, y: close.frame.maxY - pillHeight + 1,
+                                 width: pillWidth, height: pillHeight)
         switcher?.frame = bounds
         relayout()
     }

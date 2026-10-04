@@ -182,12 +182,34 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             self?.saveLayout()
         }
         column.onRaise = { [weak self] column, index in self?.raise(index, in: column) }
-        column.onStackChange = { [weak self] in self?.lineUpStacks() }
         column.onOpenAlone = { [weak self] ref, column, newColumn in self?.openAlone(ref, from: column, newColumn: newColumn) }
         column.onDragSheet = { [weak self] column, index, event in self?.drag(index, from: column, event: event) }
         column.onRemoveFromInbox = { [weak self] ref in self?.setFrontmatter(ref.path, "inbox", nil) }
         column.onNoteMenu = { [weak self] view, button in self?.showNoteMenu(for: view, from: button) }
+        column.onNeedPicture = { [weak self] sheet, size in self?.picture(of: sheet, size: size) }
         return column
+    }
+
+    /// A sheet drawn out of sight, in a column of its own made for it, at a
+    /// size: its picture, for one beneath that has none.
+    private func picture(of sheet: Sheet, size: NSSize) -> NSImage? {
+        guard size.width > 0, size.height > 0 else { return nil }
+        let column = Column(graph: graph, images: images, metrics: metrics)
+        column.face = face
+        column.frame = NSRect(x: -size.width - 4000, y: 0, width: size.width, height: size.height)
+        page.addSubview(column, positioned: .below, relativeTo: nil)
+        column.layoutSubtreeIfNeeded()
+        let was = active
+        materialize(sheet, in: column, remember: false)
+        active = was
+        column.layoutSubtreeIfNeeded()
+        // Where it was read to, again, now that its notes are laid out.
+        if let place = sheet.place { column.restore(place, key: place.ref) }
+        column.layoutSubtreeIfNeeded()
+        column.displayIfNeeded()
+        let image = column.snapshot()
+        column.removeFromSuperview()
+        return image
     }
 
     /// A new column, right of another.
@@ -230,16 +252,8 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         if let view = active?.current { window?.makeFirstResponder(view.editor) }
     }
 
-    /// Every column's top sheet at the same height: room over each for as
-    /// many sheets as the deepest stack shows.
-    private func lineUpStacks() {
-        let depth = columns.map { min($0.beneath.count, SheetEdges.most) }.max() ?? 0
-        columns.forEach { $0.stackDepth = depth }
-        page.needsLayout = true
-    }
-
     private func columnsChanged() {
-        lineUpStacks()
+        page.needsLayout = true
         saveLayout()
         for column in columns { column.closable = columns.count > 1 }
         dividers.forEach { $0.removeFromSuperview() }
@@ -378,7 +392,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }
 
     /// Shows a sheet in a column, as it was left.
-    private func materialize(_ sheet: Sheet, in column: Column, key: NoteRef? = nil) {
+    private func materialize(_ sheet: Sheet, in column: Column, key: NoteRef? = nil, remember: Bool = true) {
         active = column
         switch sheet.kind {
         case .timeline:
@@ -401,6 +415,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         case .search(let query):
             search(query, in: column, offset: sheet.offset)
         }
+        guard remember else { return }
         showHeading()
         refreshSidebar()
         saveLayout()
@@ -620,9 +635,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         }
         let height = ceil(heading.intrinsicContentSize.height)
         let first = columns.first?.frame ?? bounds
-        // In the first column's top sheet, under any sheets beneath it.
-        let inset = columns.first?.cardInset ?? 0
-        heading.frame = NSRect(x: first.minX + 80, y: bounds.height - inset - 26 - height / 2, width: first.width - 160, height: height)
+        heading.frame = NSRect(x: first.minX + 80, y: bounds.height - 26 - height / 2, width: first.width - 160, height: height)
         let statusSize = syncStatus.attributedStringValue.size()
         let statusWidth = min(ceil(statusSize.width) + 6, bounds.width / 2)
         syncStatus.frame = NSRect(x: bounds.width - statusWidth - 16, y: 10, width: statusWidth, height: ceil(statusSize.height) + 2)
@@ -1663,6 +1676,8 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }
 
     /// Opens the backlinks column of a note, from the column it is in.
+    func peekForScript(pointingAt index: Int?) { columns.last?.showSheetListForScript(pointingAt: index) }
+
     func sheetBarForScript(_ choice: String) {
         guard let column = columns.last else { return }
         column.showSheetBar()
