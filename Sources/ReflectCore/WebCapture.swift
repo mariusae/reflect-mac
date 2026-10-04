@@ -144,9 +144,10 @@ public enum WebCapture {
 
     /// Saves a capture into a graph: the page's note — its own, when it was
     /// captured before, found by its id — and the link from the day's.
-    /// Returns the note's path.
+    /// Returns the note's path. The note goes in the inbox, to be dealt
+    /// with — captured again, back in it.
     @discardableResult
-    public static func save(_ page: Page, in graph: Graph, index: NoteIndex, on day: Day = .today) throws -> String {
+    public static func save(_ page: Page, in graph: Graph, index: NoteIndex, on day: Day = .today, inbox: Bool = true) throws -> String {
         let id = id(for: page.url)
         let marker = "id: \"\(id)\""
         let existing = index.all.first { entry in
@@ -164,6 +165,10 @@ public enum WebCapture {
             title = self.title(page.title, url: page.url)
             path = freePath(for: title, in: graph)
             try graph.write(note(for: page), path: path)
+        }
+        if inbox, let source = graph.read(path: path) {
+            let flagged = Frontmatter.setting("inbox", to: "true", in: source)
+            if flagged != source { try graph.write(flagged, path: path) }
         }
         index.refresh(path)
         let dayPath = GraphPaths.dailyPath(for: day)

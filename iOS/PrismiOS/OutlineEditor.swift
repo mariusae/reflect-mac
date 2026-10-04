@@ -5,6 +5,18 @@ import PrismCore
 extension NSAttributedString.Key {
     /// Markup not shown: a span's marks, while the caret is away from it.
     static let prismHidden = NSAttributedString.Key("PrismHidden")
+    /// On the first character of a picture's Markdown: the picture, drawn in its place.
+    static let prismImage = NSAttributedString.Key("PrismImage")
+    /// On a link's last hidden opening character: the symbol drawn there —
+    /// a page, a day, the web — in room of its own, inside the pill.
+    static let prismIcon = NSAttributedString.Key("PrismIcon")
+    /// On a paragraph: the room above its first line.
+    static let prismSpaceBefore = NSAttributedString.Key("PrismSpaceBefore")
+    /// On the first hidden character of a shortened address's middle: an
+    /// ellipsis drawn in its place.
+    static let prismEllipsis = NSAttributedString.Key("PrismEllipsis")
+    /// On a picture's `!`: after text, the rest of that text's line; else nothing.
+    static let prismBreak = NSAttributedString.Key("PrismBreak")
     /// A link drawn as a pill.
     static let prismPill = NSAttributedString.Key("PrismPill")
     /// Where a link goes, as tapped: a note's title, or an address.
@@ -134,9 +146,16 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
         paragraph.lineHeightMultiple = row.kind == .code ? 1.2 : metrics.face.lineHeight * metrics.size / max(font.lineHeight, 1)
         paragraph.paragraphSpacing = round(metrics.size * 0.32)
         var before: CGFloat = 0
-        if case .heading = row.kind { before = round(metrics.size * 0.8) }
-        paragraph.paragraphSpacingBefore = previous == nil ? 0 : before
+        if case .heading(let level) = row.kind {
+            // A heading's lines as tall as its own type wants, not the body's;
+            // and room above it, a section's start.
+            paragraph.lineHeightMultiple = 1.12
+            before = round(metrics.size * (level <= 2 ? 1.25 : 0.9))
+        }
+        // Given as the line is laid out — see `prismSpaceBefore`.
+        paragraph.paragraphSpacingBefore = 0
         var attributes: [NSAttributedString.Key: Any] = [.font: font, .paragraphStyle: paragraph, .foregroundColor: Ink.text]
+        if previous != nil, before > 0 { attributes[.prismSpaceBefore] = before }
         switch row.kind {
         case .quote: attributes[.foregroundColor] = Ink.secondary
         case .rule: attributes[.foregroundColor] = UIColor.clear
@@ -175,6 +194,25 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             case .link(let target), .url(let target):
                 storage.addAttributes([.foregroundColor: Ink.accent, .prismLink: target], range: content)
                 if !inHeading { storage.addAttribute(.prismPill, value: true, range: span.range) }
+                // A bare address, as the Mac shows it: its site and the ends of
+                // its path, the link icon before — whole while the caret is in it.
+                if case .url = span.kind, !revealed, !inHeading, PhoneLayoutManager.drawsPills {
+                    let parts = AddressShortening.shortened(text.substring(with: span.range))
+                    if parts.prefix > 0 {
+                        let at = span.range.location
+                        if parts.prefix > 1 { storage.addAttribute(.prismHidden, value: true, range: NSRange(location: at, length: parts.prefix - 1)) }
+                        storage.addAttribute(.prismIcon, value: "link", range: NSRange(location: at + parts.prefix - 1, length: 1))
+                        if let middle = parts.middle, middle.length > 0 {
+                            storage.addAttribute(.prismEllipsis, value: true, range: NSRange(location: at + middle.location, length: 1))
+                            if middle.length > 1 {
+                                storage.addAttribute(.prismHidden, value: true, range: NSRange(location: at + middle.location + 1, length: middle.length - 1))
+                            }
+                        }
+                        if let rest = parts.rest, rest.length > 0 {
+                            storage.addAttribute(.prismHidden, value: true, range: NSRange(location: at + rest.location, length: rest.length))
+                        }
+                    }
+                }
             case .wikiLink(let title):
                 storage.addAttributes([.foregroundColor: Ink.accent, .prismLink: "[[" + title + "]]"], range: content)
                 if !inHeading { storage.addAttribute(.prismPill, value: true, range: span.range) }
@@ -182,7 +220,30 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
                 storage.addAttribute(.foregroundColor, value: Ink.accent, range: span.range)
             case .comment:
                 if !revealed { storage.addAttribute(.prismHidden, value: true, range: span.range) }
-            case .image, .imageText:
+            case .image(let reference):
+                // The picture, once it is in, in place of its Markdown — but
+                // for while the caret is in it, to edit what it says.
+                // (Text is styled on the main thread, where the pictures are kept.)
+                let inside = caret.map { $0 > span.range.location && $0 < NSMaxRange(span.range) } ?? false
+                if !inside, span.range.length > 2, let image = MainActor.assumeIsolated({ PhoneImages.image(reference.source) }) {
+                    // The `!` takes the rest of a line it follows text on —
+                    // a line may not break before `!`, but may after it —
+                    // and the `[` is the picture, on a line of its own; the
+                    // rest of the Markdown is not shown.
+                    let box = PhoneImageBox(image: image, width: reference.width.map { CGFloat($0) })
+                    let start = span.range.location
+                    storage.addAttribute(.prismBreak, value: true, range: NSRange(location: start, length: 1))
+                    storage.addAttribute(.prismImage, value: box, range: NSRange(location: start + 1, length: 1))
+                    storage.addAttribute(.prismHidden, value: true, range: NSRange(location: start + 2, length: span.range.length - 2))
+                    // A done row's line through its text does not go through the picture.
+                    storage.removeAttribute(.strikethroughStyle, range: NSRange(location: start, length: 2))
+                    if start > paragraph.location, text.character(at: start - 1) == 0x20 {
+                        storage.removeAttribute(.strikethroughStyle, range: NSRange(location: start - 1, length: 1))
+                    }
+                } else {
+                    storage.addAttributes([.foregroundColor: Ink.faint, .font: metrics.face.mono(round(base.pointSize * 0.75))], range: span.range)
+                }
+            case .imageText:
                 storage.addAttributes([.foregroundColor: Ink.faint, .font: metrics.face.mono(round(base.pointSize * 0.75))], range: span.range)
             }
             guard span.kind != .comment, !span.isImage else { continue }
@@ -191,6 +252,22 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
                     storage.addAttribute(.foregroundColor, value: Ink.faint, range: markup)
                 } else {
                     storage.addAttribute(.prismHidden, value: true, range: markup)
+                }
+            }
+            // The link's kind, as an icon in its pill, as the Mac shows it:
+            // on the opening markup's last character, next to the words.
+            if !revealed, !inHeading, PhoneLayoutManager.drawsPills, let opening = span.markup.first, opening.length > 0,
+               opening.location == span.range.location {
+                let symbol: String?
+                switch span.kind {
+                case .wikiLink(let title): symbol = Day(title.components(separatedBy: "|")[0].trimmingCharacters(in: .whitespaces)) != nil ? "calendar" : "doc.text"
+                case .link: symbol = "link"
+                default: symbol = nil
+                }
+                if let symbol {
+                    let lead = NSRange(location: NSMaxRange(opening) - 1, length: 1)
+                    storage.removeAttribute(.prismHidden, range: lead)
+                    storage.addAttribute(.prismIcon, value: symbol, range: lead)
                 }
             }
         }
@@ -215,7 +292,6 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     var metrics = PhoneMetrics()
     /// For each row with children, whether all of them are done; and
     /// whether the row has any, for its bullet.
-    var hasChildren: (Int) -> Bool = { _ in false }
 
     override init() {
         super.init()
@@ -225,6 +301,45 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    /// A link icon's side, and the room before a link's words it takes.
+    static func iconSide(for font: UIFont) -> CGFloat { round(font.pointSize * 0.72) }
+    static func iconLead(for font: UIFont) -> CGFloat { 2 + iconSide(for: font) + 4 }
+
+    /// Each link's icon, in the room its lead was given; each shortened
+    /// address's ellipsis, in its.
+    private func drawIcons(in characters: NSRange, at origin: CGPoint) {
+        guard let storage = textStorage else { return }
+        storage.enumerateAttribute(.prismEllipsis, in: characters) { value, range, _ in
+            guard value != nil else { return }
+            let glyph = glyphIndexForCharacter(at: range.location)
+            guard glyph < numberOfGlyphs else { return }
+            let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? UIFont ?? metrics.body
+            let fragment = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            let place = location(forGlyphAt: glyph)
+            let text = NSAttributedString(string: "…", attributes: [.font: font, .foregroundColor: Ink.accent])
+            text.draw(at: CGPoint(x: origin.x + fragment.minX + place.x, y: origin.y + fragment.minY + place.y - font.ascender))
+        }
+        storage.enumerateAttribute(.prismIcon, in: characters) { value, range, _ in
+            guard let symbol = value as? String else { return }
+            let glyph = glyphIndexForCharacter(at: range.location)
+            guard glyph < numberOfGlyphs else { return }
+            let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? UIFont ?? metrics.body
+            let fragment = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            let place = location(forGlyphAt: glyph)
+            let side = Self.iconSide(for: font)
+            let configuration = UIImage.SymbolConfiguration(pointSize: side * 0.9, weight: .medium)
+            guard let image = UIImage(systemName: symbol, withConfiguration: configuration)?.withTintColor(Ink.accent, renderingMode: .alwaysOriginal) else { return }
+            let size = image.size
+            let baseline = fragment.minY + place.y
+            let middle = baseline - font.xHeight / 2
+            image.draw(in: CGRect(x: origin.x + fragment.minX + place.x + 2 + (side - size.width) / 2,
+                                  y: origin.y + middle - size.height / 2, width: size.width, height: size.height))
+        }
+    }
+
+    /// Whether links have a pill behind them.
+    static let drawsPills = true
+
     func layoutManager(_ layoutManager: NSLayoutManager, shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>,
                        properties: UnsafePointer<NSLayoutManager.GlyphProperty>, characterIndexes: UnsafePointer<Int>,
                        font: UIFont, forGlyphRange range: NSRange) -> Int {
@@ -232,9 +347,22 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         var changed: [NSLayoutManager.GlyphProperty]?
         for i in 0..<range.length {
             let index = characterIndexes[i]
-            guard index < storage.length, storage.attribute(.prismHidden, at: index, effectiveRange: nil) != nil else { continue }
+            guard index < storage.length else { continue }
+            // A picture's first character is a space as big as the picture;
+            // the rest of its Markdown, like other hidden marks, nothing.
+            let property: NSLayoutManager.GlyphProperty
+            if storage.attribute(.prismImage, at: index, effectiveRange: nil) != nil
+                || storage.attribute(.prismBreak, at: index, effectiveRange: nil) != nil
+                || storage.attribute(.prismIcon, at: index, effectiveRange: nil) != nil
+                || storage.attribute(.prismEllipsis, at: index, effectiveRange: nil) != nil {
+                property = .controlCharacter
+            } else if storage.attribute(.prismHidden, at: index, effectiveRange: nil) != nil {
+                property = .null
+            } else {
+                continue
+            }
             if changed == nil { changed = Array(UnsafeBufferPointer(start: properties, count: range.length)) }
-            changed![i] = .null
+            changed![i] = property
         }
         guard let changed else { return 0 }
         changed.withUnsafeBufferPointer { buffer in
@@ -243,17 +371,146 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         return range.length
     }
 
+    func layoutManager(_ layoutManager: NSLayoutManager, shouldUse action: NSLayoutManager.ControlCharacterAction,
+                       forControlCharacterAt charIndex: Int) -> NSLayoutManager.ControlCharacterAction {
+        guard let storage = textStorage, charIndex < storage.length else { return action }
+        guard storage.attribute(.prismImage, at: charIndex, effectiveRange: nil) != nil
+              || storage.attribute(.prismBreak, at: charIndex, effectiveRange: nil) != nil
+              || storage.attribute(.prismIcon, at: charIndex, effectiveRange: nil) != nil
+              || storage.attribute(.prismEllipsis, at: charIndex, effectiveRange: nil) != nil else { return action }
+        return .whitespace
+    }
+
+    /// How wide a line of a row is, from its text's left edge: the room a
+    /// picture in it has.
+    private func lineWidth(at charIndex: Int, in container: NSTextContainer) -> CGFloat {
+        let indent = (textStorage?.attribute(.paragraphStyle, at: charIndex, effectiveRange: nil) as? NSParagraphStyle)?.headIndent ?? 0
+        return max(40, container.size.width - indent - 2 * container.lineFragmentPadding - 1)
+    }
+
+    /// A picture's character takes a whole line across, so it is on a line
+    /// of its own — text before it ends its line, text after it starts the next.
+    func layoutManager(_ layoutManager: NSLayoutManager, boundingBoxForControlGlyphAt glyphIndex: Int, for textContainer: NSTextContainer,
+                       proposedLineFragment proposedRect: CGRect, glyphPosition: CGPoint, characterIndex charIndex: Int) -> CGRect {
+        guard let storage = textStorage, charIndex < storage.length else { return .zero }
+        if storage.attribute(.prismIcon, at: charIndex, effectiveRange: nil) != nil {
+            let font = storage.attribute(.font, at: charIndex, effectiveRange: nil) as? UIFont ?? metrics.body
+            return CGRect(x: 0, y: 0, width: Self.iconLead(for: font), height: 1)
+        }
+        if storage.attribute(.prismEllipsis, at: charIndex, effectiveRange: nil) != nil {
+            let font = storage.attribute(.font, at: charIndex, effectiveRange: nil) as? UIFont ?? metrics.body
+            return CGRect(x: 0, y: 0, width: ceil(("…" as NSString).size(withAttributes: [.font: font]).width), height: 1)
+        }
+        // A picture's `!` fills the rest of a line it follows text on: the
+        // text stays there, and the picture, too wide for what is left,
+        // goes to the next. At a line's start it is nothing.
+        if storage.attribute(.prismBreak, at: charIndex, effectiveRange: nil) != nil {
+            let indent = (storage.attribute(.paragraphStyle, at: charIndex, effectiveRange: nil) as? NSParagraphStyle)?.headIndent ?? 0
+            guard glyphPosition.x > indent + textContainer.lineFragmentPadding + 1 else { return .zero }
+            let left = proposedRect.maxX - glyphPosition.x - 2 * textContainer.lineFragmentPadding - 4
+            return CGRect(x: 0, y: 0, width: max(0, left), height: 1)
+        }
+        guard storage.attribute(.prismImage, at: charIndex, effectiveRange: nil) is PhoneImageBox else { return .zero }
+        return CGRect(x: 0, y: 0, width: lineWidth(at: charIndex, in: textContainer), height: 1)
+    }
+
+    /// A picture's line as tall as the picture; the row's other lines as they are.
+    func layoutManager(_ layoutManager: NSLayoutManager, shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<CGRect>,
+                       lineFragmentUsedRect: UnsafeMutablePointer<CGRect>, baselineOffset: UnsafeMutablePointer<CGFloat>,
+                       in textContainer: NSTextContainer, forGlyphRange glyphRange: NSRange) -> Bool {
+        guard let storage = textStorage else { return false }
+        let characters = characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+        var height: CGFloat?
+        storage.enumerateAttribute(.prismImage, in: characters) { value, range, stop in
+            guard let box = value as? PhoneImageBox else { return }
+            height = box.size(fitting: lineWidth(at: range.location, in: textContainer)).height + 2 * PhoneImageBox.margin
+            stop.pointee = true
+        }
+        // Room above a heading, on its first line: added here, as TextKit
+        // leaves a paragraph's own out when its first glyph is hidden markup
+        // — a heading that is a link, `## [[Links]]`.
+        var above: CGFloat = 0
+        // Back over hidden markup: it is laid out on the line before.
+        var start = characters.location
+        while start > 0, start <= storage.length, storage.attribute(.prismHidden, at: start - 1, effectiveRange: nil) != nil { start -= 1 }
+        if start < storage.length, start == 0 || (storage.string as NSString).character(at: start - 1) == 0x0A,
+           let value = storage.attribute(.prismSpaceBefore, at: start, effectiveRange: nil) as? CGFloat {
+            above = value
+        }
+        guard height != nil || above > 0 else { return false }
+        if let height {
+            lineFragmentRect.pointee.size.height = height
+            lineFragmentUsedRect.pointee.size.height = height
+            baselineOffset.pointee = height - PhoneImageBox.margin
+        }
+        lineFragmentRect.pointee.size.height += above
+        lineFragmentUsedRect.pointee.origin.y += above
+        baselineOffset.pointee += above
+        return true
+    }
+
+    /// The pictures among some characters: each with its Markdown's range
+    /// and where it is drawn, in the text container.
+    func images(in characters: NSRange) -> [(box: PhoneImageBox, span: NSRange, frame: CGRect)] {
+        guard let storage = textStorage else { return [] }
+        var found: [(PhoneImageBox, NSRange, CGRect)] = []
+        storage.enumerateAttribute(.prismImage, in: characters) { value, range, _ in
+            guard let box = value as? PhoneImageBox else { return }
+            let glyph = glyphIndexForCharacter(at: range.location)
+            guard glyph < numberOfGlyphs else { return }
+            let fragment = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            let x = fragment.minX + location(forGlyphAt: glyph).x
+            guard let container = textContainers.first else { return }
+            let size = box.size(fitting: lineWidth(at: range.location, in: container))
+            var end = range.location + 1
+            while end < storage.length, storage.attribute(.prismHidden, at: end, effectiveRange: nil) != nil,
+                  storage.attribute(.prismImage, at: end, effectiveRange: nil) == nil { end += 1 }
+            let start = range.location > 0 && storage.attribute(.prismBreak, at: range.location - 1, effectiveRange: nil) != nil
+                ? range.location - 1 : range.location
+            found.append((box, NSRange(location: start, length: end - start),
+                          CGRect(x: x, y: fragment.minY + PhoneImageBox.margin, width: size.width, height: size.height)))
+        }
+        return found
+    }
+
+    /// Each picture, in the room its character was given.
+    private func drawImages(in characters: NSRange, at origin: CGPoint) {
+        for (box, _, frame) in images(in: characters) {
+            let frame = frame.offsetBy(dx: origin.x, dy: origin.y)
+            let path = UIBezierPath(roundedRect: frame, cornerRadius: 8)
+            UIGraphicsGetCurrentContext()?.saveGState()
+            path.addClip()
+            box.image.draw(in: frame)
+            UIGraphicsGetCurrentContext()?.restoreGState()
+            Ink.rule.setStroke()
+            path.lineWidth = 1
+            path.stroke()
+        }
+    }
+
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage, storage.length > 0, let container = textContainers.first else { return }
         let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
         let text = storage.string as NSString
         let covered = text.paragraphRange(for: characters)
-        let paragraphs = OutlineText.paragraphs(text)
-        // Pills behind links.
+        // Only the rows being drawn: the whole note's would be found anew
+        // for every stroke drawn.
+        var paragraphs: [NSRange] = []
+        var at = covered.location
+        while at < min(NSMaxRange(covered), text.length) {
+            let paragraph = text.paragraphRange(for: NSRange(location: at, length: 0))
+            paragraphs.append(paragraph)
+            at = NSMaxRange(paragraph)
+        }
+        drawImages(in: covered, at: origin)
+        defer { drawIcons(in: covered, at: origin) }
+        // Pills behind links, as Slack draws them.
         storage.enumerateAttribute(.prismPill, in: covered) { value, range, _ in
-            guard value != nil else { return }
+            guard value != nil, Self.drawsPills else { return }
             // Behind what shows of it, a pill a line: hidden brackets have no place.
+            // A line's pieces of one pill — split by hidden characters — one shape.
+            var lines: [CGFloat: CGRect] = [:]
             storage.enumerateAttribute(.prismHidden, in: range) { hidden, part, _ in
                 guard hidden == nil, part.length > 0 else { return }
                 // Its own glyphs only: a range by characters takes in the
@@ -271,18 +528,27 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                     let start = fragment.minX + self.location(forGlyphAt: shown.location).x
                     let end = last + 1 < NSMaxRange(lineGlyphs) ? fragment.minX + self.location(forGlyphAt: last + 1).x : used.maxX
                     guard end > start else { return }
-                    let rect = CGRect(x: start, y: used.minY, width: end - start, height: used.height)
-                    let pill = rect.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -3, dy: 1)
-                    Ink.pill.setFill()
-                    UIBezierPath(roundedRect: pill, cornerRadius: 5).fill()
+                    // Even about the text: as far above its capitals as below
+                    // its descenders — not the line's room, which is more above.
+                    let font = storage.attribute(.font, at: self.characterIndexForGlyph(at: shown.location), effectiveRange: nil) as? UIFont ?? self.metrics.body
+                    let baseline = fragment.minY + self.location(forGlyphAt: shown.location).y
+                    let pad = round(font.pointSize * 0.18)
+                    let top = baseline - font.capHeight - pad
+                    let bottom = baseline - font.descender + pad - round(font.pointSize * 0.06)
+                    let rect = CGRect(x: start, y: top, width: end - start, height: bottom - top)
+                    let pill = rect.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -3, dy: 0)
+                    lines[fragment.minY] = lines[fragment.minY].map { $0.union(pill) } ?? pill
                 }
             }
+            Ink.pill.setFill()
+            for pill in lines.values { UIBezierPath(roundedRect: pill, cornerRadius: 5).fill() }
         }
-        for (index, paragraph) in paragraphs.enumerated() where NSIntersectionRange(paragraph, covered).length > 0 || paragraph.location == covered.location {
+        for paragraph in paragraphs {
             let row = OutlineText.style(storage, at: paragraph.location).row
             // The row's first glyph shown: hidden markup has no place of its own.
             var first = paragraph.location
-            while first < NSMaxRange(paragraph) - 1, storage.attribute(.prismHidden, at: first, effectiveRange: nil) != nil { first += 1 }
+            while first < NSMaxRange(paragraph) - 1, storage.attribute(.prismHidden, at: first, effectiveRange: nil) != nil
+                    || storage.attribute(.prismBreak, at: first, effectiveRange: nil) != nil { first += 1 }
             let glyph = glyphIndexForCharacter(at: first)
             guard glyph < numberOfGlyphs else { continue }
             let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).offsetBy(dx: origin.x, dy: origin.y)
@@ -290,7 +556,9 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             let font = storage.attribute(.font, at: paragraph.location, effectiveRange: nil) as? UIFont ?? metrics.body
             let markerX = metrics.indent * CGFloat(row.depth) + metrics.indent / 2 + origin.x
             let glyphLocation = location(forGlyphAt: glyph)
-            let baseline = line.minY + glyphLocation.y
+            // A row that starts with a picture has its marker by the top of it.
+            let startsWithImage = storage.attribute(.prismImage, at: first, effectiveRange: nil) != nil
+            let baseline = startsWithImage ? line.minY + PhoneImageBox.margin + ceil(font.ascender) : line.minY + glyphLocation.y
             let middle = baseline - font.xHeight / 2
             switch row.kind {
             case .quote:
@@ -339,7 +607,7 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                     let size = label.size()
                     label.draw(at: CGPoint(x: metrics.textIndent(for: row) + origin.x - size.width - 6, y: baseline - size.height + 3))
                 } else {
-                    if row.isFolded || hasChildren(index) && row.isFolded {
+                    if row.isFolded {
                         Ink.rule.setFill()
                         let ring = round(font.pointSize * 0.75)
                         UIBezierPath(ovalIn: CGRect(x: markerX - ring / 2, y: middle - ring / 2, width: ring, height: ring)).fill()
@@ -377,6 +645,26 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     var onFocusChange: ((Bool) -> Void)?
     /// Told when the caret moved, or what is around it did: to keep it in sight.
     var onCaretMove: (() -> Void)?
+    /// The notes and days a name typed after `@` or `[[` could be: set for
+    /// every editor by whoever has the index.
+    static var suggest: ((String) -> [LinkSuggestions.Candidate])?
+    /// A link being finished: what started it, and where its name starts.
+    private var completing: (trigger: LinkSuggestions.Trigger, start: Int)?
+    /// Where an `@` or `[` was just typed, to see once it is in whether it starts a link.
+    private var typedOpener: Int?
+    private var suggestions: [LinkSuggestions.Candidate] = []
+    private var toolbar: OutlineToolbar? { inputAccessoryView as? OutlineToolbar }
+    private var madeToolbar: OutlineToolbar?
+
+    /// The tools over the keys, made the first time the keys come up: a
+    /// sheet has dozens of editors, few ever typed in.
+    override var inputAccessoryView: UIView? {
+        get {
+            if madeToolbar == nil { madeToolbar = OutlineToolbar(editor: self) }
+            return madeToolbar
+        }
+        set {}
+    }
     private var adjusting = false
     private var lastHeight: CGFloat = 0
     /// Taps on what the margin draws, and on links.
@@ -403,10 +691,24 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         container.widthTracksTextView = true
         container.lineFragmentPadding = 0
         outlineLayout.addTextContainer(container)
-        outlineLayout.allowsNonContiguousLayout = false
+        outlineLayout.allowsNonContiguousLayout = true
+        if outlineLayout.responds(to: Selector(("setBackgroundLayoutEnabled:"))) {
+            outlineLayout.setValue(false, forKey: "backgroundLayoutEnabled")
+        }
         super.init(frame: .zero, textContainer: container)
         delegate = self
-        isScrollEnabled = false
+        // Scrolling on, but never by a finger — the sheet scrolls, and the
+        // editor is always as tall as its text: a text view that does not
+        // scroll lays its whole text out on each layout pass, to size
+        // itself, and a long note lagged on every keystroke.
+        isScrollEnabled = true
+        // No spaces put in around what is pasted.
+        smartInsertDeleteType = .no
+        panGestureRecognizer.isEnabled = false
+        bounces = false
+        scrollsToTop = false
+        showsVerticalScrollIndicator = false
+        showsHorizontalScrollIndicator = false
         backgroundColor = .clear
         textContainerInset = UIEdgeInsets(top: 2, left: 0, bottom: 2, right: 0)
         tintColor = Ink.accent
@@ -414,10 +716,6 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         smartDashesType = .no
         smartQuotesType = .no
         keyboardDismissMode = .interactive
-        outlineLayout.hasChildren = { [weak self] index in
-            guard let self else { return false }
-            return OutlineEditing.hasChildren(rows, index)
-        }
         markerTap.addTarget(self, action: #selector(tapped(_:)))
         markerTap.delegate = self
         addGestureRecognizer(markerTap)
@@ -427,7 +725,32 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             swipe.delegate = self
             addGestureRecognizer(swipe)
         }
-        inputAccessoryView = OutlineToolbar(editor: self)
+        NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: textStorage, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.cachedRows = nil
+                guard self.localChanges == 0 else { return }
+                self.measured = nil
+            }
+        }
+        // A picture in: shown where this note shows it.
+        NotificationCenter.default.addObserver(forName: .prismImageLoaded, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let source = note.object as? String else { return }
+                // Only the rows showing it, restyled.
+                let text = self.textStorage.string as NSString
+                var at = text.range(of: source)
+                guard at.location != NSNotFound else { return }
+                self.adjusting = true
+                while at.location != NSNotFound {
+                    self.styler.restyle(self.textStorage, around: at.location)
+                    let next = NSMaxRange(at)
+                    at = text.range(of: source, range: NSRange(location: next, length: text.length - next))
+                }
+                self.adjusting = false
+                self.heightMayHaveChanged()
+            }
+        }
     }
 
     @available(*, unavailable)
@@ -445,7 +768,36 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         heightMayHaveChanged()
     }
 
-    var rows: [Row] { OutlineText.rows(textStorage) }
+    /// The rows, as the text now says: kept till the text changes, as many
+    /// ask for them — saving, the scrubber, the title — and a long note's
+    /// take a while to find.
+    var rows: [Row] {
+        if let cachedRows { return cachedRows }
+        let rows = OutlineText.rows(textStorage)
+        cachedRows = rows
+        return rows
+    }
+    private var cachedRows: [Row]?
+
+    /// The first row's style: whether a note opens with its title.
+    var firstRow: Row? { textStorage.length > 0 ? OutlineText.style(textStorage, at: 0).row : nil }
+
+    /// Each heading's place and words, from the rows' styles alone.
+    var headings: [(location: Int, text: String)] {
+        var found: [(Int, String)] = []
+        let text = textStorage.string as NSString
+        textStorage.enumerateAttribute(.outlineRow, in: NSRange(location: 0, length: textStorage.length)) { value, range, _ in
+            guard let style = value as? RowStyle, case .heading = style.row.kind else { return }
+            // A run may hold several headings' paragraphs with the same style.
+            var at = range.location
+            while at < NSMaxRange(range) {
+                let paragraph = text.paragraphRange(for: NSRange(location: at, length: 0))
+                found.append((paragraph.location, text.substring(with: paragraph).trimmingCharacters(in: .newlines)))
+                at = NSMaxRange(paragraph)
+            }
+        }
+        return found
+    }
 
     var paragraphRanges: [NSRange] { OutlineText.paragraphs(textStorage.string as NSString) }
 
@@ -512,11 +864,26 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
         guard !adjusting else { return true }
-        let rows = rows
-        let ranges = paragraphRanges
-        let index = rowIndex(at: range.location)
-        guard ranges.indices.contains(index) else { return true }
-        let paragraph = ranges[index]
+        plainEdit = false
+        // An edit allowed that never came: measured whole again, to be safe.
+        if typedRowBefore != nil {
+            typedRowBefore = nil
+            localChanges -= 1
+            measured = nil
+        }
+        // Only the paragraph typed in, found directly: the rows of the whole
+        // note are worked out only for what changes them — on a long note,
+        // every keystroke would otherwise go through all of it.
+        let storageText = textStorage.string as NSString
+        guard storageText.length > 0 else { return true }
+        let paragraph = storageText.paragraphRange(for: NSRange(location: min(range.location, storageText.length - 1), length: 0))
+        var rows: [Row] { self.rows }
+        var index: Int { rowIndex(at: range.location) }
+        // Return, while a link is being finished: the first choice put in.
+        if text == "\n", completing != nil, let first = suggestions.first {
+            accept(first)
+            return false
+        }
         // Return: the row split, the outline's way.
         if text == "\n" {
             if range.length > 0 { textStorage.replaceCharacters(in: range, with: "") }
@@ -532,9 +899,17 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         // Delete at a row's start: its type first, then joining the row
         // above. The character deleted is the row above's line break: the
         // row is the caret's.
-        if text.isEmpty, range.length == 1, selectedRange.length == 0 {
+        // Delete just after a picture: the picture, whole.
+        if text.isEmpty, range.length == 1, selectedRange.length == 0,
+           let picture = outlineLayout.images(in: paragraph).first(where: { NSMaxRange($0.span) == selectedRange.location }) {
+            selectedRange = picture.span
+            insertText("")
+            return false
+        }
+        if text.isEmpty, range.length == 1, selectedRange.length == 0,
+           selectedRange.location == storageText.paragraphRange(for: NSRange(location: min(selectedRange.location, storageText.length - 1), length: 0)).location {
             let row = rowIndex(at: selectedRange.location)
-            if ranges.indices.contains(row), selectedRange.location == ranges[row].location {
+            do {
                 if let plain = OutlineKeys.plain(rows, at: row) {
                     replace(plain, caret: OutlineKeys.Caret(row: row, offset: 0), undoName: "Change Row Type")
                     return false
@@ -543,27 +918,108 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             }
         }
         // A space after Markdown typed at a row's start: the row's type.
-        if text == " ", range.length == 0 {
-            let prefix = (textStorage.string as NSString).substring(with: NSRange(location: paragraph.location, length: range.location - paragraph.location))
-            if !prefix.isEmpty, let typed = OutlineKeys.smartType(rows, at: index, typed: prefix) {
+        if text == " ", range.length == 0, range.location - paragraph.location <= 6 {
+            let prefix = storageText.substring(with: NSRange(location: paragraph.location, length: range.location - paragraph.location))
+            if !prefix.isEmpty, !prefix.contains(" "), let typed = OutlineKeys.smartType(rows, at: index, typed: prefix) {
                 replace(typed, caret: OutlineKeys.Caret(row: index, offset: 0), undoName: "Change Row Type")
                 return false
             }
         }
-        // Lines within a row, as pasted, are not rows.
-        if text.contains("\n"), text != "\n" {
-            insertText(text.replacingOccurrences(of: "\n", with: OutlineText.lineSeparator))
-            return false
+        // Pasted: without the spaces and line breaks around it — copied
+        // links often carry one, and a row would open with an empty line —
+        // and lines within it, lines of the row, not rows.
+        if text.count > 1 {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed != text || trimmed.contains("\n") {
+                if !trimmed.isEmpty { insertText(trimmed.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: OutlineText.lineSeparator)) }
+                return false
+            }
         }
         // What is typed is of the row it is typed in: an empty row's style
         // is its line break's, not the one before it.
-        typingAttributes = textStorage.attributes(at: NSMaxRange(paragraph) - 1, effectiveRange: nil)
+        // Only when they differ: setting them re-lays the whole text out.
+        let rowAttributes = textStorage.attributes(at: NSMaxRange(paragraph) - 1, effectiveRange: nil)
+        if !NSDictionary(dictionary: typingAttributes).isEqual(to: rowAttributes) { typingAttributes = rowAttributes }
+        if text == "@" || text == "[" { typedOpener = range.location }
+        // Typing within a row leaves the outline as it was: no tidying after,
+        // and only that row measured again.
+        plainEdit = !text.contains("\n") && !text.contains(OutlineText.lineSeparator)
+            && NSMaxRange(range) < NSMaxRange(paragraph) && range.location >= paragraph.location
+        if plainEdit, measured != nil {
+            typedRowBefore = (paragraph.location, height(ofParagraphsIn: paragraph))
+            localChanges += 1
+        }
         return true
     }
 
+    /// Whether the edit under way is typing within one row.
+    private var plainEdit = false
+    /// The row typed in, and its height before.
+    private var typedRowBefore: (location: Int, height: CGFloat)?
+
     func textViewDidChange(_ textView: UITextView) {
-        tidy()
+        if let before = typedRowBefore {
+            typedRowBefore = nil
+            localChanges -= 1
+            if var measured {
+                let delta = height(ofParagraphsIn: NSRange(location: min(before.location, max(0, textStorage.length - 1)), length: 0)) - before.height
+                measured.fit += delta
+                measured.rows += delta
+                self.measured = measured
+            }
+        }
+        if !plainEdit || !styler.orphans.isEmpty { tidy() }
+        plainEdit = false
         changed()
+        if let opener = typedOpener {
+            typedOpener = nil
+            beginCompletion(typedAt: opener)
+        }
+        refreshCompletion()
+    }
+
+    // MARK: Finishing links
+
+    /// `@` at a word's start, or `[[`, just typed outside code: a link to finish.
+    private func beginCompletion(typedAt location: Int) {
+        guard completing == nil, Self.suggest != nil, location < textStorage.length,
+              let trigger = LinkSuggestions.trigger(in: textStorage.string as NSString, typedAt: location) else { return }
+        if case .code = rows[rowIndex(at: location)].kind { return }
+        if textStorage.attribute(.font, at: location, effectiveRange: nil).map({ ($0 as? UIFont)?.fontDescriptor.symbolicTraits.contains(.traitMonoSpace) == true }) == true { return }
+        completing = (trigger, location + 1)
+    }
+
+    /// The choices for what is typed now — or none, the link left.
+    private func refreshCompletion() {
+        guard let completing else { return }
+        guard selectedRange.length == 0,
+              let query = LinkSuggestions.query(in: textStorage.string as NSString, start: completing.start,
+                                                caret: selectedRange.location, trigger: completing.trigger) else { return endCompletion() }
+        var found = Self.suggest?(query) ?? []
+        // After `[[`, a name nothing has yet: a note to make by following it.
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        if completing.trigger == .brackets, !trimmed.isEmpty, !found.contains(where: { $0.name.lowercased() == trimmed.lowercased() }) {
+            found.append(.init(title: "New “\(trimmed)”", name: trimmed, isDay: false))
+        }
+        suggestions = found
+        toolbar?.show(found) { [weak self] candidate in self?.accept(candidate) }
+    }
+
+    private func endCompletion() {
+        guard completing != nil else { return }
+        completing = nil
+        suggestions = []
+        toolbar?.show([], choose: { _ in })
+    }
+
+    /// A choice put in, as `[[Name]]`, over what was typed for it.
+    private func accept(_ candidate: LinkSuggestions.Candidate) {
+        guard let completing else { return }
+        let put = LinkSuggestions.accepting(candidate, in: textStorage.string as NSString, start: completing.start,
+                                           caret: selectedRange.location, trigger: completing.trigger)
+        endCompletion()
+        selectedRange = put.range
+        insertText(put.text)
     }
 
     /// Where the caret is, in the editor.
@@ -574,16 +1030,30 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     func textViewDidChangeSelection(_ textView: UITextView) {
         onCaretMove?()
+        if completing != nil, typedOpener == nil { refreshCompletion() }
         // The span the caret is in shows its marks; the one it left, not.
         let old = styler.caret
         styler.caret = selectedRange.length == 0 ? selectedRange.location : nil
         guard old != styler.caret else { return }
-        if let old { styler.restyle(textStorage, around: min(old, max(0, textStorage.length - 1))) }
-        if let new = styler.caret { styler.restyle(textStorage, around: min(new, max(0, textStorage.length - 1))) }
+        let last = max(0, textStorage.length - 1)
+        let around = [old, styler.caret].compactMap { $0.map { min($0, last) } }
+        let text = textStorage.string as NSString
+        // One row restyled once, though the caret moved within it.
+        let rows = around.count == 2 && text.paragraphRange(for: NSRange(location: around[0], length: 0)).location
+            == text.paragraphRange(for: NSRange(location: around[1], length: 0)).location ? [around[0]] : around
+        locally(at: rows) {
+            for location in rows { styler.restyle(textStorage, around: location) }
+        }
     }
 
-    func textViewDidBeginEditing(_ textView: UITextView) { onFocusChange?(true) }
-    func textViewDidEndEditing(_ textView: UITextView) { onFocusChange?(false) }
+    func textViewDidBeginEditing(_ textView: UITextView) {
+        StallWatch.mark("editing begun")
+        onFocusChange?(true)
+    }
+    func textViewDidEndEditing(_ textView: UITextView) {
+        endCompletion()
+        onFocusChange?(false)
+    }
 
     /// What an edit can leave wrong put right: the text ends in a line
     /// break, rows an edit swallowed come back, and every row sits at a
@@ -644,7 +1114,14 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         replace(all, caret: caret, undoName: "Toggle Done")
     }
 
-    @objc func foldHere() { toggleFold(at: caret.row) }
+    /// A task — Reflect's round `+ [ ]`, gathered in Tasks — then done,
+    /// then a plain row again.
+    @objc func cycleTask() {
+        let caret = self.caret
+        var all = rows
+        OutlineEditing.cycle(.task, &all, selectedRowRange)
+        replace(all, caret: caret, undoName: "Task")
+    }
 
     func toggleFold(at index: Int) {
         var all = rows
@@ -672,6 +1149,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     private enum Target {
         case marker(Int)
         case link(String)
+        /// A picture: its Markdown's range.
+        case image(NSRange)
     }
 
     private func target(at point: CGPoint) -> Target? {
@@ -683,6 +1162,9 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         let row = OutlineText.style(textStorage, at: paragraphRanges[index].location).row
         let line = outlineLayout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
         guard inContainer.y >= line.minY - 4, inContainer.y <= line.maxY + 4 else { return nil }
+        if let picture = outlineLayout.images(in: paragraphRanges[index]).first(where: { $0.frame.contains(inContainer) }) {
+            return .image(picture.span)
+        }
         if inContainer.x < metrics.textIndent(for: row) - 2, inContainer.x > metrics.indent * CGFloat(row.depth) - 6 {
             return .marker(index)
         }
@@ -720,6 +1202,11 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             UISelectionFeedbackGenerator().selectionChanged()
         case .link(let link):
             onOpenLink?(link)
+        case .image(let span):
+            // The caret after it, the picture still shown: its Markdown is
+            // for the caret to go into, not for a tap.
+            if !isFirstResponder { becomeFirstResponder() }
+            selectedRange = NSRange(location: NSMaxRange(span), length: 0)
         case nil:
             break
         }
@@ -741,10 +1228,59 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// As tall as its rows are at a width: not the empty line after the
     /// last one's break, which the caret never goes to.
-    func rowsHeight(width: CGFloat) -> CGFloat {
+    func rowsHeight(width: CGFloat) -> CGFloat { measure(width).rows }
+
+    /// How tall it is at a width — the empty line after the last row
+    /// included — as its frame wants.
+    func fittingHeight(width: CGFloat) -> CGFloat { measure(width).fit }
+
+    /// The last measurement, kept till the text or its look changes: laying
+    /// a note out is the dearest thing done, and a sheet asks every note
+    /// its height each time any one changes.
+    private var measured: (width: CGFloat, fit: CGFloat, rows: CGFloat)?
+
+    /// Changes under way known to stay within some rows: the measurement
+    /// is moved by what they do to those rows, not taken again.
+    private var localChanges = 0
+
+    /// How tall some rows are laid out: their lines alone, laid out alone.
+    private func height(ofParagraphsIn range: NSRange) -> CGFloat {
+        let text = textStorage.string as NSString
+        guard text.length > 0 else { return 0 }
+        let paragraphs = text.paragraphRange(for: NSRange(location: min(range.location, text.length - 1),
+                                                          length: max(0, min(range.length, text.length - min(range.location, text.length - 1)))))
+        let glyphs = outlineLayout.glyphRange(forCharacterRange: paragraphs, actualCharacterRange: nil)
+        guard glyphs.length > 0 else { return 0 }
+        var height: CGFloat = 0
+        outlineLayout.enumerateLineFragments(forGlyphRange: glyphs) { rect, _, _, _, _ in height += rect.height }
+        return height
+    }
+
+    /// A change that stays within the rows about `locations` — typing in a
+    /// row, a row restyled for the caret — made, and the measurement moved
+    /// by the difference in those rows: laying a long note out again whole,
+    /// for each keystroke, is what made typing in one lag.
+    private func locally(at locations: [Int], _ change: () -> Void) {
+        guard measured != nil else { return change() }
+        let before = locations.map { height(ofParagraphsIn: NSRange(location: $0, length: 0)) }.reduce(0, +)
+        localChanges += 1
+        change()
+        localChanges -= 1
+        guard var measured = self.measured else { return }
+        let length = textStorage.length
+        let after = locations.map { height(ofParagraphsIn: NSRange(location: min($0, max(0, length - 1)), length: 0)) }.reduce(0, +)
+        measured.fit += after - before
+        measured.rows += after - before
+        self.measured = measured
+    }
+
+    private func measure(_ width: CGFloat) -> (fit: CGFloat, rows: CGFloat) {
+        if let measured, abs(measured.width - width) < 0.5 { return (measured.fit, measured.rows) }
         let fit = sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
         let extra = outlineLayout.extraLineFragmentRect.height
-        return max(0, fit - (extra > 0 ? extra : round(metrics.face.lineHeight * metrics.size)))
+        let rows = max(0, fit - (extra > 0 ? extra : round(metrics.face.lineHeight * metrics.size)))
+        measured = (width, fit, rows)
+        return (fit, rows)
     }
 
     override var intrinsicContentSize: CGSize {
@@ -767,7 +1303,7 @@ final class OutlineToolbar: UIInputView {
             ("arrow.up", #selector(OutlineEditor.moveUp), "Move Up"),
             ("arrow.down", #selector(OutlineEditor.moveDown), "Move Down"),
             ("checkmark.square", #selector(OutlineEditor.cycleChecklist), "Checklist"),
-            ("chevron.down.circle", #selector(OutlineEditor.foldHere), "Fold"),
+            ("checkmark.circle", #selector(OutlineEditor.cycleTask), "Task"),
             ("link", #selector(OutlineEditor.insertLink), "Link"),
             ("keyboard.chevron.compact.down", #selector(UIResponder.resignFirstResponder), "Done"),
         ]
@@ -800,6 +1336,60 @@ final class OutlineToolbar: UIInputView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         autoresizingMask = .flexibleHeight
+        tools = stack
+        chips.showsHorizontalScrollIndicator = false
+        chips.isHidden = true
+        chips.translatesAutoresizingMaskIntoConstraints = false
+        chipRow.axis = .horizontal
+        chipRow.spacing = 8
+        chipRow.translatesAutoresizingMaskIntoConstraints = false
+        chips.addSubview(chipRow)
+        addSubview(chips)
+        NSLayoutConstraint.activate([
+            chips.leadingAnchor.constraint(equalTo: leadingAnchor),
+            chips.trailingAnchor.constraint(equalTo: trailingAnchor),
+            chips.topAnchor.constraint(equalTo: topAnchor),
+            chips.bottomAnchor.constraint(equalTo: bottomAnchor),
+            chipRow.leadingAnchor.constraint(equalTo: chips.contentLayoutGuide.leadingAnchor, constant: 10),
+            chipRow.trailingAnchor.constraint(equalTo: chips.contentLayoutGuide.trailingAnchor, constant: -10),
+            chipRow.centerYAnchor.constraint(equalTo: chips.frameLayoutGuide.centerYAnchor),
+            chipRow.heightAnchor.constraint(equalToConstant: 34),
+        ])
+    }
+
+    private var tools: UIView?
+    private let chips = UIScrollView()
+    private let chipRow = UIStackView()
+
+    /// Links to choose from, in place of the tools — the first, which
+    /// Return puts in, marked — or, with none, the tools again.
+    func show(_ candidates: [LinkSuggestions.Candidate], choose: @escaping (LinkSuggestions.Candidate) -> Void) {
+        chipRow.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for (i, candidate) in candidates.enumerated() {
+            var configuration = UIButton.Configuration.filled()
+            configuration.title = candidate.title
+            configuration.image = UIImage(systemName: candidate.isDay ? "calendar" : candidate.title.hasPrefix("New “") ? "plus" : "doc.text",
+                                          withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .medium))
+            configuration.imagePadding = 5
+            configuration.titleLineBreakMode = .byTruncatingTail
+            configuration.cornerStyle = .capsule
+            configuration.baseBackgroundColor = i == 0 ? Ink.accent : Ink.pill
+            configuration.baseForegroundColor = i == 0 ? .white : Ink.text
+            configuration.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+            configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+                var attributes = attributes
+                attributes.font = UIFont.systemFont(ofSize: 15, weight: i == 0 ? .semibold : .regular)
+                return attributes
+            }
+            let button = UIButton(configuration: configuration, primaryAction: UIAction { _ in choose(candidate) })
+            button.accessibilityLabel = "Link to " + candidate.title
+            button.setContentHuggingPriority(.required, for: .horizontal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+            chipRow.addArrangedSubview(button)
+        }
+        chips.isHidden = candidates.isEmpty
+        tools?.isHidden = !candidates.isEmpty
+        chips.contentOffset = .zero
     }
 
     @available(*, unavailable)

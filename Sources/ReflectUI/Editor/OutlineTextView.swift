@@ -619,11 +619,11 @@ package final class OutlineTextView: NSTextView {
     }
 
     /// Back to editing text, with the caret at the end of a row.
-    package func editText(inRow index: Int, atEnd: Bool = true) {
+    package func editText(inRow index: Int, atEnd: Bool = true, scrolling: Bool = true) {
         leaveRowSelection()
         let paragraph = paragraphRanges[min(index, paragraphRanges.count - 1)]
         setSelectedRange(NSRange(location: atEnd ? NSMaxRange(paragraph) - 1 : paragraph.location, length: 0))
-        scrollRangeToVisible(selectedRange())
+        if scrolling { scrollRangeToVisible(selectedRange()) }
     }
 
     package override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
@@ -958,21 +958,24 @@ package final class OutlineTextView: NSTextView {
         undoManager?.setActionName("Delete Image")
     }
 
+    /// A row's checkbox or bullet clicked, as the mouse does it.
+    package func clickHandleForScript(ofRow index: Int) { clickHandle(ofRow: index) }
+
     /// A checkbox checks; a bullet with children folds or unfolds them.
     private func clickHandle(ofRow index: Int) {
         let row = row(at: index)
         if row.task != nil {
-            perform("Toggle Done", on: index..<(index + 1)) { rows, selection in
+            perform("Toggle Done", on: index..<(index + 1), followingCaret: false) { rows, selection in
                 OutlineEditing.toggleDone(&rows, selection)
                 return selection
             }
         } else if row.isFolded {
-            perform("Expand", on: index..<(index + 1)) { rows, selection in
+            perform("Expand", on: index..<(index + 1), followingCaret: false) { rows, selection in
                 OutlineEditing.unfold(&rows, at: selection.lowerBound)
                 return selection
             }
         } else if OutlineEditing.hasChildren(rows, index) {
-            perform("Collapse", on: index..<(index + 1)) { rows, selection in
+            perform("Collapse", on: index..<(index + 1), followingCaret: false) { rows, selection in
                 OutlineEditing.fold(&rows, at: selection.lowerBound)
                 return selection
             }

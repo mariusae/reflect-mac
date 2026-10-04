@@ -81,7 +81,8 @@ final class PrismApp: NSObject, NSApplicationDelegate {
     /// place down the scrubber (0 to 1) hovered, `PRISM_SCROLL` steps of
     /// scrolling, up for under 0, `PRISM_SETTINGS_SNAP` where to draw the Settings
     /// window, `PRISM_SIDEBAR=1` the
-    /// sidebar out.
+    /// sidebar out, `PRISM_CLICKBOX=<n>` the nth checkbox of `PRISM_NOTE`
+    /// clicked with the caret at its top, and the scroll before and after printed.
     private func runScript(_ controller: PrismWindowController, _ environment: [String: String]) {
         if environment["PRISM_DARK"] == "1" { NSApp.appearance = NSAppearance(named: .darkAqua) }
         if environment["PRISM_DARK"] == "0" { NSApp.appearance = NSAppearance(named: .aqua) }
@@ -136,6 +137,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         if let title = environment["PRISM_CARD"] { print("card:", LinkCard.noteSource?(title)?.ref.path ?? "no note") }
         if environment["PRISM_INBOX_SHEET"] == "1" { controller.showInboxSheet(nil) }
         if environment["PRISM_TICK"] == "1" { controller.tickFirstTaskForScript() }
+        if let nth = environment["PRISM_CLICKBOX"].flatMap(Int.init), let note = environment["PRISM_NOTE"] { controller.clickBoxForScript(in: note, nth: nth) }
         if let path = environment["PRISM_BACKLINKS"] { controller.showBacklinksForScript(path) }
         if let text = environment["PRISM_TYPE_BACKLINK"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { controller.typeInBacklinkForScript(text) }
@@ -318,6 +320,14 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         window.submenu?.addItem(item("Zoom", #selector(NSWindow.performZoom(_:))))
         main.addItem(window)
         NSApp.windowsMenu = window.submenu
+        // In the order the Mac's apps keep: the app, File, Edit, Format, View,
+        // then Prism's own, then Window and Help.
+        let order = ["Prism", "File", "Edit", "Format", "View", "Outline", "Note", "Column", "Go", "Graph", "Window", "Help"]
+        let items = main.items
+        main.removeAllItems()
+        for item in items.sorted(by: { (order.firstIndex(of: $0.submenu?.title ?? $0.title) ?? order.count) < (order.firstIndex(of: $1.submenu?.title ?? $1.title) ?? order.count) }) {
+            main.addItem(item)
+        }
         return main
     }
 }

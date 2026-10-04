@@ -204,13 +204,15 @@ public final class Git: @unchecked Sendable {
                 // From here the repository is mid-merge; whatever happens, it
                 // must not be left so, or every later sync would stop.
                 do {
-                    report.conflicted += try resolveConflicts(unmerged)
-                    try backend.commitMerge(message: "Merge changes from other devices (conflicts to review)")
+                    let left = try resolveConflicts(unmerged)
+                    report.conflicted += left
+                    try backend.commitMerge(message: left.isEmpty ? "Merge changes from other devices"
+                                                                  : "Merge changes from other devices (conflicts to review)")
                 } catch {
                     backend.abortMerge()
                     throw error
                 }
-                kind = .mergedWithConflicts
+                kind = report.conflicted.isEmpty ? .merged : .mergedWithConflicts
             }
         }
         if let before {
@@ -246,11 +248,17 @@ public final class Git: @unchecked Sendable {
                     try backend.add(topLevelPaths: [path, copy])
                     conflicted += [path, copy]
                 } else {
+                    // Merged again, line ends aside: a space one device left
+                    // at a line's end and the other took off is no change, and
+                    // must not pull the line into the conflict — where keeping
+                    // both sides would write it twice.
                     let base = try stages[1].map(backend.blob) ?? Data()
-                    try write(try backend.mergeText(ours: mine, base: base, theirs: other,
-                                                    labels: (Self.ourLabel, "base", Self.theirLabel)), to: file)
+                    let merged = try backend.mergeText(ours: Self.trimmingLineEnds(mine), base: Self.trimmingLineEnds(base),
+                                                       theirs: Self.trimmingLineEnds(other),
+                                                       labels: (Self.ourLabel, "base", Self.theirLabel))
+                    try write(merged, to: file)
                     try backend.add(topLevelPaths: [path])
-                    conflicted.append(path)
+                    if ConflictMarkers.detect(String(decoding: merged, as: UTF8.self)) { conflicted.append(path) }
                 }
             case let (kept?, nil), let (nil, kept?):
                 try write(try backend.blob(kept), to: file)
@@ -267,6 +275,19 @@ public final class Git: @unchecked Sendable {
     private func write(_ data: Data, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)
+    }
+
+    /// A text with the spaces and tabs at its lines' ends taken off.
+    static func trimmingLineEnds(_ data: Data) -> Data {
+        let text = String(decoding: data, as: UTF8.self)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map { line -> Substring in
+            var line = line
+            let carriage = line.hasSuffix("\r")
+            if carriage { line = line.dropLast() }
+            while let last = line.last, last == " " || last == "\t" { line = line.dropLast() }
+            return carriage ? line + "\r" : line
+        }
+        return Data(lines.joined(separator: "\n").utf8)
     }
 
     /// Git's own test: a NUL in the first 8000 bytes.

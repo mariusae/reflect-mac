@@ -31,10 +31,15 @@ struct RootView: View {
     @Environment(GraphStore.self) private var store
 
     var body: some View {
-        if !store.hasGraph {
-            ConnectView(appName: "Reflect", clone: store.clone)
-        } else if store.index == nil {
-            ProgressView()
+        // The index first: it is what changes once a clone is in. Whether
+        // the folder holds a graph is not watched, and alone would leave
+        // the connecting screen up after a clone.
+        if store.index == nil {
+            if store.hasGraph || store.isLoading {
+                ProgressView()
+            } else {
+                ConnectView(appName: "Reflect", clone: store.clone)
+            }
         } else {
             TabView {
                 Tab("Today", systemImage: "calendar") {

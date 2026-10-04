@@ -262,17 +262,7 @@ package final class OpenQuickly: NSObject, NSTextFieldDelegate, NSTableViewDataS
 
     /// A day a query names: a date written out, or said — "today", "next
     /// friday", "sep 24".
-    package nonisolated static func day(from query: String) -> Day? {
-        if let day = Day(query) { return day }
-        let lowered = query.lowercased()
-        if ["today", "yesterday", "tomorrow"].contains(lowered) {
-            return Day.today.adding(lowered == "yesterday" ? -1 : lowered == "tomorrow" ? 1 : 0)
-        }
-        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue),
-              let match = detector.firstMatch(in: query, range: NSRange(location: 0, length: (query as NSString).length)),
-              match.range.length >= (query as NSString).length - 1, let date = match.date else { return nil }
-        return Day(date)
-    }
+    package nonisolated static func day(from query: String) -> Day? { DayQuery.day(query) }
 
     nonisolated private static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()

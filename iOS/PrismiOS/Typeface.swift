@@ -37,7 +37,7 @@ enum Typeface: String, CaseIterable, Identifiable {
         case .mona: 1.42
         case .plex: 1.4
         case .alegreya: 1.4
-        case .system: 1.36
+        case .system: 1.33
         case .literata, .fraunces, .source: 1.5
         }
     }
@@ -115,12 +115,17 @@ enum Typeface: String, CaseIterable, Identifiable {
     }
 
     static var current: Typeface {
-        get { UserDefaults.standard.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)) ?? .mona }
+        // Set as Threads is: the system's own face.
+        get { .system }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "Typeface") }
     }
 
     /// Makes the bundled fonts — copied into the app at build — available.
-    static func registerBundled() {
+    /// The bundled fonts, registered off the main thread: started at
+    /// launch, waited on before the first note is drawn.
+    static let registration = Task.detached(priority: .userInitiated) { registerBundled() }
+
+    nonisolated static func registerBundled() {
         guard let folder = Bundle.main.resourceURL?.appendingPathComponent("Fonts"),
               let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return }
         for url in files where ["otf", "ttf"].contains(url.pathExtension) {
@@ -140,15 +145,20 @@ enum Ink {
         UIColor { $0.userInterfaceStyle == .dark ? dark : light }
     }
 
-    static let paper = dynamic(hex(0xfaf7f2), hex(0x1d1b18))
-    static let text = dynamic(hex(0x2b2724), hex(0xece6dc))
-    static let secondary = dynamic(hex(0x6f665d), hex(0xa79e92))
-    static let faint = dynamic(hex(0x2b2724, alpha: 0.32), hex(0xece6dc, alpha: 0.3))
-    static let rule = dynamic(hex(0x2b2724, alpha: 0.1), hex(0xece6dc, alpha: 0.1))
-    static let hover = dynamic(hex(0x2b2724, alpha: 0.05), hex(0xece6dc, alpha: 0.07))
-    static let shelf = dynamic(hex(0xf2ede5), hex(0x262320))
-    static let codeBack = dynamic(hex(0x2b2724, alpha: 0.05), hex(0xece6dc, alpha: 0.07))
-    static let accent = dynamic(UIColor(red: 0.15, green: 0.36, blue: 0.82, alpha: 1), UIColor(red: 0.52, green: 0.68, blue: 1, alpha: 1))
+    // As Threads has it: white and near-black, ink black and near-white,
+    // greys for the rest.
+    static let paper = dynamic(.white, hex(0x101010))
+    static let text = dynamic(hex(0x000000), hex(0xf3f5f7))
+    static let secondary = dynamic(hex(0x999999), hex(0x777777))
+    static let faint = dynamic(hex(0x000000, alpha: 0.3), hex(0xf3f5f7, alpha: 0.3))
+    static let rule = dynamic(hex(0x000000, alpha: 0.15), hex(0xf3f5f7, alpha: 0.15))
+    static let hover = dynamic(hex(0x000000, alpha: 0.04), hex(0xf3f5f7, alpha: 0.06))
+    static let shelf = dynamic(hex(0xf5f5f5), hex(0x1e1e1e))
+    static let codeBack = dynamic(hex(0x000000, alpha: 0.05), hex(0xf3f5f7, alpha: 0.08))
+    /// The floating compose button.
+    static let composeBack = dynamic(.white, hex(0x2a2a2a))
+    static let composeInk = dynamic(.black, .white)
+    static let accent = dynamic(hex(0x0095f6), hex(0x4cb5f9))
     static let pill = dynamic(UIColor(red: 0.15, green: 0.36, blue: 0.82, alpha: 0.09), UIColor(red: 0.52, green: 0.68, blue: 1, alpha: 0.14))
     static let week = dynamic(UIColor(red: 0.78, green: 0.52, blue: 0.12, alpha: 1), UIColor(red: 0.93, green: 0.7, blue: 0.32, alpha: 1))
     static let marked = dynamic(UIColor(red: 1, green: 0.86, blue: 0.3, alpha: 0.45), UIColor(red: 0.85, green: 0.7, blue: 0.2, alpha: 0.35))

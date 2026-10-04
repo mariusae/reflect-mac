@@ -371,6 +371,10 @@ final class Column: NSView, OutlineTextViewNavigator {
     private var rules: [NSView] = []
     /// Each note's flags — inbox, pinned, private, topic — by its name.
     private var badges: [NoteRef: NoteBadges] = [:]
+    /// Each listed note's ⋯, at the right of its name: its own menu.
+    private var menuButtons: [NoteRef: NSButton] = [:]
+    /// Told when a note's ⋯ is clicked: its menu, to show from the button.
+    var onNoteMenu: ((DayView, NSButton) -> Void)?
     /// What each note's frontmatter says of it, by path: the graph's index's.
     static var flags: (String) -> NoteFlags = { _ in [] }
     /// Over each note's header, among many: a click opens the note alone.
@@ -458,6 +462,11 @@ final class Column: NSView, OutlineTextViewNavigator {
         }
     }
 
+    @objc private func noteMenuClicked(_ sender: NSButton) {
+        guard let path = sender.identifier?.rawValue, let view = view(for: NoteRef(path: path)) else { return }
+        onNoteMenu?(view, sender)
+    }
+
     /// Where a note's name is, down its view: the title over it, or else
     /// its own first line.
     private func nameMiddle(of view: DayView) -> CGFloat {
@@ -518,6 +527,30 @@ final class Column: NSView, OutlineTextViewNavigator {
             badge.removeFromSuperview()
             badges[ref] = nil
         }
+        // A ⋯ on each note among many, its own menu.
+        let menuSide: CGFloat = 26
+        for (ref, button) in menuButtons where !shown.contains(ref) || !listsNotes {
+            button.removeFromSuperview()
+            menuButtons[ref] = nil
+        }
+        if listsNotes {
+            for view in notes {
+                let button = menuButtons[view.ref] ?? {
+                    let button = NSButton(image: NSImage(systemSymbolName: "ellipsis", accessibilityDescription: "Note Menu")!,
+                                          target: self, action: #selector(noteMenuClicked(_:)))
+                    button.isBordered = false
+                    button.contentTintColor = Ink.secondary
+                    button.toolTip = "Pin, inbox, copy link…"
+                    document.addSubview(button)
+                    menuButtons[view.ref] = button
+                    return button
+                }()
+                button.identifier = NSUserInterfaceItemIdentifier(view.ref.path)
+                let column = min(metrics.columnWidth, view.frame.width - 48)
+                let right = view.frame.minX + ((view.frame.width - column) / 2).rounded() + column - (kind == .inbox ? 30 : 0)
+                button.frame = NSRect(x: right - menuSide, y: round(nameMiddle(of: view) - menuSide / 2) + 3, width: menuSide, height: menuSide)
+            }
+        }
         for view in notes {
             let flags = Self.flags(view.ref.path)
             guard !flags.isEmpty else {
@@ -534,7 +567,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             badge.flags = flags
             badge.size = round(metrics.fontSize * 0.8)
             let column = min(metrics.columnWidth, view.frame.width - 48)
-            let right = view.frame.minX + ((view.frame.width - column) / 2).rounded() + column - (kind == .inbox ? 30 : 4)
+            let right = view.frame.minX + ((view.frame.width - column) / 2).rounded() + column - (kind == .inbox ? 30 : 4) - (listsNotes ? menuSide : 0)
             let size = badge.intrinsicContentSize
             badge.frame = NSRect(x: right - size.width, y: round(nameMiddle(of: view) - size.height / 2), width: size.width, height: size.height)
         }
@@ -602,7 +635,10 @@ final class Column: NSView, OutlineTextViewNavigator {
         for block in blocks {
             if let view = block as? DayView { existing[view.ref] = view } else { block.removeFromSuperview() }
         }
-        blocks = refs.map { ref in existing.removeValue(forKey: ref) ?? makeView(ref) }
+        blocks = refs.map { ref -> ColumnBlock in
+            if let gap = ref.gap { return makeGap(gap) }
+            return existing.removeValue(forKey: ref) ?? makeView(ref)
+        }
         for view in existing.values { letGo(view) }
         relayout()
     }
@@ -723,6 +759,16 @@ final class Column: NSView, OutlineTextViewNavigator {
     var onViewMade: ((DayView) -> Void)?
     /// A note is no longer shown here.
     var onViewGone: ((DayView) -> Void)?
+
+    /// Told when a gap in the timeline is clicked: some of its days to show.
+    var onRevealGap: ((TimelineGap) -> Void)?
+
+    private func makeGap(_ gap: TimelineGap) -> GapView {
+        let view = GapView(gap: gap, metrics: metrics)
+        view.onReveal = { [weak self] gap in self?.onRevealGap?(gap) }
+        document.addSubview(view)
+        return view
+    }
 
     private func makeView(_ ref: NoteRef) -> DayView {
         let view = DayView(ref: ref, graph: graph, images: images, metrics: metrics)
@@ -857,6 +903,7 @@ final class Column: NSView, OutlineTextViewNavigator {
     /// What a note is called on the scrubber: a day's date, a week's
     /// number, any other note its title.
     static func name(of ref: NoteRef) -> (title: String, detail: String?) {
+        if let gap = ref.gap { return ("⋯", GapView.describe(gap)) }
         if let day = ref.day { return (OpenQuickly.dayTitle(day), day == .today ? "Today" : nil) }
         if let week = GraphPaths.week(fromWeeklyPath: ref.path) { return ("Week \(week.week)", OpenQuickly.weekRange(week)) }
         return (titles(ref.path) ?? (ref.path as NSString).lastPathComponent, nil)
@@ -884,9 +931,10 @@ final class Column: NSView, OutlineTextViewNavigator {
             sliding = false
         }
         onCurrent?(self)
-        // A note on its own keeps how far down it was read, to open there again.
-        if settled, case .note(let ref) = kind {
-            SessionState.shared.setOffset(graph.root, ref, Double(scroll.contentView.bounds.minY))
+        // The note at the top keeps how far into it it was read — on its
+        // own or among the days — to open there again, wherever it is opened.
+        if settled, let view = current {
+            SessionState.shared.setOffset(graph.root, view.ref, Double(scroll.contentView.bounds.minY - view.frame.minY))
         }
         onScroll?(self)
     }

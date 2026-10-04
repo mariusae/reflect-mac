@@ -8,7 +8,7 @@ extension OutlineTextView {
     /// Applies an outline operation to the targeted rows, as one step to
     /// undo, and keeps the selection on the rows it was on.
     @discardableResult
-    package func perform(_ name: String, on selection: Range<Int>? = nil,
+    package func perform(_ name: String, on selection: Range<Int>? = nil, followingCaret: Bool = true,
                  _ transform: (inout [Row], Range<Int>) -> Range<Int>?) -> Bool {
         let before = rows
         let target = selection ?? targetRows
@@ -20,6 +20,24 @@ extension OutlineTextView {
             return false
         }
         replace(before, with: after, actionName: name)
+        guard followingCaret else {
+            // Done to rows the caret is not about — a checkbox clicked, a
+            // bullet folded — the page stays where it is, and the caret on
+            // the text it was on: rows a fold took in or let out shift the
+            // ones after it, and a row folded away leaves it on the fold.
+            if wasSelectingRows { return true }
+            if caret.row < target.upperBound {
+                restoreCaret(caret)
+            } else {
+                let row = caret.row + after.count - before.count
+                if row < target.upperBound {
+                    editText(inRow: target.lowerBound, atEnd: true, scrolling: false)
+                } else {
+                    restoreCaret(CaretPosition(row: row, offset: caret.offset))
+                }
+            }
+            return true
+        }
         if wasSelectingRows {
             selectRows(anchor: result.lowerBound, head: result.upperBound - 1)
         } else {

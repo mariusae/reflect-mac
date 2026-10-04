@@ -196,6 +196,32 @@ enum SyncBackend: String, CaseIterable, CustomStringConvertible {
         #expect(try read(deviceB, "notes/shared.md") == content)
     }
 
+    /// As it happened on 2026-10-03: one device took a line's trailing
+    /// space off and added a section at the end, the other added one there
+    /// too. The line both kept must not be in the conflict — "Keep Both"
+    /// then wrote it twice — and a merge left with no markers is not one
+    /// to review.
+    @Test(arguments: SyncBackend.allCases) func lineEndsDoNotMakeAConflict(_ backend: SyncBackend) throws {
+        let (fixture, a, b, deviceB) = try shared(backend, "daily/2026-10-03.md", "- Melvin birthday yesterday \n")
+        try write(deviceB, "daily/2026-10-03.md", "- Melvin birthday yesterday\n- [[Links]]\n")
+        _ = try b.cycle(.push)
+        try write(fixture.deviceA, "daily/2026-10-03.md", "- Melvin birthday yesterday \n- Prism\n")
+
+        _ = try a.cycle(.full)
+        let content = try read(fixture.deviceA, "daily/2026-10-03.md")
+        #expect(content.components(separatedBy: "Melvin birthday yesterday").count == 2)
+        #expect(content.hasPrefix("- Melvin birthday yesterday\n"))
+
+        // Only the line's end differs: no conflict at all.
+        let (fixture2, c, d, deviceD) = try shared(backend, "notes/n.md", "- one \n- two\n")
+        try write(deviceD, "notes/n.md", "- one\n- two\n")
+        _ = try d.cycle(.push)
+        try write(fixture2.deviceA, "notes/n.md", "- one \n- two\n- three\n")
+        let report = try c.cycle(.full)
+        #expect(report.conflicted.isEmpty)
+        #expect(!ConflictMarkers.detect(try read(fixture2.deviceA, "notes/n.md")))
+    }
+
     @Test(arguments: SyncBackend.allCases) func editVersusDeleteKeepsTheEdit(_ backend: SyncBackend) throws {
         let (fixture, a, b, deviceB) = try shared(backend, "notes/keep.md", "# Keep\n\noriginal\n")
         try write(deviceB, "notes/keep.md", "# Keep\n\nedited on b\n")

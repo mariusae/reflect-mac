@@ -10,12 +10,41 @@
 		BB000000000000000000000D /* ReflectCore in Frameworks */ = {isa = PBXBuildFile; productRef = BB000000000000000000000C /* ReflectCore */; };
 		BB000000000000000000000F /* ReflectGit2 in Frameworks */ = {isa = PBXBuildFile; productRef = BB000000000000000000001A /* ReflectGit2 */; };
 		BB0000000000000000000021 /* PrismCore in Frameworks */ = {isa = PBXBuildFile; productRef = BB0000000000000000000020 /* PrismCore */; };
+		CC0000000000000000000007 /* PrismShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000001 /* PrismShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		CC0000000000000000000011 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BB0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CC0000000000000000000009;
+			remoteInfo = PrismShare;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		CC0000000000000000000008 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				CC0000000000000000000007 /* PrismShare.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		BB0000000000000000000005 /* Prism.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Prism.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BB000000000000000000001B /* GitHub.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = GitHub.xcconfig; sourceTree = "<group>"; };
 		BB000000000000000000001C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		CC0000000000000000000001 /* PrismShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PrismShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		CC0000000000000000000002 /* PrismShare-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "PrismShare-Info.plist"; sourceTree = "<group>"; };
+		CC0000000000000000000003 /* PrismiOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PrismiOS.entitlements; sourceTree = "<group>"; };
+		CC0000000000000000000004 /* PrismShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PrismShare.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -27,6 +56,16 @@
 		BB000000000000000000001D /* Shared */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Shared;
+			sourceTree = "<group>";
+		};
+		CC0000000000000000000005 /* ShareQueue */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ShareQueue;
+			sourceTree = "<group>";
+		};
+		CC0000000000000000000006 /* PrismShare */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PrismShare;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -42,6 +81,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CC000000000000000000000B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -50,6 +96,11 @@
 			children = (
 				BB0000000000000000000003 /* PrismiOS */,
 				BB000000000000000000001D /* Shared */,
+				CC0000000000000000000005 /* ShareQueue */,
+				CC0000000000000000000006 /* PrismShare */,
+				CC0000000000000000000002 /* PrismShare-Info.plist */,
+				CC0000000000000000000003 /* PrismiOS.entitlements */,
+				CC0000000000000000000004 /* PrismShare.entitlements */,
 				BB000000000000000000001B /* GitHub.xcconfig */,
 				BB000000000000000000001C /* Info.plist */,
 				BB0000000000000000000004 /* Products */,
@@ -60,6 +111,7 @@
 			isa = PBXGroup;
 			children = (
 				BB0000000000000000000005 /* Prism.app */,
+				CC0000000000000000000001 /* PrismShare.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -75,14 +127,17 @@
 				BB0000000000000000000008 /* Frameworks */,
 				BB0000000000000000000009 /* Resources */,
 				BB0000000000000000000022 /* Fonts */,
+				CC0000000000000000000008 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				CC0000000000000000000010 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				BB0000000000000000000003 /* PrismiOS */,
 				BB000000000000000000001D /* Shared */,
+				CC0000000000000000000005 /* ShareQueue */,
 			);
 			name = PrismiOS;
 			packageProductDependencies = (
@@ -93,6 +148,27 @@
 			productName = PrismiOS;
 			productReference = BB0000000000000000000005 /* Prism.app */;
 			productType = "com.apple.product-type.application";
+		};
+		CC0000000000000000000009 /* PrismShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CC000000000000000000000D /* Build configuration list for PBXNativeTarget "PrismShare" */;
+			buildPhases = (
+				CC000000000000000000000A /* Sources */,
+				CC000000000000000000000B /* Frameworks */,
+				CC000000000000000000000C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				CC0000000000000000000005 /* ShareQueue */,
+				CC0000000000000000000006 /* PrismShare */,
+			);
+			name = PrismShare;
+			productName = PrismShare;
+			productReference = CC0000000000000000000001 /* PrismShare.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -105,6 +181,9 @@
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					BB0000000000000000000006 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					CC0000000000000000000009 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
@@ -127,12 +206,20 @@
 			projectRoot = "";
 			targets = (
 				BB0000000000000000000006 /* PrismiOS */,
+				CC0000000000000000000009 /* PrismShare */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		BB0000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CC000000000000000000000C /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -167,7 +254,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CC000000000000000000000A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		CC0000000000000000000010 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CC0000000000000000000009 /* PrismShare */;
+			targetProxy = CC0000000000000000000011 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		BB0000000000000000000011 /* Debug */ = {
@@ -213,11 +315,12 @@
 			baseConfigurationReference = BB000000000000000000001B /* GitHub.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = PrismiOS.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = G3V66M4637;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Prism;
@@ -245,11 +348,12 @@
 			baseConfigurationReference = BB000000000000000000001B /* GitHub.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = PrismiOS.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = G3V66M4637;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Prism;
@@ -266,6 +370,58 @@
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mariusae.Prism;
 				PRODUCT_NAME = Prism;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		CC000000000000000000000E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = PrismShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = G3V66M4637;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "PrismShare-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Prism;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mariusae.Prism.Share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		CC000000000000000000000F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = PrismShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = G3V66M4637;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "PrismShare-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Prism;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mariusae.Prism.Share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -289,6 +445,15 @@
 			buildConfigurations = (
 				BB0000000000000000000013 /* Debug */,
 				BB0000000000000000000014 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CC000000000000000000000D /* Build configuration list for PBXNativeTarget "PrismShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CC000000000000000000000E /* Debug */,
+				CC000000000000000000000F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

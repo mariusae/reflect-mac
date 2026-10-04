@@ -9,7 +9,8 @@ struct PrismApp: App {
     @Environment(\.scenePhase) private var phase
 
     init() {
-        Typeface.registerBundled()
+        StallWatch.begin()
+        _ = Typeface.registration
         let account = GitHubAccount()
         let store = PrismStore(account: account)
         _account = State(initialValue: account)
@@ -42,10 +43,15 @@ struct RootView: View {
     let scheduler: SyncScheduler
 
     var body: some View {
-        if !store.hasGraph {
-            ConnectView(appName: "Prism", clone: store.clone)
-        } else if store.index == nil {
-            ProgressView()
+        // The index first: it is what changes once a clone is in. Whether
+        // the folder holds a graph is not watched, and alone would leave
+        // the connecting screen up after a clone.
+        if store.index == nil {
+            if store.hasGraph || store.isLoading {
+                ProgressView()
+            } else {
+                ConnectView(appName: "Prism", clone: store.clone)
+            }
         } else {
             ColumnsView(store: store, scheduler: scheduler)
                 .ignoresSafeArea()

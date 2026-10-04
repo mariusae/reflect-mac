@@ -170,6 +170,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         column.onViewMade = { [weak self] view in self?.noteShown(view) }
         column.onViewGone = { [weak self] view in self?.noteLeft(view) }
         column.onSave = { [weak self] view in self?.noteSaved(view) }
+        column.onRevealGap = { [weak self] gap in self?.reveal(gap) }
         column.onSliceEdit = { [weak self] editor, column in self?.writeBack(editor, in: column) }
         column.onSliceLeave = { [weak self] _ in
             self?.refreshBacklinks()
@@ -184,6 +185,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         column.onOpenAlone = { [weak self] ref, column, newColumn in self?.openAlone(ref, from: column, newColumn: newColumn) }
         column.onDragSheet = { [weak self] column, index, event in self?.drag(index, from: column, event: event) }
         column.onRemoveFromInbox = { [weak self] ref in self?.setFrontmatter(ref.path, "inbox", nil) }
+        column.onNoteMenu = { [weak self] view, button in self?.showNoteMenu(for: view, from: button) }
         return column
     }
 
@@ -657,7 +659,18 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     /// The timeline: every day and week there is a note for, today, and
     /// `including`, in order — a week before the days it covers.
     private func timelineEntries(including ref: NoteRef? = nil) -> [NoteRef] {
-        Timeline.entries(graph: graph, index: index, including: ref)
+        Timeline.entries(graph: graph, index: index, including: ref, revealed: revealedDays)
+    }
+
+    /// Days with no note shown in the timeline all the same, to write in:
+    /// opened from a gap, or gone to. Written in, they are notes like any.
+    private var revealedDays: Set<Day> = []
+
+    /// A gap's last few days, shown empty in every timeline.
+    private func reveal(_ gap: TimelineGap) {
+        revealedDays.formUnion(Timeline.reveal(gap))
+        let entries = timelineEntries()
+        columns.forEach { $0.updateTimeline(entries) }
     }
 
     /// The day a note is placed at in the timeline, when it has a place there.
@@ -685,8 +698,15 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         active = column
         let ref = NoteRef(path: path)
         if day(of: ref) != nil {
+            // A day gone to that has no note yet stays in the timeline, empty, to write in.
+            if let day = ref.day, !graph.exists(path: path) { revealedDays.insert(day) }
             if !column.shows(ref) { column.showTimeline(timelineEntries(including: ref), around: ref) }
-            column.reveal(ref, animated: false)
+            // A day as it was left: read to where it was, the caret where it was.
+            if let offset = SessionState.shared.place(graph.root, ref)?.offset {
+                column.restore(Column.Place(ref: ref, offset: CGFloat(offset)), key: ref)
+            } else {
+                column.reveal(ref, animated: false)
+            }
         } else {
             showAlone(ref, in: column)
         }
@@ -700,8 +720,9 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     private func showAlone(_ ref: NoteRef, in column: Column) {
         column.showNote(ref)
         refreshTopic(column)
+        // Where it was read to, from its top, and where the caret was.
         let offset = SessionState.shared.place(graph.root, ref)?.offset ?? 0
-        column.restore(Column.Place(ref: ref, offset: CGFloat(offset) - (column.view(for: ref)?.frame.minY ?? 0)), key: ref)
+        column.restore(Column.Place(ref: ref, offset: CGFloat(offset)), key: ref)
         if column.view(for: ref)?.restoreSelection() == false {
             column.view(for: ref)?.editor.enter(from: .top, x: 0, scrolling: false)
         }
@@ -1371,6 +1392,28 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         focusedNote.flatMap { index.entry($0.path) ?? NoteIndex.entry(path: $0.path, source: graph.read(path: $0.path) ?? "") }
     }
 
+    /// A note's own menu, from the ⋯ at the right of its name: what the Note
+    /// menu does, done to that note — the keyboard put in it first, so the
+    /// menu's items know which.
+    private func showNoteMenu(for view: DayView, from button: NSButton) {
+        window?.makeFirstResponder(view.editor)
+        let menu = NSMenu()
+        func item(_ title: String, _ action: Selector) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        item("Add to Inbox", #selector(toggleInbox(_:)))
+        item("Pin", #selector(togglePinned(_:)))
+        item("Topic", #selector(toggleTopic(_:)))
+        item("Private", #selector(togglePrivate(_:)))
+        menu.addItem(.separator())
+        item("Backlinks", #selector(showBacklinks(_:)))
+        item("Copy Link", #selector(copyNoteLink(_:)))
+        item("Reveal in Finder", #selector(revealNoteInFinder(_:)))
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.isFlipped ? button.bounds.height + 4 : -4), in: button)
+    }
+
     @objc func toggleInbox(_ sender: Any?) {
         guard let note = menuNote else { return NSSound.beep() }
         setFrontmatter(note.path, "inbox", note.isInInbox ? nil : "true")
@@ -1429,8 +1472,13 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         if trimmed.isEmpty || "today".hasPrefix(trimmed.lowercased()) {
             places.append(Place(title: "Today", path: GraphPaths.dailyPath(for: .today), detail: OpenQuickly.dayTitle(.today)))
         }
-        if let day = Day(trimmed) {
-            places.append(Place(title: OpenQuickly.dayTitle(day), path: GraphPaths.dailyPath(for: day), detail: "Day"))
+        // Any day, as it might be said — `friday`, `3 days ago`, `march 5` —
+        // whether it has a note yet or not.
+        if let day = DayQuery.day(trimmed), !(day == .today && !places.isEmpty) {
+            let path = GraphPaths.dailyPath(for: day)
+            let relative = day == .today ? "Today" : day == Day.today.adding(-1) ? "Yesterday" : day == Day.today.adding(1) ? "Tomorrow" : "Day"
+            places.append(Place(title: OpenQuickly.dayTitle(day), path: path,
+                                detail: graph.exists(path: path) ? relative : relative + " · no note yet"))
         }
         let relative = { (date: Date) in
             RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
@@ -1548,6 +1596,24 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         for (i, line) in text.components(separatedBy: "\n").enumerated() {
             if i > 0 { editor.insertNewline(nil) }
             if !line.isEmpty { editor.insertText(line, replacementRange: editor.selectedRange()) }
+        }
+    }
+
+    /// The caret at a note's top, its nth checkbox scrolled to and
+    /// clicked: where the column was scrolled, before and after.
+    func clickBoxForScript(in path: String, nth: Int) {
+        guard let column = columns.first(where: { $0.view(for: NoteRef(path: path)) != nil }),
+              let editor = column.view(for: NoteRef(path: path))?.editor else { return print("no note") }
+        let boxes = editor.rows.indices.filter { editor.rows[$0].task != nil }
+        guard !boxes.isEmpty else { return print("no checkbox") }
+        let row = boxes[min(max(nth, 1), boxes.count) - 1]
+        window?.makeFirstResponder(editor)
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        editor.scrollRangeToVisible(editor.paragraphRanges[row])
+        let before = column.scrolledForScript
+        editor.clickHandleForScript(ofRow: row)
+        DispatchQueue.main.async {
+            print("clicked row \(row): scrolled \(before) -> \(column.scrolledForScript); caret at \(editor.selectedRange().location)")
         }
     }
 

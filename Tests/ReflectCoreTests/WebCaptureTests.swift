@@ -75,6 +75,7 @@ import Testing
         // Again, with more: the same note.
         let again = try WebCapture.save(WebCapture.Page(url: page.url, title: "Renamed", highlights: ["One", "Two"]), in: graph, index: index, on: day)
         #expect(again == path)
+        #expect(index.entry(path)?.isInInbox == true)
         #expect(graph.read(path: path)?.contains("  - One\n  - Two\n") == true)
         #expect(try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("notes").path).count == 1)
     }

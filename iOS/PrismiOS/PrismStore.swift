@@ -29,6 +29,8 @@ final class PrismStore {
     private(set) var isSyncing = false
     private(set) var lastSynced: Date?
     private(set) var syncError: String?
+    /// The notes holding sync conflicts, to be settled.
+    private(set) var conflicted: [String] = []
 
     let root: URL
     let account: GitHubAccount
@@ -54,13 +56,18 @@ final class PrismStore {
         isLoading = true
         defer { isLoading = false }
         let root = root
-        let (graph, index) = await Task.detached(priority: .userInitiated) {
+        StallWatch.mark("load begun")
+        let (graph, index, conflicted) = await Task.detached(priority: .userInitiated) {
             let graph = Graph(root: root, git: nil)
             let index = NoteIndex(root: root)
             index.scan()
-            return (graph, index)
+            return (graph, index, graph.notesNeedingReview())
         }.value
+        await Typeface.registration.value
+        StallWatch.mark("index scanned")
         self.graph = graph
+        PhoneImages.root = root
+        self.conflicted = conflicted
         self.index = index
         changed = []
         revision += 1
@@ -87,9 +94,25 @@ final class PrismStore {
             return
         }
         index?.refresh(path)
+        if conflicted.contains(path), !ConflictMarkers.detect(text) { conflicted.removeAll { $0 == path } }
         changed = [path]
         revision += 1
         written()
+    }
+
+    /// Days with no note shown in the timeline all the same, to write in:
+    /// opened from a gap, or gone to. Written in, they are notes like any.
+    private(set) var revealedDays: Set<Day> = Set((UserDefaults.standard.stringArray(forKey: "RevealedDays") ?? []).compactMap { Day($0) }) {
+        didSet { UserDefaults.standard.set(revealedDays.map(\.description).sorted(), forKey: "RevealedDays") }
+    }
+
+    /// Some days shown in every timeline, empty till written in.
+    func reveal(_ days: [Day]) {
+        let new = Set(days).subtracting(revealedDays)
+        guard !new.isEmpty else { return }
+        revealedDays.formUnion(new)
+        changed = Set(new.map { GraphPaths.dailyPath(for: $0) })
+        revision += 1
     }
 
     /// Notes changed underneath — by a sync — taken in.
@@ -155,6 +178,77 @@ final class PrismStore {
         return destination
     }
 
+    // MARK: Pages shared from other apps
+
+    private var takingShared = false
+
+    /// Pages the share extension left, made link notes as the Mac's capture
+    /// makes them — linked from the day they were shared — then gone from
+    /// the queue. A page with no title has it read from the page.
+    func takeShared() async {
+        guard let graph, let index, !takingShared else { return }
+        let pending = ShareQueue.pending()
+        guard !pending.isEmpty else { return }
+        takingShared = true
+        defer { takingShared = false }
+        var paths: [String] = []
+        for (item, file) in pending {
+            var page = WebCapture.Page(url: item.url, title: item.title, description: item.description, highlights: item.highlights)
+            if page.title.isEmpty || page.description.isEmpty, let read = await Self.readPage(item.url) {
+                if page.title.isEmpty { page.title = read.title }
+                if page.description.isEmpty { page.description = read.description }
+            }
+            let day = Day(item.shared)
+            let saved = await Task.detached(priority: .userInitiated) {
+                try? WebCapture.save(page, in: graph, index: index, on: day)
+            }.value
+            guard let saved else { continue }
+            paths += [saved, GraphPaths.dailyPath(for: day)]
+            ShareQueue.remove(file)
+        }
+        guard !paths.isEmpty else { return }
+        noteChanged(paths)
+        written()
+    }
+
+    /// A page's title and description, as its HTML gives them.
+    private nonisolated static func readPage(_ address: String) async -> (title: String, description: String)? {
+        guard let url = URL(string: address) else { return nil }
+        var request = URLRequest(url: url, timeoutInterval: 8)
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+                         forHTTPHeaderField: "User-Agent")
+        guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }
+        let html = String(decoding: data.prefix(400_000), as: UTF8.self)
+        func meta(_ name: String) -> String? {
+            for pattern in ["<meta[^>]+(?:property|name)=[\"']\(name)[\"'][^>]+content=[\"']([^\"']*)[\"']",
+                            "<meta[^>]+content=[\"']([^\"']*)[\"'][^>]+(?:property|name)=[\"']\(name)[\"']"] {
+                if let range = html.range(of: pattern, options: [.regularExpression, .caseInsensitive]),
+                   let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+                   let match = regex.firstMatch(in: String(html[range]), range: NSRange(location: 0, length: html[range].utf16.count)),
+                   let value = Range(match.range(at: 1), in: String(html[range])) {
+                    return String(String(html[range])[value])
+                }
+            }
+            return nil
+        }
+        var title = meta("og:title") ?? ""
+        if title.isEmpty, let range = html.range(of: "<title[^>]*>[^<]*</title>", options: [.regularExpression, .caseInsensitive]) {
+            title = String(html[range]).replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        }
+        let decode = { (text: String) -> String in
+            guard let data = text.data(using: .utf8),
+                  let decoded = try? NSAttributedString(data: data, options: [.documentType: NSAttributedString.DocumentType.html,
+                                                                               .characterEncoding: String.Encoding.utf8.rawValue],
+                                                        documentAttributes: nil).string else { return text }
+            return decoded
+        }
+        let description = meta("og:description") ?? meta("description") ?? ""
+        let found = title
+        return await MainActor.run {
+            (decode(found).trimmingCharacters(in: .whitespacesAndNewlines), decode(description).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+
     /// Called whenever something was written: a sync is due soon. Set by
     /// the sync scheduler.
     var written: () -> Void = {}
@@ -170,10 +264,15 @@ final class PrismStore {
         do {
             // Signed out, a remote that asks for nothing still syncs.
             if account.isSignedIn { _ = try await account.validAccessToken() }
+            StallWatch.mark("sync begun")
             let report = try await git.sync(.full)
+            StallWatch.mark("sync done, pulled \(report.pulled)")
             lastSynced = Date()
             syncError = nil
             if report.pulled { noteChanged(report.changed) }
+            if let graph {
+                conflicted = await Task.detached(priority: .utility) { graph.notesNeedingReview() }.value
+            }
         } catch {
             syncError = error.localizedDescription
         }
@@ -240,7 +339,11 @@ final class SyncScheduler {
     }
 
     func becameActive() {
-        round()
+        // Pages shared while away, made notes first, then the round sends them.
+        Task {
+            await store.takeShared()
+            round()
+        }
         roundTimer?.invalidate()
         roundTimer = Timer.scheduledTimer(withTimeInterval: Self.roundInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.round() }

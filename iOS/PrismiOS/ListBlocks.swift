@@ -15,10 +15,24 @@ protocol SheetBlock: UIView {
     var editors: [OutlineEditor] { get }
     var onHeightChange: (() -> Void)? { get set }
     var onCaretMove: (() -> Void)? { get set }
+    /// Whether it is built: far from sight, a block may stand unbuilt,
+    /// as tall as it guesses, till it comes near.
+    var isLive: Bool { get }
+    func goLive()
+}
+
+extension HeadBlock {
+    var isLive: Bool { true }
+    func goLive() {}
+}
+
+extension GapBlock {
+    var isLive: Bool { true }
+    func goLive() {}
 }
 
 extension NoteBlock: SheetBlock {
-    var editors: [OutlineEditor] { [editor] }
+    var editors: [OutlineEditor] { isLive ? [editor] : [] }
 
     func notesChanged(_ paths: Set<String>) {
         if paths.isEmpty || paths.contains(ref.path) { reloadIfChanged() }
@@ -112,7 +126,11 @@ final class SliceBlock: UIView, SheetBlock {
     var onHeightChange: (() -> Void)?
     var onCaretMove: (() -> Void)?
 
+    private let editable: Bool
+    private(set) var isLive = false
+
     init(path: String, slices: [NoteSlice], editable: Bool, store: PrismStore, metrics: PhoneMetrics) {
+        self.editable = editable
         self.path = path
         self.slices = slices
         self.store = store
@@ -120,12 +138,17 @@ final class SliceBlock: UIView, SheetBlock {
         savedText = store.text(path)
         super.init(frame: .zero)
         title.contentHorizontalAlignment = .leading
-        title.setAttributedTitle(NSAttributedString(string: Self.name(path, store: store), attributes: [
-            .font: metrics.face.heading(round(metrics.size * 0.95), weight: .semibold),
-            .foregroundColor: Ink.secondary,
-        ]), for: .normal)
+        title.setAttributedTitle(Card.header(name: Self.name(path, store: store), meta: Card.meta(for: path, store: store), size: metrics.size),
+                                 for: .normal)
+        title.titleLabel?.lineBreakMode = .byTruncatingMiddle
         title.addAction(UIAction { [weak self] _ in self?.onOpen?() }, for: .touchUpInside)
         addSubview(title)
+    }
+
+    /// Its pieces' editors made, to be seen and typed in.
+    func goLive() {
+        guard !isLive else { return }
+        isLive = true
         var previous: [String]?
         for (i, slice) in slices.enumerated() {
             // The rows it is under, when they are not the last one's.
@@ -143,7 +166,8 @@ final class SliceBlock: UIView, SheetBlock {
             previous = slice.crumbs
             let editor = OutlineEditor(metrics: metrics)
             editor.load(slice.rows)
-            editor.isEditable = editable
+            // A note mid-conflict is settled whole, on its own, not piece by piece.
+            editor.isEditable = editable && !ConflictMarkers.detect(savedText)
             editor.onChange = { [weak self] in self?.edited(i) }
             editor.onOpenLink = { [weak self] link in self?.onLink?(link) }
             editor.onHeightChange = { [weak self] in
@@ -155,6 +179,7 @@ final class SliceBlock: UIView, SheetBlock {
             addSubview(editor)
             editors.append(editor)
         }
+        setNeedsLayout()
     }
 
     @available(*, unavailable)
@@ -208,6 +233,10 @@ final class SliceBlock: UIView, SheetBlock {
     /// what the note says now — those the same left as they are.
     func notesChanged(_ paths: Set<String>) {
         guard paths.isEmpty || paths.contains(path), let store, dirty.isEmpty, !isTyping else { return }
+        guard isLive else {
+            savedText = store.text(path)
+            return
+        }
         let text = store.text(path)
         guard text != savedText else { return }
         savedText = text
@@ -229,12 +258,21 @@ final class SliceBlock: UIView, SheetBlock {
     func height(width: CGFloat) -> CGFloat {
         guard width > NoteBlock.minimumWidth else { return 0 }
         let inner = width - 2 * NoteBlock.side
-        var height: CGFloat = 14 + titleHeight + 2
+        var height: CGFloat = Card.top + titleHeight + Card.gap
+        guard isLive else {
+            // A guess from its rows: a line each, more for long ones.
+            let line = round(metrics.face.lineHeight * metrics.size) + round(metrics.size * 0.32)
+            let perLine = max(20, inner / (metrics.size * 0.52))
+            let lines = slices.reduce(0.0) { sum, slice in
+                sum + slice.rows.reduce(0.0) { $0 + max(1, ceil(Double($1.text.count) / perLine)) } + (slice.crumbs.isEmpty ? 0 : 1)
+            }
+            return height + CGFloat(lines) * line + 4 * CGFloat(slices.count) + Card.bottom
+        }
         for (i, editor) in editors.enumerated() {
             if let label = crumbLabels[i] { height += ceil(label.sizeThatFits(CGSize(width: inner, height: .greatestFiniteMagnitude)).height) + 2 }
             height += editor.rowsHeight(width: inner + metrics.indent) + 4
         }
-        return height + 10
+        return height + Card.bottom - 4
     }
 
     override func layoutSubviews() {
@@ -242,9 +280,9 @@ final class SliceBlock: UIView, SheetBlock {
         // Not yet as wide as it will be: text laid out at no width never ends.
         guard bounds.width > NoteBlock.minimumWidth else { return }
         let inner = bounds.width - 2 * NoteBlock.side
-        var y: CGFloat = 14
+        var y: CGFloat = Card.top
         title.frame = CGRect(x: NoteBlock.side, y: y, width: min(title.intrinsicContentSize.width, inner), height: titleHeight)
-        y += titleHeight + 2
+        y += titleHeight + Card.gap
         for (i, editor) in editors.enumerated() {
             if let label = crumbLabels[i] {
                 let height = ceil(label.sizeThatFits(CGSize(width: inner, height: .greatestFiniteMagnitude)).height)
@@ -255,9 +293,60 @@ final class SliceBlock: UIView, SheetBlock {
             // Its frame holds the empty line after the last row too — a text
             // view squeezed shorter than its text lays out forever — but
             // what comes next goes right under the rows.
-            let full = editor.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+            let full = editor.fittingHeight(width: width)
             editor.frame = CGRect(x: NoteBlock.side - metrics.indent, y: y, width: width, height: full)
             y += editor.rowsHeight(width: width) + 4
         }
     }
+}
+
+/// Days in the timeline with no note: a `⋯` and the dates it stands for,
+/// tapped to show the last few of them, empty, to write in.
+final class GapBlock: UIView, SheetBlock {
+    let gap: TimelineGap
+    private let button = UIButton(type: .system)
+    var onReveal: ((TimelineGap) -> Void)?
+    var onHeightChange: (() -> Void)?
+    var onCaretMove: (() -> Void)?
+    var editors: [OutlineEditor] { [] }
+
+    init(gap: TimelineGap, metrics: PhoneMetrics) {
+        self.gap = gap
+        super.init(frame: .zero)
+        let title = NSMutableAttributedString(string: "⋯  ", attributes: [
+            .font: UIFont.systemFont(ofSize: round(metrics.size * 1.2), weight: .bold), .foregroundColor: Ink.secondary,
+        ])
+        title.append(NSAttributedString(string: Self.describe(gap), attributes: [
+            .font: metrics.face.heading(round(metrics.size * 0.78), weight: .medium), .foregroundColor: Ink.faint,
+        ]))
+        button.setAttributedTitle(title, for: .normal)
+        button.contentHorizontalAlignment = .leading
+        button.accessibilityLabel = "Show " + Self.describe(gap)
+        button.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            UISelectionFeedbackGenerator().selectionChanged()
+            onReveal?(self.gap)
+        }, for: .touchUpInside)
+        addSubview(button)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// `Sep 21 – 25 · 5 days`, or the one day it is.
+    static func describe(_ gap: TimelineGap) -> String {
+        guard let from = gap.from.date, let to = gap.to.date else { return "" }
+        if gap.count == 1 { return Formats.date("EEEMMMd").string(from: from) }
+        return Formats.interval(gap.from.year == gap.to.year ? "MMMd" : "MMMdyyyy").string(from: from, to: to) + " · \(gap.count) days"
+    }
+
+    func height(width: CGFloat) -> CGFloat { 52 }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        button.frame = CGRect(x: NoteBlock.side, y: 4, width: bounds.width - 2 * NoteBlock.side, height: bounds.height - 8)
+    }
+
+    func save() {}
+    func notesChanged(_ paths: Set<String>) {}
 }
