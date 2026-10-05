@@ -1290,7 +1290,7 @@ final class Column: NSView, OutlineTextViewNavigator {
         // The sheets beneath, bunched left of the ×, on its middle.
         let pillHeight = StackPill.fittingHeight
         let pillWidth = stackPill.fittingWidth(within: max(0, min(260, bounds.width * 0.45)))
-        stackPill.frame = NSRect(x: controlsLeft - 6 - pillWidth, y: close.frame.maxY - pillHeight + 1,
+        stackPill.frame = NSRect(x: controlsLeft - 6 - pillWidth, y: (close.frame.midY - pillHeight / 2).rounded(),
                                  width: pillWidth, height: pillHeight)
         switcher?.frame = bounds
         relayout()

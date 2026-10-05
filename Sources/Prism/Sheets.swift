@@ -154,7 +154,7 @@ final class StackPill: NSView {
     /// The edges of the sheets further down, up to so many.
     private static let most = 3
     private static let height: CGFloat = 24
-    private static let step: CGFloat = 4
+    private static let step: CGFloat = 6
 
     override var isFlipped: Bool { true }
 
@@ -213,12 +213,12 @@ final class StackPill: NSView {
         return min(most, text + 40 + CGFloat(behind) * Self.step)
     }
 
-    static var fittingHeight: CGFloat { height + CGFloat(most - 1) * step }
+    static var fittingHeight: CGFloat { height }
 
-    /// Where the front one is: the others peek out above and to its left.
+    /// Where the front one is: the others, level with it, peek out at its left.
     var front: NSRect {
         let inset = CGFloat(behind) * Self.step
-        return NSRect(x: inset, y: inset, width: bounds.width - inset, height: Self.height)
+        return NSRect(x: inset, y: 0, width: bounds.width - inset, height: Self.height)
     }
 
     override func layout() {
@@ -231,10 +231,11 @@ final class StackPill: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let front = front
-        // The furthest first, each a little up and left of the one before it.
+        // The furthest first, each a little left of the one before it, level
+        // with it: the rightmost on top.
         for level in stride(from: behind, through: 0, by: -1) {
             let offset = CGFloat(level) * Self.step
-            let rect = front.offsetBy(dx: -offset, dy: -offset).insetBy(dx: 0.5, dy: 0.5)
+            let rect = front.offsetBy(dx: -offset, dy: 0).insetBy(dx: 0.5, dy: 0.5)
             let path = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
             let base = level == 0 ? (hovering ? Ink.shelf : Ink.paper) : Ink.shelf
             Aging.fill(base, age: level == 0 ? (sheets.last ?? forward)?.age ?? 0 : 0).withAlphaComponent(isForward ? 0.6 : 1).setFill()
@@ -409,8 +410,8 @@ final class StackScrubber: NSView {
         let out = i <= own ? NSRect(x: CGFloat(i) * share, y: 0, width: share + Self.tuck, height: bounds.height)
             : NSRect(x: CGFloat(i) * share, y: 0, width: share + Self.tuck, height: bounds.height)
         let below = CGFloat(abs(own - i))
-        let depth = min(below, 2) * 4
-        let home = NSRect(x: bunch.minX - depth, y: bunch.minY - depth, width: bunch.width, height: bunch.height)
+        let depth = min(below, 2) * 6
+        let home = NSRect(x: bunch.minX - depth, y: bunch.minY, width: bunch.width, height: bunch.height)
         // Staggered: the further down, the later it leaves, the sooner it's back.
         let stagger: CGFloat = 0.35 * below / max(CGFloat(max(own, sheets.count - 1 - own)), 1)
         let f = max(0, min(1, (dealt - stagger) / (1 - stagger)))
