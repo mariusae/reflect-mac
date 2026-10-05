@@ -1315,9 +1315,9 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         return columns[..<i].last { !$0.isWeb } ?? addColumn(after: column)
     }
 
-    private func openSheet(_ kind: Column.Kind, at ref: NoteRef? = nil, on target: Column? = nil) {
+    private func openSheet(_ kind: Column.Kind, at ref: NoteRef? = nil, on target: Column? = nil, pushing: Bool = true) {
         let column = notesColumn(target ?? focusedColumn)
-        push(column)
+        if pushing { push(column) }
         materialize(Sheet(kind: kind, place: ref.map { Column.Place(ref: $0, offset: -12) }, offset: 0,
                           title: Column.title(of: kind, top: ref), snapshot: nil), in: column)
     }
@@ -1332,18 +1332,25 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }
 
     /// A sheet put on a column from its bar: about what the column shows.
-    private func addSheet(_ choice: SheetBar.Choice, on column: Column) {
+    /// A sheet of a kind from a column's toolbox: on that column — with ⌘,
+    /// on the column to its right, or a new one there when there is none.
+    private func addSheet(_ choice: SheetBar.Choice, on source: Column, beside: Bool? = nil) {
+        // What it is about: the note the column it was asked from shows.
+        let note: NoteRef? = { if case .backlinks(let ref) = source.kind { return ref } else { return source.current?.ref } }()
+        if choice == .backlinks, note == nil { return NSSound.beep() }
+        var column = source
+        var fresh = false
+        if beside ?? (NSApp.currentEvent?.modifierFlags.contains(.command) == true) { (column, fresh) = columnBeside(source) }
         active = column
-        let note: NoteRef? = { if case .backlinks(let ref) = column.kind { return ref } else { return column.current?.ref } }()
         switch choice {
-        case .timeline: openSheet(.timeline, at: note.flatMap { day(of: $0) != nil ? $0 : nil } ?? .day(.today), on: column)
+        case .timeline:
+            openSheet(.timeline, at: note.flatMap { day(of: $0) != nil ? $0 : nil } ?? .day(.today), on: column, pushing: !fresh)
         case .backlinks:
-            guard let note else { return NSSound.beep() }
-            openSheet(.backlinks(note), on: column)
-        case .inbox: openSheet(.inbox, on: column)
-        case .tasks: openSheet(.tasks, on: column)
+            if let note { openSheet(.backlinks(note), on: column, pushing: !fresh) }
+        case .inbox: openSheet(.inbox, on: column, pushing: !fresh)
+        case .tasks: openSheet(.tasks, on: column, pushing: !fresh)
         case .search:
-            push(column)
+            if !fresh { push(column) }
             search("", in: column)
             saveLayout()
         }
@@ -2169,8 +2176,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         let index = ProcessInfo.processInfo.environment["PRISM_PEEK_COLUMN"].flatMap(Int.init)
         guard let column = index.flatMap({ columns.indices.contains($0) ? columns[$0] : nil }) ?? columns.last else { return }
         column.updateSheetBar()
-        guard let pick = SheetBar.Choice.allCases.first(where: { $0.name.lowercased() == choice }) else { return }
-        addSheet(pick, on: column)
+        // `⌘inbox`: as with ⌘ held, beside.
+        let beside = choice.hasPrefix("⌘")
+        guard let pick = SheetBar.Choice.allCases.first(where: { $0.name.lowercased() == choice.drop { $0 == "⌘" } }) else { return }
+        addSheet(pick, on: column, beside: beside)
+        print("COLUMNS", columns.map { Column.title(of: $0.kind, top: $0.current?.ref) }.joined(separator: " | "))
         column.updateSheetBar()
     }
 
