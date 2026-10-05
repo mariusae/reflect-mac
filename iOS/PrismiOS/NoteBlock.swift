@@ -557,7 +557,7 @@ final class NoteBlock: UIView {
     private func estimatedHeight(width: CGFloat) -> CGFloat {
         if let estimate, abs(estimate.width - width) < 0.5 { return estimate.height }
         let metrics = storedMetrics
-        let line = round(metrics.face.lineHeight * metrics.size) + round(metrics.size * 0.32)
+        let line = round(metrics.lineHeight * metrics.size) + metrics.rowGap
         let perLine = max(20, (width - 2 * Self.side) / (metrics.size * 0.52))
         var lines = 0.0
         var inFrontmatter = savedText.hasPrefix("---\n")

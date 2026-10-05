@@ -25,21 +25,19 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     private var lastText: [String: String] = [:]
     private let heading = PassThroughLabel(labelWithString: "")
     /// What a sync is doing, at the window's foot, for a moment.
-    private let syncStatus = NSTextField(labelWithString: "")
-    /// The graph's repository kept in step — only when asked, with ⌘S:
+    private let syncStatus = SyncIndicator()
+    /// The notes a sync left with both sides in them, at the window's foot.
+    private let reviewPill = ReviewPill()
+    /// The graph's repository kept in step — only when asked, with ⌘R:
     /// Reflect, or Reflect Mac, keeps it in step otherwise.
     private lazy var sync: SyncController = {
         let sync = SyncController(git: graph.git)
         sync.flush = { [weak self] in self?.save() }
         sync.onPulled = { [weak self] paths in self?.notesChanged(Set(paths)) }
         sync.onStatus = { [weak self] status in self?.showSync(status) }
-        sync.onConflicts = { [weak self] paths in
-            guard let self, let window else { return }
-            let alert = NSAlert()
-            alert.messageText = "The sync left \(paths.count) \(paths.count == 1 ? "note" : "notes") to review"
-            alert.informativeText = paths.joined(separator: "\n") + "\n\nReflect Mac shows what each side wrote, to choose between."
-            alert.beginSheetModal(for: window)
-        }
+        // Notes written on two devices at once: not an alert, but a stack at
+        // the window's foot, and the Graph menu, to open each from.
+        sync.onConflicts = { [weak self] _ in self?.refreshReview() }
         return sync
     }()
     /// The column the finder, Today and the sidebar open in.
@@ -82,7 +80,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         index = NoteIndex(root: graph.root)
         images = ImageStore(root: graph.root)
         let defaults = UserDefaults.standard
-        face = defaults.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)) ?? .mona
+        face = defaults.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)) ?? .alegreya
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -102,8 +100,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         heading.lineBreakMode = .byTruncatingTail
         page.addSubview(heading)
         syncStatus.alphaValue = 0
-        syncStatus.lineBreakMode = .byTruncatingTail
         page.addSubview(syncStatus)
+        reviewPill.isHidden = true
+        reviewPill.title = { Column.name(of: NoteRef(path: $0)).title }
+        reviewPill.onOpen = { [weak self] path in self?.open(path) }
+        page.addSubview(reviewPill)
         page.addSubview(sidebar)
         sidebar.pinned = sidebarPinned
         page.onLayout = { [weak self] in self?.layoutPage() }
@@ -136,6 +137,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             }
         }
         index.scan()
+        refreshReview()
         watcher = GraphWatcher(root: graph.root) { [weak self] paths in self?.notesChanged(paths) }
         LinkCompletion.sources = SearchSources(index: index)
         // A `[[link]]`'s card shows the note it leads to.
@@ -188,6 +190,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         column.onClose = { [weak self] column in self?.close(column) }
         column.onAddSheet = { [weak self] column, choice in self?.addSheet(choice, on: column) }
         column.onShowCalendar = { [weak self] column, view in self?.showCalendar(from: column, at: view) }
+        column.onFan = { [weak self] _, _ in self?.showHeading() }
         column.onOpenPath = { [weak self] path, column, newColumn in self?.open(path, newColumn: newColumn, from: column) }
         column.onScroll = { [weak self] _ in self?.saveLayout() }
         column.onViewMade = { [weak self] view in self?.noteShown(view) }
@@ -817,12 +820,24 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             divider.frame = NSRect(x: columns[i + 1].frame.minX - ColumnDivider.reach, y: 0, width: 2 * ColumnDivider.reach,
                                    height: bounds.height)
         }
+        // In the title bar, after the window's buttons: the notes to review,
+        // then the sync — turning, then how it went.
+        let barMiddle = bounds.height - 26
+        var barX: CGFloat = 80
+        if !reviewPill.isHidden {
+            let width = reviewPill.fittingWidth
+            reviewPill.frame = NSRect(x: barX, y: barMiddle - 12, width: width, height: 24)
+            barX = reviewPill.frame.maxX + 10
+        }
+        let statusWidth = min(syncStatus.fittingWidth, bounds.width / 3)
+        syncStatus.frame = NSRect(x: barX, y: barMiddle - 10, width: statusWidth, height: 20)
+        if syncStatus.alphaValue > 0 { barX = syncStatus.frame.maxX + 8 }
+        // The first column's own controls kept clear of them.
+        columns.first?.titleBarReserve = max(0, barX - (columns.first?.frame.minX ?? 0))
         let height = ceil(heading.intrinsicContentSize.height)
         let first = columns.first?.frame ?? bounds
-        heading.frame = NSRect(x: first.minX + 80, y: bounds.height - 26 - height / 2, width: first.width - 160, height: height)
-        let statusSize = syncStatus.attributedStringValue.size()
-        let statusWidth = min(ceil(statusSize.width) + 6, bounds.width / 2)
-        syncStatus.frame = NSRect(x: bounds.width - statusWidth - 16, y: 10, width: statusWidth, height: ceil(statusSize.height) + 2)
+        let headingX = max(first.minX + 80, barX)
+        heading.frame = NSRect(x: headingX, y: bounds.height - 26 - height / 2, width: max(0, first.maxX - 80 - headingX), height: height)
         let sidebarX = sidebarShown ? 8 : -Sidebar.width - 24
         sidebar.frame = NSRect(x: sidebarX, y: 8, width: Sidebar.width, height: bounds.height - 16)
         finder.frame = bounds
@@ -952,7 +967,8 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     private func showHeading() {
         var text = ""
-        if let column = columns.first, column.isTimeline, column.currentNameHidden, let current = column.current {
+        // Not under the sheets fanned out over it.
+        if let column = columns.first, column.isTimeline, !column.isFanned, column.currentNameHidden, let current = column.current {
             text = Column.name(of: current.ref).title
         }
         let centred = NSMutableParagraphStyle()
@@ -1187,7 +1203,29 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     // MARK: Syncing
 
-    /// Graph ▸ Sync Now (⌘S): what is written saved, committed, and the
+    // MARK: Notes to review
+
+    /// The notes holding both sides of a sync's conflict, as the index has
+    /// their text: shown at the window's foot and in the Graph menu.
+    func refreshReview() {
+        let index = index
+        Task.detached(priority: .utility) {
+            let paths = index.conflicted()
+            await MainActor.run { [weak self] in
+                guard let self, paths != reviewPill.paths else { return }
+                reviewPill.paths = paths
+                reviewPill.font = face.font(size: 12, weight: .medium)
+                page.needsLayout = true
+            }
+        }
+    }
+
+    /// Graph ▸ Notes to Review: the same as the stack at the foot.
+    var reviewMenu: NSMenu { reviewPill.menu() }
+    var notesToReview: [String] { reviewPill.paths }
+    func openToReview(_ path: String) { open(path) }
+
+    /// Graph ▸ Sync Now (⌘R): what is written saved, committed, and the
     /// graph's repository brought in step — fetched, merged, pushed.
     @objc func syncNow(_ sender: Any?) {
         guard graph.git != nil else {
@@ -1208,20 +1246,20 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         case .failed(let message): text = "Sync failed: " + message
         case .unavailable: text = "Not in a git repository"
         }
-        syncStatus.attributedStringValue = NSAttributedString(string: text, attributes: [
-            .font: face.font(size: 12, weight: .medium),
-            .foregroundColor: { if case .failed = status { NSColor.systemRed } else { Ink.secondary } }(),
-        ])
-        syncStatus.toolTip = text
+        let failed: Bool = { if case .failed = status { true } else if case .unavailable = status { true } else { false } }()
+        syncStatus.show(text, busy: status == .syncing, failed: failed)
         syncStatus.alphaValue = 1
         page.needsLayout = true
         syncFade?.invalidate()
-        guard status != .syncing else { return }
-        syncFade = Timer.scheduledTimer(withTimeInterval: { if case .failed = status { 8 } else { 2 } }(), repeats: false) { [weak self] _ in
+        // Failed, it stays till the next sync: clicked, what went wrong.
+        guard status != .syncing, !failed else { return }
+        syncFade = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 NSAnimationContext.runAnimationGroup { context in
                     context.duration = 0.4
                     self?.syncStatus.animator().alphaValue = 0
+                } completionHandler: {
+                    self?.page.needsLayout = true
                 }
             }
         }
@@ -1474,6 +1512,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         refreshSearches()
         refreshSidebar()
         showHeading()
+        refreshReview()
     }
 
     // MARK: The tasks

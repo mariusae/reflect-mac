@@ -293,8 +293,18 @@ final class PrismStore {
                 conflicted = await Task.detached(priority: .utility) { index.conflicted() }.value
             }
         } catch {
-            syncError = error.localizedDescription
+            syncError = describe(error)
         }
+    }
+
+    /// What went wrong, said so the person knows what to do: a remote that
+    /// wants a sign-in there is none of, said as that — not as libgit2 says it.
+    private func describe(_ error: Error) -> String {
+        let message = error.localizedDescription
+        if !account.isSignedIn, message.localizedCaseInsensitiveContains("authentication") {
+            return "Signed out of GitHub. Choose Sign In to GitHub in the menu to sync again."
+        }
+        return message
     }
 
     /// Commits and pushes what is written here, nothing more.
@@ -308,7 +318,7 @@ final class PrismStore {
             lastSynced = Date()
             syncError = nil
         } catch {
-            syncError = error.localizedDescription
+            syncError = describe(error)
         }
     }
 

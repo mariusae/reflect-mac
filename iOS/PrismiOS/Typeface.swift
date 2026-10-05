@@ -4,7 +4,7 @@ import UIKit
 /// What notes are set in, as on the Mac: a face for the text, one for
 /// headings — most often the same — and a fixed-width one for code.
 enum Typeface: String, CaseIterable, Identifiable {
-    case mona, literata, fraunces, source, plex, alegreya, system
+    case system, lato, alegreya, mona, plex, source, literata, fraunces
 
     var id: String { rawValue }
 
@@ -16,6 +16,7 @@ enum Typeface: String, CaseIterable, Identifiable {
         case .source: "Source Serif & Sans"
         case .plex: "IBM Plex"
         case .alegreya: "Alegreya Sans"
+        case .lato: "Lato"
         case .system: "SF Pro"
         }
     }
@@ -25,6 +26,7 @@ enum Typeface: String, CaseIterable, Identifiable {
     private var scale: CGFloat {
         switch self {
         case .mona, .system, .plex: 1
+        case .lato: 1.02
         case .literata, .fraunces: 0.97
         case .source: 1.05
         case .alegreya: 1.12
@@ -36,7 +38,7 @@ enum Typeface: String, CaseIterable, Identifiable {
         switch self {
         case .mona: 1.42
         case .plex: 1.4
-        case .alegreya: 1.4
+        case .alegreya, .lato: 1.4
         case .system: 1.33
         case .literata, .fraunces, .source: 1.5
         }
@@ -49,6 +51,7 @@ enum Typeface: String, CaseIterable, Identifiable {
         case .source: "Source Serif 4"
         case .plex: "IBM Plex Sans"
         case .alegreya: "Alegreya Sans"
+        case .lato: "Lato"
         case .system: nil
         }
     }
@@ -64,7 +67,7 @@ enum Typeface: String, CaseIterable, Identifiable {
     private var monoFamily: String? {
         switch self {
         case .mona: "Monaspace Xenon"
-        case .literata, .fraunces, .alegreya: "JetBrains Mono"
+        case .literata, .fraunces, .alegreya, .lato: "JetBrains Mono"
         case .source: "Source Code Pro"
         case .plex: "IBM Plex Mono"
         case .system: nil
@@ -114,9 +117,9 @@ enum Typeface: String, CaseIterable, Identifiable {
         return font
     }
 
+    /// The face chosen in Settings; else the system's own, as Threads has it.
     static var current: Typeface {
-        // Set as Threads is: the system's own face.
-        get { .system }
+        get { UserDefaults.standard.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)) ?? .system }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "Typeface") }
     }
 
@@ -166,4 +169,40 @@ enum Ink {
     static let pill = dynamic(UIColor(red: 0.15, green: 0.36, blue: 0.82, alpha: 0.09), UIColor(red: 0.52, green: 0.68, blue: 1, alpha: 0.14))
     static let week = dynamic(UIColor(red: 0.78, green: 0.52, blue: 0.12, alpha: 1), UIColor(red: 0.93, green: 0.7, blue: 0.32, alpha: 1))
     static let marked = dynamic(UIColor(red: 1, green: 0.86, blue: 0.3, alpha: 0.45), UIColor(red: 0.85, green: 0.7, blue: 0.2, alpha: 0.35))
+}
+
+/// How a face is set, past its size: lines' height, the space between rows,
+/// the outline's indent, and how large headings are — each face its own,
+/// as on the Mac, kept as changed in Settings.
+struct PhoneSpacing: Codable, Equatable {
+    /// Each line's height, in ems.
+    var lineHeight: Double
+    /// The space after each row, in ems.
+    var rowSpacing: Double
+    /// Each level of the outline, in ems.
+    var indent: Double
+    /// A first-level heading, as a multiple of the text.
+    var headingScale: Double
+
+    static func defaults(_ face: Typeface) -> PhoneSpacing {
+        PhoneSpacing(lineHeight: Double(face.lineHeight), rowSpacing: 0.32, indent: 1.35, headingScale: 1.55)
+    }
+
+    private static func key(_ face: Typeface) -> String { "Spacing." + face.rawValue }
+
+    /// A face's, as set.
+    static func of(_ face: Typeface) -> PhoneSpacing {
+        guard let data = UserDefaults.standard.data(forKey: key(face)),
+              let stored = try? JSONDecoder().decode(PhoneSpacing.self, from: data) else { return defaults(face) }
+        return stored
+    }
+
+    /// Keeps a face's; its defaults, kept as none.
+    static func set(_ spacing: PhoneSpacing, for face: Typeface) {
+        if spacing == defaults(face) {
+            UserDefaults.standard.removeObject(forKey: key(face))
+        } else if let data = try? JSONEncoder().encode(spacing) {
+            UserDefaults.standard.set(data, forKey: key(face))
+        }
+    }
 }

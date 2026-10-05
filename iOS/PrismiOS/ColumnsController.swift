@@ -1,4 +1,5 @@
 import SwiftUI
+import AuthenticationServices
 import UIKit
 import ReflectCore
 import PrismCore
@@ -323,6 +324,27 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         }
     }
 
+    // MARK: Signing in again
+
+    /// GitHub's sign-in, in the system's sheet; signed in, a sync.
+    private func signIn(from sheet: SheetController?) {
+        let host = UIHostingController(rootView: SignInRunner(account: store.account) { [weak self] error in
+            guard let self else { return }
+            dismiss(animated: true)
+            if let error {
+                sheet?.say(error)
+                return
+            }
+            Task { @MainActor in
+                await self.store.sync()
+                if let error = self.store.syncError { sheet?.say(error) }
+            }
+        })
+        host.view.backgroundColor = .clear
+        host.modalPresentationStyle = .overFullScreen
+        present(host, animated: false)
+    }
+
     // MARK: The menu
 
     /// The ≡ menu on a tab's first sheet, and the ⋯ menu on a note: what can
@@ -343,6 +365,14 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
                 }
             },
         ]
+        // Signed out — a refresh turned away, or signed out by hand: the way
+        // back in, here, where the graph already is.
+        if !store.account.isSignedIn {
+            sync.insert(UIAction(title: "Sign In to GitHub…", image: UIImage(systemName: "person.crop.circle.badge.exclamationmark")) {
+                [weak self, weak sheet] _ in
+                self?.signIn(from: sheet)
+            }, at: 0)
+        }
         if let error = store.syncError {
             sync.append(UIAction(title: "Last sync failed", subtitle: error, attributes: .disabled) { _ in })
         } else if let synced = store.lastSynced {
@@ -363,7 +393,41 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
                 }
             }))
         }
+        sections.append(UIMenu(options: .displayInline, children: [
+            UIAction(title: "Settings…", image: UIImage(systemName: "textformat")) { [weak self] _ in self?.showSettings() },
+        ]))
         return UIMenu(children: sections)
+    }
+
+    // MARK: Settings
+
+    /// The face and size notes are set in: each change shown at once, the
+    /// sheets set again where they were.
+    func showSettings() {
+        let settings = UIHostingController(rootView: SettingsView(onChange: { [weak self] in self?.typographyChanged() },
+                                                                  onDone: { [weak self] in self?.dismiss(animated: true) }))
+        if let sheet = settings.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+        }
+        present(settings, animated: true)
+    }
+
+    /// The face or size changed: every tab's sheets made again in it, each
+    /// where it was read to — what is typed written first.
+    private func typographyChanged() {
+        saveAll()
+        let layout = layoutNow
+        for (c, navigation) in columns.enumerated() where layout.columns.indices.contains(c) {
+            let sheets = layout.columns[c]
+            let made = sheets.enumerated().map { s, sheet -> SheetController in
+                let made = makeSheet(sheet.kind, around: s == 0 && sheet.kind == .timeline ? .day(.today) : nil)
+                made.restore(place: sheet.place, focus: nil)
+                return made
+            }
+            if !made.isEmpty { navigation.setViewControllers(made, animated: false) }
+        }
+        finder.view.setNeedsLayout()
     }
 
     /// What can be done to one note: what links to it, its inbox, topic and
@@ -656,4 +720,25 @@ struct ColumnsView: UIViewControllerRepresentable {
         return controller
     }
     func updateUIViewController(_ controller: ColumnsController, context: Context) {}
+}
+
+/// Runs GitHub's sign-in, which wants SwiftUI's session to show its sheet,
+/// and says how it went: nil, signed in.
+private struct SignInRunner: View {
+    let account: GitHubAccount
+    let done: (String?) -> Void
+    @Environment(\.webAuthenticationSession) private var session
+
+    var body: some View {
+        Color.clear.task {
+            do {
+                try await account.signIn(session)
+                done(nil)
+            } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
+                done(nil)
+            } catch {
+                done(error.localizedDescription)
+            }
+        }
+    }
 }

@@ -56,6 +56,12 @@ final class Column: NSView, OutlineTextViewNavigator {
     var onAddSheet: ((Column, SheetBar.Choice) -> Void)?
     /// The calendar asked for, from the timeline's tool: shown by it.
     var onShowCalendar: ((Column, NSView) -> Void)?
+    /// Its bunch fanned out across the title bar, or gathered in again.
+    var onFan: ((Column, Bool) -> Void)?
+    var isFanned: Bool { stackScrubber != nil }
+    /// How much of the title bar, from the left, the window's own things
+    /// take over this column — the notes to review, the sync.
+    var titleBarReserve: CGFloat = 0 { didSet { if titleBarReserve != oldValue { needsLayout = true } } }
     private let grip = SheetGrip()
     /// The sheets beneath, bunched in the title bar.
     private let stackPill = StackPill()
@@ -161,7 +167,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             relayout()
         }
     }
-    var face: Typeface = .mona
+    var face: Typeface = .alegreya
     /// Its share of the window's width, among the columns'.
     var share: CGFloat = 1
 
@@ -329,26 +335,29 @@ final class Column: NSView, OutlineTextViewNavigator {
     /// column shows each pointed at, as it was; a click goes back to it.
     private func showSheetList(animated: Bool = true) {
         guard hasStack, switcher == nil, stackScrubber == nil, !isWeb else { return }
-        let own = Sheet(kind: kind, place: nil, offset: 0, title: Self.title(of: kind, top: current?.ref), snapshot: nil, pinned: isPinned)
+        // The sheets the bunch stands for — not the column's own, which it
+        // shows already: those beneath, the nearest at the right; or, none
+        // beneath, the way forward, the nearest at the right too.
         let scrubber = StackScrubber()
-        scrubber.show(beneath + [own] + ahead, own: beneath.count, face: face)
+        scrubber.show(fanned, forward: beneath.isEmpty, face: face)
         scrubber.onHover = { [weak self] index in self?.showPreview(index) }
-        // Its places: the sheets beneath, its own, then the way forward.
         scrubber.onChoose = { [weak self] index in
             guard let self else { return }
             hideSheetList(animated: false)
-            if index < beneath.count { onRaise?(self, index) } else if index > beneath.count { onForward?(self, index - beneath.count - 1) }
+            switch fanItem(index) {
+            case .beneath(let i): onRaise?(self, i)
+            case .ahead(let i): onForward?(self, i)
+            }
         }
         scrubber.onPin = { [weak self] index in
-            guard let self, index <= beneath.count else { return }
-            onPinSheet?(self, index < beneath.count ? index : nil)
-            scrubber.show(beneath + [Sheet(kind: kind, place: nil, offset: 0, title: own.title, snapshot: nil, pinned: isPinned)] + ahead,
-                          own: beneath.count, face: face)
+            guard let self, case .beneath(let i) = fanItem(index) else { return }
+            onPinSheet?(self, i)
+            scrubber.show(fanned, forward: beneath.isEmpty, face: face)
         }
         scrubber.onDrag = { [weak self] index, event in
-            guard let self, index <= beneath.count else { return }
+            guard let self, case .beneath(let i) = fanItem(index) else { return }
             hideSheetList(animated: false)
-            onDragSheet?(self, index < beneath.count ? index : nil, event)
+            onDragSheet?(self, i, event)
         }
         scrubber.onLeave = { [weak self] in
             // Peeking live, the pointer goes down into the sheet: it stays.
@@ -359,7 +368,7 @@ final class Column: NSView, OutlineTextViewNavigator {
         optionMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             guard let self, let scrubber = stackScrubber else { return event }
             if event.modifierFlags.contains(.option) {
-                if let index = scrubber.hovered, index != beneath.count { peekLive(index) }
+                if let index = scrubber.hovered { peekLive(index) }
             } else if livePeek != nil {
                 endLivePeek()
                 let point = convert(event.locationInWindow, from: nil)
@@ -368,6 +377,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             return event
         }
         stackScrubber = scrubber
+        onFan?(self, true)
         addSubview(scrubber)
         stackPill.isHidden = true
         updateSheetBar()
@@ -384,7 +394,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             if corner.maxX > 0, corner.minY < bounds.maxY { left = max(left, corner.maxX + 14) }
         }
         // Each a peek's width at most: a few sheets stay by the bunch.
-        let width = min(front.maxX - left, StackScrubber.width(for: beneath.count + 1 + ahead.count))
+        let width = min(front.maxX - left, StackScrubber.width(for: fanned.count))
         let across = NSRect(x: front.maxX - width, y: (front.midY - barHeight / 2).rounded(), width: width, height: barHeight)
         scrubber.frame = across
         // The bunch, in the scrubber's own (flipped) coordinates.
@@ -403,9 +413,24 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     /// The sheet at a place among those spread out: beneath, its own, ahead.
     private func spreadSheet(_ index: Int) -> Sheet? {
-        if index < beneath.count { return beneath[index] }
-        if index > beneath.count { return ahead.indices.contains(index - beneath.count - 1) ? ahead[index - beneath.count - 1] : nil }
-        return nil
+        switch fanItem(index) {
+        case .beneath(let i): beneath.indices.contains(i) ? beneath[i] : nil
+        case .ahead(let i): ahead.indices.contains(i) ? ahead[i] : nil
+        }
+    }
+
+    /// What the bunch fans out to: the sheets beneath, oldest first; or,
+    /// none beneath, the way forward, the furthest first.
+    private var fanned: [Sheet] { beneath.isEmpty ? ahead.reversed() : beneath }
+
+    private enum FanItem {
+        case beneath(Int)
+        case ahead(Int)
+    }
+
+    /// A place among those fanned out, as a sheet beneath or one ahead.
+    private func fanItem(_ index: Int) -> FanItem {
+        beneath.isEmpty ? .ahead(ahead.count - 1 - index) : .beneath(index)
     }
 
     /// Shows a sheet live over this one — scrolled in, read, copied from —
@@ -438,10 +463,12 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     /// The column shows a sheet beneath as it was; its own, as it is.
     private func showPreview(_ index: Int) {
-        if NSEvent.modifierFlags.contains(.option), index != beneath.count { return peekLive(index) }
+        if NSEvent.modifierFlags.contains(.option) { return peekLive(index) }
         endLivePeek()
-        let image: NSImage? = if index < beneath.count { pictured(index) }
-            else if index > beneath.count { aheadPicture(index - beneath.count - 1) } else { nil }
+        let image: NSImage? = switch fanItem(index) {
+        case .beneath(let i): pictured(i)
+        case .ahead(let i): aheadPicture(i)
+        }
         guard let image else {
             preview.isHidden = true
             return
@@ -458,6 +485,7 @@ final class Column: NSView, OutlineTextViewNavigator {
         if let optionMonitor { NSEvent.removeMonitor(optionMonitor) }
         optionMonitor = nil
         stackScrubber = nil
+        onFan?(self, false)
         preview.isHidden = true
         preview.image = nil
         let done = { [weak self] in
@@ -941,6 +969,12 @@ final class Column: NSView, OutlineTextViewNavigator {
             let size = badge.intrinsicContentSize
             badge.frame = NSRect(x: right - size.width, y: round(nameMiddle(of: view) - size.height / 2), width: size.width, height: size.height)
         }
+        // A note's when, on its first line, clear of the buttons there.
+        for view in notes {
+            let buttons = (menuButtons[view.ref] != nil ? menuSide : 0) + (openButtons[view.ref] != nil ? menuSide : 0)
+                + (badges[view.ref].map { $0.intrinsicContentSize.width + 4 } ?? 0)
+            view.trailingReserve = buttons > 0 ? buttons + 8 : 0
+        }
     }
 
     // MARK: The timeline
@@ -1295,7 +1329,11 @@ final class Column: NSView, OutlineTextViewNavigator {
         grip.frame = NSRect(x: 56, y: bounds.height - 12, width: max(0, bounds.width - 112), height: 12)
         // The sheets beneath, bunched left of the ×, on its middle.
         let pillHeight = StackPill.fittingHeight
-        let pillWidth = stackPill.fittingWidth(within: max(0, min(260, bounds.width * 0.45)))
+        // Clear of what the window shows at the title bar's start.
+        let room = titleBarReserve > 0 ? controlsLeft - 6 - titleBarReserve - 8 : .greatestFiniteMagnitude
+        let pillWidth = stackPill.fittingWidth(within: max(0, min(260, bounds.width * 0.45, room)))
+        // No room for even a word of it beside them: left out, till there is.
+        stackPill.alphaValue = room < 70 ? 0 : 1
         stackPill.frame = NSRect(x: controlsLeft - 6 - pillWidth, y: (close.frame.midY - pillHeight / 2).rounded(),
                                  width: pillWidth, height: pillHeight)
         switcher?.frame = bounds

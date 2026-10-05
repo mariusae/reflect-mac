@@ -35,13 +35,27 @@ extension NSAttributedString.Key {
 struct PhoneMetrics: Equatable {
     var face: Typeface = .current
     var size: CGFloat = 17
+    /// How the face is set: its own defaults, as changed in Settings.
+    var spacing: PhoneSpacing
+
+    init(face: Typeface = .current, size: CGFloat = 17, spacing: PhoneSpacing? = nil) {
+        self.face = face
+        self.size = size
+        self.spacing = spacing ?? PhoneSpacing.of(face)
+    }
 
     var body: UIFont { face.body(face.size(size)) }
     var code: UIFont { face.mono(round(face.size(size) * 0.88)) }
-    var indent: CGFloat { round(size * 1.35) }
+    var indent: CGFloat { round(size * CGFloat(spacing.indent)) }
+    /// Each line's height, in ems.
+    var lineHeight: CGFloat { CGFloat(spacing.lineHeight) }
+    /// The space after each row, in points.
+    var rowGap: CGFloat { round(size * CGFloat(spacing.rowSpacing)) }
 
     func heading(_ level: Int) -> UIFont {
-        let scale: CGFloat = [1.55, 1.3, 1.12, 1.0, 1.0, 1.0][min(max(level, 1), 6) - 1]
+        // A first-level heading as large as set; the others stepping down to the text's size.
+        let top = CGFloat(spacing.headingScale)
+        let scale: CGFloat = [top, 1 + (top - 1) * 0.55, 1 + (top - 1) * 0.22, 1.0, 1.0, 1.0][min(max(level, 1), 6) - 1]
         return face.heading(round(face.size(size) * scale), weight: level <= 2 ? .bold : .semibold)
     }
 
@@ -177,8 +191,8 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
         let indent = metrics.textIndent(for: row)
         paragraph.firstLineHeadIndent = indent
         paragraph.headIndent = indent
-        paragraph.lineHeightMultiple = row.kind == .code ? 1.2 : metrics.face.lineHeight * metrics.size / max(font.lineHeight, 1)
-        paragraph.paragraphSpacing = round(metrics.size * 0.32)
+        paragraph.lineHeightMultiple = row.kind == .code ? 1.2 : metrics.lineHeight * metrics.size / max(font.lineHeight, 1)
+        paragraph.paragraphSpacing = metrics.rowGap
         var before: CGFloat = 0
         if case .heading(let level) = row.kind {
             // A heading's lines as tall as its own type wants, not the body's;
@@ -1043,7 +1057,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         let extra = layout.extraLineFragmentRect.height
         // As `sizeThatFits` has it: the text's room and the insets about it.
         let fit = ceil(used + 4)
-        let rows = max(0, fit - (extra > 0 ? extra : round(metrics.face.lineHeight * metrics.size)))
+        let rows = max(0, fit - (extra > 0 ? extra : round(metrics.lineHeight * metrics.size)))
         storage.delegate = nil
         return Prepared(text: NSAttributedString(attributedString: storage), width: width, fit: fit, rows: rows, hidesTitle: hidesTitle)
     }
@@ -1843,7 +1857,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         // As `sizeThatFits` has it: the text's room and the insets about it.
         let fit = ceil(outlineLayout.usedRect(for: textContainer).height + textContainerInset.top + textContainerInset.bottom)
         let extra = outlineLayout.extraLineFragmentRect.height
-        let rows = max(0, fit - (extra > 0 ? extra : round(metrics.face.lineHeight * metrics.size)))
+        let rows = max(0, fit - (extra > 0 ? extra : round(metrics.lineHeight * metrics.size)))
         measured = (width, fit, rows)
         return (fit, rows)
     }

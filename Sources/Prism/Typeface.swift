@@ -5,7 +5,7 @@ import ReflectUI
 /// What notes are set in: a face for the text, one for headings — most
 /// often the same — and a fixed-width one for code.
 enum Typeface: String, CaseIterable {
-    case mona, literata, fraunces, source, plex, alegreya, styrene, ideal, charter, recursive, go, system
+    case mona, literata, fraunces, source, plex, alegreya, lato, styrene, ideal, charter, recursive, go, system
 
     /// Faces not bundled — their licences do not allow it — offered only
     /// where they are installed.
@@ -23,6 +23,7 @@ enum Typeface: String, CaseIterable {
         case .literata: "Literata"
         case .fraunces: "Literata & Fraunces"
         case .alegreya: "Alegreya Sans"
+        case .lato: "Lato"
         case .source: "Source Serif & Sans"
         case .plex: "IBM Plex"
         case .styrene: "Styrene B"
@@ -39,7 +40,7 @@ enum Typeface: String, CaseIterable {
     private var scale: CGFloat {
         switch self {
         case .mona, .system, .plex: 1
-        case .ideal: 1.02
+        case .ideal, .lato: 1.02
         case .literata, .fraunces, .styrene: 0.97
         // Its small letters are small: set larger to read as large.
         case .alegreya: 1.12
@@ -57,6 +58,7 @@ enum Typeface: String, CaseIterable {
         case .mona, .recursive: 1.22
         case .go, .plex: 1.26
         case .styrene, .ideal, .alegreya: 1
+        case .lato: 1.18
         case .charter, .system: 1.32
         case .literata, .fraunces, .source: 1.36
         }
@@ -67,6 +69,7 @@ enum Typeface: String, CaseIterable {
         case .mona: "Mona Sans"
         case .literata, .fraunces: "Literata"
         case .alegreya: "Alegreya Sans"
+        case .lato: "Lato"
         case .source: "Source Serif 4"
         case .plex: "IBM Plex Sans"
         case .styrene: "Styrene B LC"
@@ -90,7 +93,7 @@ enum Typeface: String, CaseIterable {
     private var monoFamily: String? {
         switch self {
         case .mona: "Monaspace Xenon"
-        case .literata, .fraunces, .alegreya, .styrene: "JetBrains Mono"
+        case .literata, .fraunces, .alegreya, .lato, .styrene: "JetBrains Mono"
         // Hoefler's own, when it is installed; else the bundled one.
         case .ideal: Self.isInstalled("Operator Mono SSm") ? "Operator Mono SSm" : "JetBrains Mono"
         case .source: "Source Code Pro"
@@ -157,6 +160,11 @@ enum Typeface: String, CaseIterable {
         case .ideal, .alegreya: 1.45
         // As it was: a multiple of the face's own line.
         default: (naturalLine(style: styles.text) * leading * 100).rounded() / 100
+        }
+        // Alegreya Sans, the face Prism opens in, as it was settled on.
+        if self == .alegreya {
+            return Settings(size: 18, lineHeight: 1.4, rowSpacing: 0.16, indent: 1.6, lineLength: 660, headingScale: 1.37,
+                            textStyle: nil, headingStyle: nil, smoothing: true)
         }
         return Settings(size: Double(round(16 * scale * 2) / 2), lineHeight: lineHeight, rowSpacing: 0.34, indent: 1.6,
                         lineLength: 660, headingScale: 1.5, textStyle: styles.text, headingStyle: styles.heading,

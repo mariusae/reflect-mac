@@ -137,7 +137,9 @@ public final class NoteIndex: @unchecked Sendable {
     /// Reads one note again, after it was written; or forgets it, when it
     /// is gone.
     public func refresh(_ path: String) {
-        let entry = read(path, at: root.appendingPathComponent(path))
+        // Notes alone: a picture or other file changed beside them — pasted,
+        // synced — is no note, whatever folder it is in.
+        let entry = path.hasSuffix(".md") ? read(path, at: root.appendingPathComponent(path)) : nil
         let referenced = entry.map { Self.assets(in: $0.text.text) } ?? []
         let links = entry.map { Backlinks.linkKeys(in: $0.text.text) } ?? []
         lock.lock()
@@ -159,8 +161,9 @@ public final class NoteIndex: @unchecked Sendable {
     }
 
     private func read(_ path: String, at url: URL) -> (entry: NoteEntry, text: (text: String, folded: String))? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        let source = String(decoding: data, as: UTF8.self)
+        guard let data = try? Data(contentsOf: url),
+              // Text, not something else saved under a note's name.
+              let source = String(data: data, encoding: .utf8), !source.contains("\u{0}") else { return nil }
         let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
         return (Self.entry(path: path, source: source, modified: modified), (source, source.lowercased()))
     }

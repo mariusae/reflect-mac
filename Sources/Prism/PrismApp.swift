@@ -102,6 +102,18 @@ final class PrismApp: NSObject, NSApplicationDelegate {
     /// sidebar out, `PRISM_CLICKBOX=<n>` the nth checkbox of `PRISM_NOTE`
     /// clicked with the caret at its top, and the scroll before and after printed. `PRISM_BAR` the
     /// last column's sheet bar shown, and one of its kinds (`inbox`, `tasks`…) chosen, unless `show`.
+    /// Graph ▸ Notes to Review: the notes a sync left with both sides in
+    /// them, each to open — filled as the menu opens.
+    private static let review = ReviewMenu()
+
+    private static func reviewItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Notes to Review", action: nil, keyEquivalent: "")
+        let menu = NSMenu(title: "Notes to Review")
+        menu.delegate = review
+        item.submenu = menu
+        return item
+    }
+
     private func runScript(_ controller: PrismWindowController, _ environment: [String: String]) {
         if environment["PRISM_DARK"] == "1" { NSApp.appearance = NSAppearance(named: .darkAqua) }
         if environment["PRISM_DARK"] == "0" { NSApp.appearance = NSAppearance(named: .aqua) }
@@ -367,7 +379,8 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("New Note", #selector(PrismWindowController.newNote(_:)), "n", [.command, .option]),
         ])
         submenu("Graph", [
-            item("Sync Now", #selector(PrismWindowController.syncNow(_:)), "s"),
+            item("Sync Now", #selector(PrismWindowController.syncNow(_:)), "r"),
+            reviewItem(),
         ])
         submenu("Go", [
             item("Go to Note…", #selector(PrismWindowController.findNote(_:)), "o"),
@@ -404,5 +417,26 @@ extension PrismApp: NSMenuItemValidation {
             item.state = item.representedObject as? String == Appearance.current.rawValue ? .on : .off
         }
         return true
+    }
+}
+
+/// Fills Graph ▸ Notes to Review from the window's notes to review.
+@MainActor
+final class ReviewMenu: NSObject, NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        guard let controller = NSApp.windows.lazy.compactMap({ $0.windowController as? PrismWindowController }).first else { return }
+        let paths = controller.notesToReview
+        guard !paths.isEmpty else {
+            let none = NSMenuItem(title: "None — every note is settled", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+            return
+        }
+        let made = controller.reviewMenu
+        for item in made.items {
+            made.removeItem(item)
+            menu.addItem(item)
+        }
     }
 }

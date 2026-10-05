@@ -187,8 +187,16 @@ package final class DayView: NSView, NSTextViewDelegate {
     private var headerHeight: CGFloat { ceil(title.intrinsicContentSize.height) }
     /// Where the note starts: under its name, or, for a note whose first
     /// heading is its name, straight away.
+    /// Whether its words beside the name — when, a week's days — sit on its
+    /// first line instead: a note named by its first heading has no header
+    /// of its own to hold them.
+    private var badgeOnFirstLine: Bool { ref.day == nil && title.stringValue.isEmpty && !badge.isHidden }
+
+    /// Room at the right of the first line, the window's buttons there.
+    package var trailingReserve: CGFloat = 0 { didSet { if trailingReserve != oldValue { needsLayout = true } } }
+
     private var editorTop: CGFloat {
-        guard ref.day != nil || !title.stringValue.isEmpty || !badge.isHidden else { return round(metrics.fontSize * 1.6) }
+        guard ref.day != nil || !title.stringValue.isEmpty else { return round(metrics.fontSize * 1.6) }
         return headerTop + headerHeight + round(metrics.fontSize * 0.7)
     }
     private var bottomPadding: CGFloat { round(metrics.fontSize * 1.6) }
@@ -206,6 +214,17 @@ package final class DayView: NSView, NSTextViewDelegate {
         let badgeSize = badge.intrinsicContentSize
         badge.frame = NSRect(x: title.frame.maxX + 6, y: title.frame.maxY - ceil(badgeSize.height) - 3,
                              width: ceil(badgeSize.width) + 4, height: ceil(badgeSize.height))
+        if badgeOnFirstLine {
+            // At the right of the first line, on its middle, clear of the buttons there.
+            let width = ceil(badgeSize.width) + 4
+            var middle = editorTop + round(metrics.fontSize * 0.9)
+            if let layout = editor.layoutManager, layout.numberOfGlyphs > 0 {
+                middle = editorTop + editor.textContainerOrigin.y + layout.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil).midY
+            }
+            badge.frame = NSRect(x: column.maxX - trailingReserve - width, y: (middle - badgeSize.height / 2).rounded(),
+                                 width: width, height: ceil(badgeSize.height))
+        }
+        keepFirstLineClear(of: badgeOnFirstLine ? (width: ceil(badgeSize.width) + 4 + trailingReserve + 10, column: column) : nil)
         var y = editorTop
         if let focusBar {
             focusBar.frame = NSRect(x: column.minX + metrics.indent - 6, y: y, width: column.width - metrics.indent + 6, height: FocusBar.height)
@@ -229,6 +248,21 @@ package final class DayView: NSView, NSTextViewDelegate {
                 }
             }
         }
+    }
+
+    /// The first line's text kept short of what sits at its right: the
+    /// when, and the buttons — a long name wraps before them.
+    private func keepFirstLineClear(of room: (width: CGFloat, column: NSRect)?) {
+        guard let container = editor.textContainer else { return }
+        var paths: [NSBezierPath] = []
+        if let room, let layout = editor.layoutManager, layout.numberOfGlyphs > 0 {
+            let line = layout.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil)
+            paths = [NSBezierPath(rect: NSRect(x: max(0, room.column.width - room.width), y: 0, width: room.width, height: line.height))]
+        }
+        let old = container.exclusionPaths.map(\.bounds)
+        guard old != paths.map(\.bounds) else { return }
+        container.exclusionPaths = paths
+        heightMayHaveChanged()
     }
 
     private var noticeSpacing: CGFloat { round(metrics.fontSize * 0.8) }

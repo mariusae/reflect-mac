@@ -10,7 +10,7 @@ app="build/Prism.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/Fonts"
 cp "$(swift build -c release --show-bin-path)/Prism" "$app/Contents/MacOS/Prism"
-for family in monasans monaspace recursive gofont literata jetbrainsmono source plex fraunces alegreya; do
+for family in monasans monaspace recursive gofont literata jetbrainsmono source plex fraunces alegreya lato; do
   cp Frameworks/$family/*.[ot]tf "$app/Contents/Resources/Fonts/"
 done
 # The icon is drawn by a script, and only redrawn when the script changes.

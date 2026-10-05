@@ -127,17 +127,30 @@ final class GitHubAccount {
 
     // MARK: Tokens
 
+    /// A refresh under way: every caller waits on the one. A refresh token
+    /// is good once — two at a time, and the second was turned away as if
+    /// the sign-in were gone, signing the app out.
+    private var refreshing: Task<Void, Error>?
+
     /// A token good for a while yet: refreshed first when it is running out.
     func validAccessToken() async throws -> String {
         guard let tokens else { throw GitHubError("Not signed in to GitHub.") }
         if let expires = tokens.accessExpires, expires < Date().addingTimeInterval(5 * 60) {
-            guard let refresh = tokens.refresh, tokens.refreshExpires.map({ $0 > Date() }) ?? true else {
-                signOut()
-                throw GitHubError("Signed out of GitHub: sign in again.")
+            if let refreshing {
+                try await refreshing.value
+            } else {
+                guard let refresh = tokens.refresh, tokens.refreshExpires.map({ $0 > Date() }) ?? true else {
+                    signOut()
+                    throw GitHubError("Signed out of GitHub: sign in again.")
+                }
+                let task = Task { try await exchange(["grant_type": "refresh_token", "refresh_token": refresh]) }
+                refreshing = task
+                defer { refreshing = nil }
+                try await task.value
             }
-            try await exchange(["grant_type": "refresh_token", "refresh_token": refresh])
         }
-        return self.tokens!.access
+        guard let tokens = self.tokens else { throw GitHubError("Not signed in to GitHub.") }
+        return tokens.access
     }
 
     private func exchange(_ fields: [String: String]) async throws {
@@ -162,7 +175,9 @@ final class GitHubAccount {
         }
         let answer = try JSONDecoder().decode(Answer.self, from: data)
         guard let access = answer.access_token else {
-            if answer.error == "bad_refresh_token" { signOut() }
+            // Turned away for the refresh token sent: signed out only when it
+            // is still the one kept — not one another refresh has replaced.
+            if answer.error == "bad_refresh_token", fields["refresh_token"] == self.tokens?.refresh { signOut() }
             throw GitHubError(answer.error_description ?? answer.error ?? "GitHub did not give a token.")
         }
         let now = Date()

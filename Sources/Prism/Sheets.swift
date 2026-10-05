@@ -143,7 +143,7 @@ final class StackPill: NSView {
     var sheets: [Sheet] = [] { didSet { restyle() } }
     /// With none beneath, the nearest gone back from: forward, faintly.
     var forward: Sheet? { didSet { restyle() } }
-    var face: Typeface = .mona { didSet { restyle() } }
+    var face: Typeface = .alegreya { didSet { restyle() } }
     var onClick: (() -> Void)?
     var onHover: ((Bool) -> Void)?
     /// Picked up and moved: the column's own sheet, to put elsewhere.
@@ -303,9 +303,13 @@ final class StackScrubber: NSView {
     var onPin: ((Int) -> Void)?
 
     private var sheets: [Sheet] = []
-    /// Where the column's own is among them: those after it, the way forward.
-    private var own = 0
-    private var face: Typeface = .mona
+    /// Whether they are the way forward, gone back from: dashed, fainter.
+    private var forward = false
+    /// The one on top: pointed at, or — till one is — the nearest, at the right.
+    private var top: Int { hovered ?? max(0, sheets.count - 1) }
+    /// The bunch's front: they gather to it, the rightmost on top.
+    private var own: Int { max(0, sheets.count - 1) }
+    private var face: Typeface = .alegreya
     private(set) var hovered: Int?
     /// How far they are dealt out: 0 in their bunch, at the right; 1 across.
     private var dealt: CGFloat = 0
@@ -318,10 +322,12 @@ final class StackScrubber: NSView {
 
     override var isFlipped: Bool { true }
 
-    /// `sheets` bottom to top, the column's own at `own`, the way forward after it.
-    func show(_ sheets: [Sheet], own: Int, face: Typeface) {
+    /// `sheets` oldest first — the column's own not among them: the nearest
+    /// at the right, where the bunch showed it — or, `forward`, the way
+    /// forward, the nearest at the right too.
+    func show(_ sheets: [Sheet], forward: Bool, face: Typeface) {
         self.sheets = sheets
-        self.own = own
+        self.forward = forward
         self.face = face
         needsDisplay = true
     }
@@ -405,10 +411,7 @@ final class StackScrubber: NSView {
     private func place(_ i: Int) -> NSRect {
         let n = CGFloat(max(sheets.count, 1))
         let share = (bounds.width - Self.tuck) / n
-        // On the stack, each reaches under the one to its right; on the
-        // way forward, under the one to its left.
-        let out = i <= own ? NSRect(x: CGFloat(i) * share, y: 0, width: share + Self.tuck, height: bounds.height)
-            : NSRect(x: CGFloat(i) * share, y: 0, width: share + Self.tuck, height: bounds.height)
+        let out = NSRect(x: CGFloat(i) * share, y: 0, width: share + Self.tuck, height: bounds.height)
         let below = CGFloat(abs(own - i))
         let depth = min(below, 2) * 6
         let home = NSRect(x: bunch.minX - depth, y: bunch.minY, width: bunch.width, height: bunch.height)
@@ -420,21 +423,24 @@ final class StackScrubber: NSView {
                       width: home.width + (out.width - home.width) * e, height: home.height + (out.height - home.height) * e)
     }
 
-    /// What of a sheet shows, across: up to where the one lying on it starts.
+    /// What of a sheet shows, across: the top one whole; left of it, each
+    /// up to where the next starts; right of it, each from where the one
+    /// before ends — those on both sides tucked under it.
     private func shown(_ i: Int) -> ClosedRange<CGFloat> {
         let rect = place(i)
-        if i < own { return rect.minX...max(rect.minX, place(i + 1).minX) }
-        if i > own { return min(rect.maxX, place(i - 1).maxX)...rect.maxX }
+        if i < top { return rect.minX...max(rect.minX, place(i + 1).minX) }
+        if i > top { return min(rect.maxX, place(i - 1).maxX)...rect.maxX }
         return rect.minX...rect.maxX
     }
 
     override func draw(_ dirtyRect: NSRect) {
         let named = dealt > 0.7
-        // Each lies on the one further from the column's own; its own on top.
-        let order = Array(0..<own) + Array(sheets.indices.dropFirst(own + 1).reversed()) + [own]
+        // Each lies on the one further from the top one; it, on them all.
+        let top = top
+        let order = Array(0..<top) + Array(sheets.indices.dropFirst(top + 1).reversed()) + [top]
         for i in order where sheets.indices.contains(i) {
             let sheet = sheets[i]
-            let ahead = i > own
+            let ahead = forward
             let rect = place(i).insetBy(dx: 0.5, dy: 0.5)
             let lifted = i == hovered
             let sheetRect = lifted ? rect.offsetBy(dx: 0, dy: -1.5) : rect
@@ -444,12 +450,12 @@ final class StackScrubber: NSView {
             let shadow = NSShadow()
             shadow.shadowColor = NSColor.black.withAlphaComponent(ahead ? 0.05 : i == 0 ? 0.06 : 0.12)
             shadow.shadowBlurRadius = 5
-            shadow.shadowOffset = NSSize(width: ahead ? 2 : -2, height: -1)
+            shadow.shadowOffset = NSSize(width: i > top ? 2 : -2, height: -1)
             shadow.set()
             // Solid, each hiding what it lies on; the way forward is told by
             // its dashes and fainter names, not by being seen through.
-            let aged = i == own || lifted ? 0 : sheet.age
-            Aging.fill(lifted || i == own || ahead ? Ink.paper : Ink.shelf, age: aged).setFill()
+            let aged = i == top || lifted ? 0 : sheet.age
+            Aging.fill(lifted || i == top || ahead ? Ink.paper : Ink.shelf, age: aged).setFill()
             path.fill()
             NSGraphicsContext.restoreGraphicsState()
             Ink.text.withAlphaComponent(lifted ? 0.22 : 0.13).setStroke()
@@ -460,10 +466,10 @@ final class StackScrubber: NSView {
             guard named else { continue }
             let span = shown(i)
             let fade = min(1, (dealt - 0.7) / 0.3)
-            let color = (i == own || lifted ? Ink.text : Ink.secondary)
+            let color = (i == top || lifted ? Ink.text : Ink.secondary)
                 .withAlphaComponent(fade * (ahead && !lifted ? 0.6 : 1) * Aging.ink(aged))
-            var x = (ahead ? span.lowerBound + 8 : sheetRect.minX + 11)
-            var right = (ahead ? span.upperBound - 10 : (i < own ? span.upperBound - 4 : sheetRect.maxX - 8))
+            var x = i > top ? span.lowerBound + 8 : sheetRect.minX + 11
+            var right = i < top ? span.upperBound - 4 : sheetRect.maxX - 8
             // Pinned: a pin at its shown part's end.
             if sheet.pinned, right - x > 30,
                let pin = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Pinned")?
@@ -485,7 +491,7 @@ final class StackScrubber: NSView {
             let style = NSMutableParagraphStyle()
             style.lineBreakMode = .byTruncatingTail
             let title = NSAttributedString(string: sheet.title, attributes: [
-                .font: face.font(size: 12.5, weight: i == own ? .semibold : .medium), .foregroundColor: color, .paragraphStyle: style,
+                .font: face.font(size: 12.5, weight: i == top ? .semibold : .medium), .foregroundColor: color, .paragraphStyle: style,
             ])
             let height = ceil(title.size().height)
             title.draw(with: NSRect(x: x, y: (sheetRect.midY - height / 2).rounded(), width: max(0, right - x), height: height),
@@ -506,9 +512,10 @@ final class StackScrubber: NSView {
     private func index(at event: NSEvent) -> Int? {
         let point = convert(event.locationInWindow, from: nil)
         guard bounds.insetBy(dx: -2, dy: -6).contains(point), !sheets.isEmpty, dealt > 0.5 else { return nil }
-        if place(own).minX...place(own).maxX ~= point.x { return own }
-        if point.x < place(own).minX { return (0..<own).last { place($0).minX <= point.x } ?? 0 }
-        return sheets.indices.dropFirst(own + 1).first { place($0).maxX >= point.x } ?? sheets.count - 1
+        let top = top
+        if place(top).minX...place(top).maxX ~= point.x { return top }
+        if point.x < place(top).minX { return (0..<top).last { place($0).minX <= point.x } ?? 0 }
+        return sheets.indices.dropFirst(top + 1).first { place($0).maxX >= point.x } ?? sheets.count - 1
     }
 
     /// Points at a sheet, as the pointer does.
@@ -544,7 +551,7 @@ final class StackScrubber: NSView {
 
     /// A sheet's own menu: pinning it, on the stack.
     override func menu(for event: NSEvent) -> NSMenu? {
-        guard let i = index(at: event), i <= own else { return nil }
+        guard let i = index(at: event), !forward else { return nil }
         let menu = NSMenu()
         let item = NSMenuItem(title: sheets[i].pinned ? "Unpin Sheet" : "Pin Sheet", action: #selector(pinChosen(_:)), keyEquivalent: "")
         item.target = self
@@ -1023,7 +1030,7 @@ final class CollapsedStrip: NSView {
     var title = "" { didSet { needsDisplay = true } }
     var symbol = "doc.text" { didSet { needsDisplay = true } }
     var count = 1 { didSet { needsDisplay = true } }
-    var face: Typeface = .mona { didSet { needsDisplay = true } }
+    var face: Typeface = .alegreya { didSet { needsDisplay = true } }
     var onClick: (() -> Void)?
     var onHover: ((Bool) -> Void)?
     private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true; onHover?(hovering) } } }

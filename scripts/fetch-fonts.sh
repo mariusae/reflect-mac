@@ -3,7 +3,7 @@
 # BSD) into Frameworks/: Mona Sans, with Monaspace Xenon for code and Radon
 # for its italic; Recursive's Linear statics; Go; and, from Google Fonts,
 # Literata with JetBrains Mono, Source Serif 4 with Source Sans 3 and Source
-# Code Pro, IBM Plex Sans with Plex Mono, Fraunces, and Alegreya Sans. Files
+# Code Pro, IBM Plex Sans with Plex Mono, Fraunces, Alegreya Sans, and Lato. Files
 # already there are kept.
 set -e
 cd "$(dirname "$0")/.."
@@ -79,6 +79,8 @@ google_fonts sourcecodepro source 'SourceCodePro[wght].ttf' 'SourceCodePro-Itali
 google_fonts fraunces fraunces 'Fraunces[SOFT,WONK,opsz,wght].ttf' 'Fraunces-Italic[SOFT,WONK,opsz,wght].ttf'
 google_fonts alegreyasans alegreya AlegreyaSans-Regular.ttf AlegreyaSans-Italic.ttf AlegreyaSans-Light.ttf \
   AlegreyaSans-LightItalic.ttf AlegreyaSans-Medium.ttf AlegreyaSans-MediumItalic.ttf AlegreyaSans-Bold.ttf AlegreyaSans-BoldItalic.ttf
+google_fonts lato lato Lato-Regular.ttf Lato-Italic.ttf Lato-Light.ttf Lato-LightItalic.ttf Lato-Bold.ttf \
+  Lato-BoldItalic.ttf Lato-Black.ttf Lato-BlackItalic.ttf
 google_fonts ibmplexsans plex 'IBMPlexSans[wdth,wght].ttf' 'IBMPlexSans-Italic[wdth,wght].ttf'
 google_fonts ibmplexmono plex IBMPlexMono-Regular.ttf IBMPlexMono-Italic.ttf IBMPlexMono-Medium.ttf \
   IBMPlexMono-SemiBold.ttf IBMPlexMono-Bold.ttf IBMPlexMono-BoldItalic.ttf

@@ -287,7 +287,7 @@ final class SliceBlock: UIView, SheetBlock {
         var height: CGFloat = Card.top + titleHeight + Card.gap
         guard isLive else {
             // A guess from its rows: a line each, more for long ones.
-            let line = round(metrics.face.lineHeight * metrics.size) + round(metrics.size * 0.32)
+            let line = round(metrics.lineHeight * metrics.size) + metrics.rowGap
             let perLine = max(20, inner / (metrics.size * 0.52))
             let lines = slices.reduce(0.0) { sum, slice in
                 sum + slice.rows.reduce(0.0) { $0 + max(1, ceil(Double($1.text.count) / perLine)) } + (slice.crumbs.isEmpty ? 0 : 1)

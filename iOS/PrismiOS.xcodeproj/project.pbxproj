@@ -242,7 +242,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# The fonts Prism bundles, fetched by scripts/fetch-fonts.sh.\nout=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Fonts\"\nmkdir -p \"$out\"\nfor family in monasans monaspace recursive gofont literata jetbrainsmono source plex fraunces alegreya; do\n  cp \"${SRCROOT}/../Frameworks/$family/\"*.[ot]tf \"$out/\" 2>/dev/null || true\ndone\n";
+			shellScript = "# The fonts Prism bundles, fetched by scripts/fetch-fonts.sh.\nout=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Fonts\"\nmkdir -p \"$out\"\nfor family in monasans monaspace recursive gofont literata jetbrainsmono source plex fraunces alegreya lato; do\n  cp \"${SRCROOT}/../Frameworks/$family/\"*.[ot]tf \"$out/\" 2>/dev/null || true\ndone\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

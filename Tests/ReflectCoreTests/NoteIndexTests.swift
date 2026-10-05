@@ -40,6 +40,21 @@ import Testing
         #expect(index.containing("design doc").map(\.path) == ["notes/design.md"])
     }
 
+    @Test func onlyTextNotesAreIndexed() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("index-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("notes"), withIntermediateDirectories: true)
+        try Data("# Apex\n".utf8).write(to: root.appendingPathComponent("notes/apex.md"))
+        // A picture beside the notes, and something not text under a note's name.
+        try Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0xFF]).write(to: root.appendingPathComponent("notes/pasted-1.png"))
+        try Data([0xFF, 0xD8, 0xFF, 0x00, 0x10, 0x4A, 0x46]).write(to: root.appendingPathComponent("notes/binary.md"))
+        let index = NoteIndex(root: root)
+        index.scan()
+        index.refresh("notes/pasted-1.png")
+        #expect(index.all.map(\.path) == ["notes/apex.md"])
+        #expect(index.entry("notes/pasted-1.png") == nil)
+    }
+
     @Test func namesRankWholeThenStartThenWords() {
         #expect(NoteIndex.score("apex", "apex")! > NoteIndex.score("apex design", "apex")!)
         #expect(NoteIndex.score("apex design", "apex")! > NoteIndex.score("the apex", "apex")!)
