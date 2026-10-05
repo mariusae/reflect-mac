@@ -14,7 +14,6 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     private var columns: [Column] = []
     private var dividers: [ColumnDivider] = []
     /// Under the column the keyboard is in, when there are more than one.
-    private let activeBar = NSView()
     private var responderWatch: NSKeyValueObservation?
     private let sidebar = Sidebar()
     private let finder = Finder()
@@ -102,9 +101,6 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         window.contentView = page
         heading.lineBreakMode = .byTruncatingTail
         page.addSubview(heading)
-        activeBar.wantsLayer = true
-        activeBar.layer?.cornerRadius = 1
-        page.addSubview(activeBar)
         syncStatus.alphaValue = 0
         syncStatus.lineBreakMode = .byTruncatingTail
         page.addSubview(syncStatus)
@@ -819,16 +815,6 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         for (i, divider) in dividers.enumerated() {
             divider.frame = NSRect(x: columns[i + 1].frame.minX - ColumnDivider.reach, y: 0, width: 2 * ColumnDivider.reach,
                                    height: bounds.height)
-        }
-        // The column the keyboard is in, marked at its foot.
-        if columns.count > 1, let active, columns.contains(where: { $0 === active }) {
-            activeBar.isHidden = false
-            activeBar.frame = NSRect(x: active.frame.minX + 24, y: 0, width: max(0, active.frame.width - 48), height: 2)
-            page.effectiveAppearance.performAsCurrentDrawingAppearance {
-                activeBar.layer?.backgroundColor = Ink.accent.withAlphaComponent(0.55).cgColor
-            }
-        } else {
-            activeBar.isHidden = true
         }
         let height = ceil(heading.intrinsicContentSize.height)
         let first = columns.first?.frame ?? bounds

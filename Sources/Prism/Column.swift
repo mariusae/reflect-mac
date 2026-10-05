@@ -1233,10 +1233,9 @@ final class Column: NSView, OutlineTextViewNavigator {
         // What sits left of the ×: left of the fold button too, when it shows.
         let controlsLeft = foldButton.isHidden ? close.frame.minX : foldButton.frame.minX
         let bar = sheetBar.fittingSize
-        // Centred, or left of the bunched sheets where they would meet.
-        var barX = ((bounds.width - bar.width) / 2).rounded()
-        if !beneath.isEmpty { barX = min(barX, controlsLeft - 6 - stackPill.fittingWidth(within: min(260, bounds.width * 0.45)) - 10 - bar.width) }
-        sheetBar.frame = NSRect(x: max(8, barX), y: card.maxY - bar.height - 10, width: bar.width, height: bar.height)
+        // At the foot, centred: the title bar left to the sheets.
+        let barX = ((bounds.width - bar.width) / 2).rounded()
+        sheetBar.frame = NSRect(x: max(8, barX), y: card.minY + 14, width: bar.width, height: bar.height)
         grip.frame = NSRect(x: 56, y: bounds.height - 12, width: max(0, bounds.width - 112), height: 12)
         // The sheets beneath, bunched left of the ×, on its middle.
         let pillHeight = StackPill.fittingHeight
