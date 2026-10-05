@@ -191,7 +191,14 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             // Once the backlinks are found, in the background.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { controller.foldFirstBacklinkForScript() }
         }
-        if let hover = environment["PRISM_HOVER"].flatMap(Double.init) { controller.hoverScrubberForScript(CGFloat(hover)) }
+        if let hover = environment["PRISM_HOVER"].flatMap(Double.init) {
+            controller.hoverScrubberForScript(CGFloat(hover))
+            // A page on the web says its outline once loaded: hovered again then.
+            if environment["PRISM_OPEN_PAGE"] != nil {
+                let wait = environment["PRISM_WAIT"].flatMap(Double.init) ?? 0.6
+                DispatchQueue.main.asyncAfter(deadline: .now() + max(0.1, wait - 0.5)) { controller.hoverScrubberForScript(CGFloat(hover)) }
+            }
+        }
         if environment["PRISM_SIDEBAR"] == "1" { controller.showSidebarForScript() }
         if let query = environment["PRISM_FIND"] {
             controller.showFinder(query: query)

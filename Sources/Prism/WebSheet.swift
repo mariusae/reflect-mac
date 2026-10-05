@@ -10,6 +10,25 @@ final class WebPageView: NSView, WKNavigationDelegate, WKScriptMessageHandler {
     var highlights: [String] = [] { didSet { if highlights != oldValue { mark() } } }
     /// A passage chosen and highlighted on the page.
     var onHighlight: ((String) -> Void)?
+    /// The page's headings — h1 to h3 — each where it is down the page, and
+    /// the page's height: an outline to scrub by, when it has one.
+    struct Outline: Equatable {
+        struct Heading: Equatable {
+            var title: String
+            var level: Int
+            var y: CGFloat
+        }
+        var headings: [Heading]
+        var height: CGFloat
+    }
+    var onOutline: ((Outline) -> Void)?
+    /// Scrolled: where the page's top is, and how much of it shows.
+    var onScroll: ((_ top: CGFloat, _ visible: CGFloat) -> Void)?
+
+    /// Scrolls the page so a point of it is at the top.
+    func scroll(toY y: CGFloat, animated: Bool) {
+        web.evaluateJavaScript("window.scrollTo({top: \(max(0, y - 12)), behavior: '\(animated ? "smooth" : "instant")'})")
+    }
     private(set) var url: URL?
 
     override var isFlipped: Bool { true }
@@ -73,7 +92,21 @@ final class WebPageView: NSView, WKNavigationDelegate, WKScriptMessageHandler {
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let body = message.body as? [String: Any], let text = body["highlight"] as? String else { return }
+        guard let body = message.body as? [String: Any] else { return }
+        if let headings = body["outline"] as? [[String: Any]] {
+            let found = headings.compactMap { heading -> Outline.Heading? in
+                guard let title = heading["title"] as? String, let level = heading["level"] as? Int,
+                      let y = (heading["y"] as? NSNumber)?.doubleValue else { return nil }
+                return Outline.Heading(title: title, level: level, y: CGFloat(y))
+            }
+            onOutline?(Outline(headings: found, height: CGFloat((body["height"] as? NSNumber)?.doubleValue ?? 1)))
+            return
+        }
+        if let top = (body["scroll"] as? NSNumber)?.doubleValue {
+            onScroll?(CGFloat(top), CGFloat((body["visible"] as? NSNumber)?.doubleValue ?? 0))
+            return
+        }
+        guard let text = body["highlight"] as? String else { return }
         let passage = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !passage.isEmpty else { return }
         highlights.append(passage)
@@ -149,6 +182,34 @@ final class WebPageView: NSView, WKNavigationDelegate, WKScriptMessageHandler {
         marked.add(target);
       }
       window.prismMark = function (passages) { for (const p of passages) { try { markOne(p); } catch (e) {} } };
+
+      // Its outline: the headings people read it by, where each is; told
+      // again as the page fills in or changes size, and where it is scrolled.
+      let lastOutline = '';
+      function outline() {
+        const found = [];
+        for (const h of document.querySelectorAll('h1, h2, h3')) {
+          const title = (h.innerText || '').replace(/\s+/g, ' ').trim();
+          const box = h.getBoundingClientRect();
+          if (!title || title.length > 160 || box.height === 0) continue;
+          found.push({ title, level: Number(h.tagName[1]), y: box.top + window.scrollY });
+        }
+        const height = document.documentElement.scrollHeight;
+        const said = JSON.stringify([found, height]);
+        if (said === lastOutline) return;
+        lastOutline = said;
+        window.webkit.messageHandlers.prism.postMessage({ outline: found, height });
+      }
+      function scrolled() {
+        window.webkit.messageHandlers.prism.postMessage({ scroll: window.scrollY, visible: window.innerHeight });
+      }
+      outline();
+      scrolled();
+      setTimeout(outline, 1500);
+      setTimeout(outline, 4000);
+      window.addEventListener('load', outline);
+      window.addEventListener('resize', () => { outline(); scrolled(); });
+      window.addEventListener('scroll', scrolled, { passive: true });
 
       let button = null;
       function hide() { if (button) { button.remove(); button = null; } }

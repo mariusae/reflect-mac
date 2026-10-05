@@ -2434,7 +2434,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     func showSidebarForScript() { setSidebar(shown: true, animated: false); page.needsLayout = true }
 
     /// Hovers the first column's scrubber, at a place down it from 0 to 1.
-    func hoverScrubberForScript(_ fraction: CGFloat) { columns.first?.hoverForScript(fraction) }
+    func hoverScrubberForScript(_ fraction: CGFloat) { (columns.first { $0.isWeb } ?? columns.first)?.hoverForScript(fraction) }
 }
 
 /// Between two columns: a hairline, and a grip either side of it that

@@ -197,6 +197,11 @@ final class Column: NSView, OutlineTextViewNavigator {
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification,
                                                object: scroll.contentView)
         NotificationCenter.default.addObserver(self, selector: #selector(cardModeChanged(_:)), name: CardModes.changed, object: nil)
+        // Clicked anywhere in it: the column worked in. Not holding the click
+        // back from what it lands on.
+        let ground = NSClickGestureRecognizer(target: self, action: #selector(groundClicked(_:)))
+        ground.delaysPrimaryMouseButtonEvents = false
+        document.addGestureRecognizer(ground)
         scroll.wantsLayer = true
         addSubview(scroll)
         addSubview(fade)
@@ -255,7 +260,10 @@ final class Column: NSView, OutlineTextViewNavigator {
         close.target = self
         close.action = #selector(closeColumn)
         scrubber.onHover = { [weak self] mark, y in self?.hover(mark, at: y) }
-        scrubber.onPick = { [weak self] mark in self?.scroll(toY: mark.y, animated: true) }
+        scrubber.onPick = { [weak self] mark in
+            guard let self else { return }
+            if let webPage, webOutline != nil { webPage.scroll(toY: mark.y, animated: true) } else { scroll(toY: mark.y, animated: true) }
+        }
         scrubber.onDrag = { [weak self] fraction in self?.drag(to: fraction) }
         scrubber.onPage = { [weak self] earlier in self?.page(earlier: earlier) }
     }
@@ -746,6 +754,14 @@ final class Column: NSView, OutlineTextViewNavigator {
             guard let self else { return }
             onHighlight?(ref, passage)
         }
+        // The page's own outline on the scrubber, when it has one.
+        webOutline = nil
+        scrubber.isHidden = true
+        page.onOutline = { [weak self] outline in self?.showWebOutline(outline) }
+        page.onScroll = { [weak self] top, visible in
+            guard let self, webOutline != nil else { return }
+            scrubber.update(visible: NSRect(x: 0, y: top, width: 1, height: visible))
+        }
         page.load(url)
         page.highlights = highlights
         scroll.isHidden = true
@@ -757,6 +773,25 @@ final class Column: NSView, OutlineTextViewNavigator {
         updateSheetBar()
         needsLayout = true
         settled = true
+    }
+
+    /// The page's headings, for its scrubber; none, no scrubber.
+    private var webOutline: WebPageView.Outline?
+
+    private func showWebOutline(_ outline: WebPageView.Outline) {
+        guard isWeb else { return }
+        // A heading or two is not an outline to find one's way by.
+        guard outline.headings.count >= 2 else {
+            webOutline = nil
+            scrubber.isHidden = true
+            return
+        }
+        webOutline = outline
+        scrubber.isHidden = false
+        let marks = outline.headings.map { ScrubMark(y: $0.y, title: $0.title, detail: nil, rank: $0.level == 1 ? 3 : $0.level == 2 ? 2 : 1) }
+        scrubber.earlier = nil
+        scrubber.later = nil
+        scrubber.update(marks: marks, height: outline.height, visible: NSRect(x: 0, y: 0, width: 1, height: bounds.height))
     }
 
     func checkWebForScript(choosing passage: String?, done: @escaping (String) -> Void) {
@@ -853,7 +888,7 @@ final class Column: NSView, OutlineTextViewNavigator {
                 button.identifier = NSUserInterfaceItemIdentifier(view.ref.path)
                 let column = min(metrics.columnWidth, view.frame.width - 48)
                 let right = view.frame.minX + ((view.frame.width - column) / 2).rounded() + column
-                button.frame = NSRect(x: right - menuSide, y: round(nameMiddle(of: view) - menuSide / 2) + 3, width: menuSide, height: menuSide)
+                button.frame = NSRect(x: right - menuSide, y: round(nameMiddle(of: view) - menuSide / 2), width: menuSide, height: menuSide)
             }
         }
         // A link note's page, a button away.
@@ -875,7 +910,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             button.identifier = NSUserInterfaceItemIdentifier(view.ref.path)
             let column = min(metrics.columnWidth, view.frame.width - 48)
             let right = view.frame.minX + ((view.frame.width - column) / 2).rounded() + column - (listsNotes ? menuSide : 0)
-            button.frame = NSRect(x: right - menuSide, y: round(nameMiddle(of: view) - menuSide / 2) + 3, width: menuSide, height: menuSide)
+            button.frame = NSRect(x: right - menuSide, y: round(nameMiddle(of: view) - menuSide / 2), width: menuSide, height: menuSide)
         }
         for view in notes {
             var flags = Self.flags(view.ref.path)
@@ -1134,6 +1169,8 @@ final class Column: NSView, OutlineTextViewNavigator {
     private func removeBlocks() {
         webPage?.removeFromSuperview()
         webPage = nil
+        webOutline = nil
+        scrubber.isHidden = false
         webTitle.isHidden = true
         grip.isHidden = false
         scroll.isHidden = false
@@ -1151,6 +1188,19 @@ final class Column: NSView, OutlineTextViewNavigator {
             if let view = block as? DayView { letGo(view) } else { block.removeFromSuperview() }
         }
         blocks = []
+    }
+
+    // MARK: Clicked between the cards
+
+    override var acceptsFirstResponder: Bool { true }
+
+    /// A click on the column's ground — between the cards, or around one —
+    /// makes it the column worked in: the keyboard to it, unless it is in
+    /// it already, where the caret stays. (A click in a card's text puts the
+    /// caret there first, which says as much.)
+    @objc private func groundClicked(_ gesture: NSClickGestureRecognizer) {
+        if let responder = window?.firstResponder as? NSView, responder.isDescendant(of: self) { return }
+        window?.makeFirstResponder(self)
     }
 
     func view(for ref: NoteRef) -> DayView? { views.first { $0.ref == ref } }
@@ -1297,6 +1347,8 @@ final class Column: NSView, OutlineTextViewNavigator {
     }
 
     private func refreshMarks() {
+        // A page on the web marks its own, from its headings.
+        guard !isWeb else { return }
         let marks = blocks.flatMap { block in
             block.scrubMarks(listed: listsNotes).map { mark in
                 var mark = mark
@@ -1448,6 +1500,10 @@ final class Column: NSView, OutlineTextViewNavigator {
     }
 
     private func drag(to fraction: CGFloat) {
+        if let webPage, let webOutline {
+            webPage.scroll(toY: fraction * webOutline.height - bounds.height / 2 + 12, animated: false)
+            return
+        }
         let y = fraction * document.frame.height - scroll.contentSize.height / 2
         scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, min(y, document.frame.height - scroll.contentSize.height))))
         scroll.reflectScrolledClipView(scroll.contentView)
