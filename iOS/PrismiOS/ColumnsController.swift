@@ -178,6 +178,10 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         ])
         barToBottom = toBottom
         bar.onSelect = { [weak self] column in self?.tabTapped(column) }
+        bar.onHold = { [weak self] column in
+            guard let self, Self.tabs[column].kind == .timeline else { return }
+            showCalendar()
+        }
         bar.onWrite = { [weak self] in
             guard let self else { return }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -454,6 +458,28 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         select(column: column)
         guard let sheet = columns[column].topViewController as? SheetController else { return }
         push(kind, from: sheet)
+    }
+
+    // MARK: The calendar
+
+    /// A month of days, the Days tab held: those with notes marked, and how
+    /// far along each one's to-dos are. A day tapped is gone to.
+    func showCalendar() {
+        guard let graph = store.graph, let index = store.index else { return }
+        let days = columns.first?.viewControllers.first as? SheetController
+        let shown = days?.place?.path.flatMap(GraphPaths.day(fromDailyPath:)) ?? .today
+        let calendar = CalendarController(month: NoteCalendar.Month(shown), marks: NoteCalendar.marks(graph: graph, index: index))
+        calendar.onChoose = { [weak self, weak calendar] day in
+            calendar?.dismiss(animated: true)
+            self?.open(.day(day))
+        }
+        if let sheet = calendar.sheetPresentationController {
+            let height = calendar.preferredHeight(width: view.bounds.width)
+            sheet.detents = [.custom { _ in height }]
+            sheet.prefersGrabberVisible = true
+            sheet.preferredCornerRadius = 28
+        }
+        present(calendar, animated: true)
     }
 
     // MARK: Dictating

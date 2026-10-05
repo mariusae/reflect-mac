@@ -154,6 +154,10 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         if environment["PRISM_TASKS"] == "1" { controller.showTasks(nil) }
         for choice in (environment["PRISM_BAR"] ?? "").split(separator: "|") { controller.sheetBarForScript(String(choice)) }
         if let steps = environment["PRISM_STACK"] { controller.stackForScript(steps) }
+        // `PRISM_CALENDAR_SNAP=<png>`: the calendar, this month, drawn.
+        if let path = environment["PRISM_CALENDAR_SNAP"] {
+            controller.calendarSnapshotForScript(to: URL(fileURLWithPath: path), dark: environment["PRISM_DARK"] == "1")
+        }
         if let path = environment["PRISM_OPEN_PAGE"] { controller.openPageForScript(path) }
         if let query = environment["PRISM_RECENT"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { controller.recentForScript(query, go: environment["PRISM_RECENT_GO"] == "1") }

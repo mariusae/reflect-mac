@@ -54,6 +54,8 @@ final class Column: NSView, OutlineTextViewNavigator {
     private let sheetBar = SheetBar()
     /// A sheet of a kind asked for, from the bar, on this column.
     var onAddSheet: ((Column, SheetBar.Choice) -> Void)?
+    /// The calendar asked for, from the timeline's tool: shown by it.
+    var onShowCalendar: ((Column, NSView) -> Void)?
     private let grip = SheetGrip()
     /// The sheets beneath, bunched in the title bar.
     private let stackPill = StackPill()
@@ -237,6 +239,10 @@ final class Column: NSView, OutlineTextViewNavigator {
         sheetBar.onChoose = { [weak self] choice in
             guard let self else { return }
             onAddSheet?(self, choice)
+        }
+        sheetBar.onMore = { [weak self] choice, view in
+            guard let self, choice == .timeline else { return }
+            onShowCalendar?(self, view)
         }
         stackPill.onClick = { [weak self] in
             guard let self else { return }
@@ -1939,6 +1945,8 @@ final class SheetBar: NSView {
     }
 
     var onChoose: ((Choice) -> Void)?
+    /// A tool right-clicked: its own more — the calendar, for the timeline's.
+    var onMore: ((Choice, NSView) -> Void)?
     var backlinksEnabled = true { didSet { buttons[Choice.allCases.firstIndex(of: .backlinks)!].isEnabled = backlinksEnabled } }
     private var buttons: [NSButton] = []
     private static let side: CGFloat = 30
@@ -1956,6 +1964,10 @@ final class SheetBar: NSView {
             let button = BarButton(symbol: choice.symbol, name: choice.name)
             button.target = self
             button.action = #selector(chose(_:))
+            button.onRightClick = { [weak self, weak button] in
+                guard let self, let button else { return }
+                onMore?(choice, button)
+            }
             addSubview(button)
             buttons.append(button)
         }
@@ -1997,6 +2009,12 @@ final class SheetBar: NSView {
 /// One of the bar's buttons: its symbol, its name on hover.
 private final class BarButton: NSButton {
     private var hovering = false { didSet { needsDisplay = true } }
+    var onRightClick: (() -> Void)?
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard let onRightClick else { return super.rightMouseDown(with: event) }
+        onRightClick()
+    }
 
     init(symbol: String, name: String) {
         super.init(frame: .zero)

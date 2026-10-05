@@ -12,6 +12,8 @@ final class BottomBar: UIView, UITextFieldDelegate {
     }
 
     var onSelect: ((Int) -> Void)?
+    /// A view's tab held: its more — the days', a calendar.
+    var onHold: ((Int) -> Void)?
     var onWrite: (() -> Void)?
     /// The + held: speaking begun; let go, ended — `cancelled` when slid away.
     var onDictateBegin: (() -> Void)?
@@ -74,6 +76,9 @@ final class BottomBar: UIView, UITextFieldDelegate {
             button.tintColor = Ink.text
             button.accessibilityLabel = item.title
             button.addAction(UIAction { [weak self] _ in self?.onSelect?(i) }, for: .touchUpInside)
+            let hold = UILongPressGestureRecognizer(target: self, action: #selector(heldTab(_:)))
+            hold.minimumPressDuration = 0.4
+            button.addGestureRecognizer(hold)
             pill.contentView.addSubview(button)
             buttons.append(button)
         }
@@ -145,6 +150,12 @@ final class BottomBar: UIView, UITextFieldDelegate {
         let symbol = items[selected].symbol
         gathered.setImage(UIImage(systemName: symbol + ".fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold))
             ?? UIImage(systemName: symbol), for: .normal)
+    }
+
+    @objc private func heldTab(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began, let button = gesture.view as? UIButton, let i = buttons.firstIndex(of: button) else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        onHold?(i)
     }
 
     // MARK: Dictating

@@ -187,6 +187,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         column.onCurrent = { [weak self] _ in self?.showHeading() }
         column.onClose = { [weak self] column in self?.close(column) }
         column.onAddSheet = { [weak self] column, choice in self?.addSheet(choice, on: column) }
+        column.onShowCalendar = { [weak self] column, view in self?.showCalendar(from: column, at: view) }
         column.onOpenPath = { [weak self] path, column, newColumn in self?.open(path, newColumn: newColumn, from: column) }
         column.onScroll = { [weak self] _ in self?.saveLayout() }
         column.onViewMade = { [weak self] view in self?.noteShown(view) }
@@ -1813,6 +1814,66 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         }
         index.refresh(ref.path)
         columns.forEach { $0.reloadFromDisk([ref.path]) }
+    }
+
+    // MARK: The calendar
+
+    private var calendarPopover: NSPopover?
+
+    /// A month of days, by the timeline's tool: those with notes marked,
+    /// and how far along each one's to-dos are. A day chosen is gone to, in
+    /// the column it was asked from.
+    func showCalendar(from column: Column, at view: NSView) {
+        calendarPopover?.close()
+        let shown = column.current?.ref.day ?? .today
+        let calendar = CalendarView(month: NoteCalendar.Month(shown), marks: NoteCalendar.marks(graph: graph, index: index), face: face)
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentSize = CalendarView.size
+        let controller = NSViewController()
+        controller.view = calendar
+        popover.contentViewController = controller
+        calendar.onChoose = { [weak self, weak popover, weak column] day in
+            popover?.close()
+            guard let self, let column else { return }
+            self.goTo(day, in: column)
+        }
+        popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+        calendarPopover = popover
+        view.window?.makeFirstResponder(calendar)
+    }
+
+    /// The calendar, drawn to a picture: for a script.
+    func calendarSnapshotForScript(to url: URL, dark: Bool) {
+        let month = ProcessInfo.processInfo.environment["PRISM_CALENDAR_MONTH"].flatMap { Day($0 + "-01") }.map(NoteCalendar.Month.init) ?? NoteCalendar.Month(.today)
+        let calendar = CalendarView(month: month, marks: NoteCalendar.marks(graph: graph, index: index), face: face)
+        calendar.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        let holder = NSView(frame: calendar.bounds)
+        holder.wantsLayer = true
+        holder.appearance = calendar.appearance
+        holder.layer?.backgroundColor = (dark ? NSColor(white: 0.17, alpha: 1) : NSColor.white).cgColor
+        holder.addSubview(calendar)
+        calendar.layoutSubtreeIfNeeded()
+        guard let rep = holder.bitmapImageRepForCachingDisplay(in: holder.bounds) else { return }
+        holder.cacheDisplay(in: holder.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+    }
+
+    /// A day, in a column: its timeline taken there, or one put on it.
+    private func goTo(_ day: Day, in column: Column) {
+        active = column
+        let ref = NoteRef.day(day)
+        // A day with no note: shown in the timeline all the same, to write in.
+        if graph.exists(path: ref.path) == false {
+            revealedDays.insert(day)
+            let entries = timelineEntries()
+            columns.forEach { $0.updateTimeline(entries) }
+        }
+        if column.isTimeline {
+            open(ref.path, from: column)
+        } else {
+            openSheet(.timeline, at: ref, on: column)
+        }
     }
 
     // MARK: Pages captured in a browser
