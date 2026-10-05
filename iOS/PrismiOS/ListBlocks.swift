@@ -120,6 +120,8 @@ final class SliceBlock: UIView, SheetBlock {
     private(set) var editors: [OutlineEditor] = []
     private var crumbLabels: [UILabel?] = []
     private let title = UIButton(type: .system)
+    private let card = CardBackground()
+    private let metaLabel = UILabel()
     private weak var store: PrismStore?
     private let metrics: PhoneMetrics
     /// What is on disk, as last read or written.
@@ -143,9 +145,13 @@ final class SliceBlock: UIView, SheetBlock {
         self.metrics = metrics
         savedText = store.text(path)
         super.init(frame: .zero)
+        addSubview(card)
+        Card.styleMeta(metaLabel, size: metrics.size)
+        metaLabel.text = Card.meta(for: path, store: store)
+        metaLabel.sizeToFit()
+        addSubview(metaLabel)
         title.contentHorizontalAlignment = .leading
-        title.setAttributedTitle(Card.header(name: Self.name(path, store: store), meta: Card.meta(for: path, store: store), size: metrics.size),
-                                 for: .normal)
+        title.setAttributedTitle(Card.header(name: Self.name(path, store: store), meta: nil, size: metrics.size), for: .normal)
         title.titleLabel?.lineBreakMode = .byTruncatingMiddle
         title.addAction(UIAction { [weak self] _ in self?.onOpen?() }, for: .touchUpInside)
         addSubview(title)
@@ -300,8 +306,12 @@ final class SliceBlock: UIView, SheetBlock {
         // Not yet as wide as it will be: text laid out at no width never ends.
         guard bounds.width > NoteBlock.minimumWidth else { return }
         let inner = bounds.width - 2 * NoteBlock.side
+        card.frame = Card.frame(in: bounds)
         var y: CGFloat = Card.top
-        title.frame = CGRect(x: NoteBlock.side, y: y, width: min(titleSize.width, inner), height: titleHeight)
+        let metaSize = metaLabel.bounds.size
+        title.frame = CGRect(x: NoteBlock.side, y: y, width: min(titleSize.width, inner - metaSize.width - 12), height: titleHeight)
+        metaLabel.frame = CGRect(x: bounds.width - NoteBlock.side - metaSize.width, y: (title.frame.midY - metaSize.height / 2).rounded(),
+                                 width: metaSize.width, height: metaSize.height)
         y += titleHeight + Card.gap
         for (i, editor) in editors.enumerated() {
             if let label = crumbLabels[i], let height = crumbHeight(i, inner: inner) {
@@ -332,12 +342,16 @@ final class GapBlock: UIView, SheetBlock {
     init(gap: TimelineGap, metrics: PhoneMetrics) {
         self.gap = gap
         super.init(frame: .zero)
-        let title = NSMutableAttributedString(string: "⋯  ", attributes: [
-            .font: UIFont.systemFont(ofSize: round(metrics.size * 1.2), weight: .bold), .foregroundColor: Ink.secondary,
-        ])
-        title.append(NSAttributedString(string: Self.describe(gap), attributes: [
-            .font: metrics.face.heading(round(metrics.size * 0.78), weight: .medium), .foregroundColor: Ink.faint,
-        ]))
+        let font = metrics.face.heading(round(metrics.size * 0.78), weight: .medium)
+        let title = NSMutableAttributedString()
+        // The dots on the middle of the words beside them, not their baseline.
+        if let dots = UIImage(systemName: "ellipsis", withConfiguration: UIImage.SymbolConfiguration(pointSize: round(metrics.size * 0.9), weight: .bold))?
+            .withTintColor(Ink.secondary, renderingMode: .alwaysOriginal) {
+            let attachment = NSTextAttachment(image: dots)
+            attachment.bounds = CGRect(x: 0, y: ((font.capHeight - dots.size.height) / 2).rounded(), width: dots.size.width, height: dots.size.height)
+            title.append(NSAttributedString(attachment: attachment))
+        }
+        title.append(NSAttributedString(string: "  " + Self.describe(gap), attributes: [.font: font, .foregroundColor: Ink.faint]))
         button.setAttributedTitle(title, for: .normal)
         button.contentHorizontalAlignment = .leading
         button.accessibilityLabel = "Show " + Self.describe(gap)

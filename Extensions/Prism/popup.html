@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Capture to Prism</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main id="capture" hidden>
+    <!-- The page as Prism will show it: a card. -->
+    <article class="card">
+      <header>
+        <span id="site" class="name"></span>
+        <span id="when" class="when">now</span>
+      </header>
+      <img id="thumb" class="thumb" alt="" hidden>
+      <textarea id="title" class="headline" rows="1" spellcheck="false" aria-label="Title"></textarea>
+      <p id="description" class="snippet" hidden></p>
+      <ul id="highlights"></ul>
+      <p id="no-highlights" class="hint">Select text on the page and press ⇧⌘H to highlight it.</p>
+      <p id="selection" class="hint" hidden></p>
+    </article>
+
+    <footer>
+      <label class="toggle"><input id="screenshot" type="checkbox" checked> Screenshot</label>
+      <button id="save" class="primary">Save to Prism</button>
+    </footer>
+    <p id="status" class="status" hidden></p>
+    <button id="open" class="link" hidden>Open in Prism</button>
+  </main>
+
+  <main id="pair" hidden>
+    <article class="card">
+      <header><span class="name">Connect to Prism</span></header>
+      <p class="snippet">Prism will ask you to allow this browser to save pages into your notes.</p>
+    </article>
+    <footer><span></span><button id="pair-button" class="primary">Connect</button></footer>
+    <p id="pair-status" class="status" hidden></p>
+  </main>
+
+  <main id="offline" hidden>
+    <article class="card">
+      <header><span id="offline-title" class="name">Prism isn’t open</span></header>
+      <p id="offline-message" class="snippet">Open Prism, then try again: pages are saved through it, into your notes.</p>
+    </article>
+    <footer><span></span><button id="retry" class="primary">Try Again</button></footer>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -277,6 +277,7 @@ final class BacklinkBlock: NSView, ColumnBlock {
     var editors: [TaskEditor] { places.map(\.editor) }
     private let metrics: OutlineMetrics
     private let disclosure = NSButton()
+    private let card = CardSurface()
     private let linkCount: String?
     var onOpen: ((_ newColumn: Bool) -> Void)?
     /// Folded or unfolded: told, to remember it and lay the column out again.
@@ -304,6 +305,8 @@ final class BacklinkBlock: NSView, ColumnBlock {
             return (path, editor)
         }
         super.init(frame: .zero)
+        card.fill = Ink.card
+        addSubview(card)
         let typography = metrics.typography
         title.stringValue = name
         title.font = Typography.font(typography.headingFamily, face: typography.headingFace,
@@ -377,12 +380,13 @@ final class BacklinkBlock: NSView, ColumnBlock {
                 height += place.editor.height(width: column.width) + spacing
             }
         }
-        return height + round(metrics.fontSize * (folded ? 0.3 : 0.8))
+        return height + round(metrics.fontSize * (folded ? 0.3 : 0.8)) + CardSurface.spacing + 8
     }
 
     override func layout() {
         super.layout()
         let column = column(bounds.width)
+        card.frame = CardSurface.frame(column: column, in: bounds)
         let x = column.minX + metrics.indent - 2
         let chevron = round(metrics.fontSize * 1.2)
         disclosure.frame = NSRect(x: x - chevron - 4, y: top + round((titleHeight - chevron) / 2), width: chevron, height: chevron)

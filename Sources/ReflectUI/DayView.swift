@@ -143,6 +143,8 @@ package final class DayView: NSView, NSTextViewDelegate {
                 if week == .current { notes.append("This Week") }
             }
             if conflictView != nil { notes.append("Needs Review") } else if isReadOnly { notes.append("Read Only") }
+            // A card says when the note last changed.
+            if card != nil, week == nil, let modified = modified { notes.insert(CardSurface.ago(modified), at: 0) }
             badge.stringValue = notes.joined(separator: " · ")
             badge.isHidden = notes.isEmpty
             needsLayout = true
@@ -157,12 +159,21 @@ package final class DayView: NSView, NSTextViewDelegate {
         case today: notes.append("Today")
         case today.adding(-1): notes.append("Yesterday")
         case today.adding(1): notes.append("Tomorrow")
-        default: break
+        default:
+            // A card says how far off any other day is.
+            if card != nil, let a = today.date, let b = day.date {
+                notes.append(CardSurface.distance(days: Calendar.current.dateComponents([.day], from: a, to: b).day ?? 0))
+            }
         }
         if conflictView != nil { notes.append("Needs Review") } else if isReadOnly { notes.append("Read Only") }
         badge.stringValue = notes.joined(separator: " · ")
         badge.isHidden = notes.isEmpty
         needsLayout = true
+    }
+
+    /// When the note's file last changed.
+    private var modified: Date? {
+        (try? graph.root.appendingPathComponent(ref.path).resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
     }
 
     // MARK: Layout
@@ -185,6 +196,7 @@ package final class DayView: NSView, NSTextViewDelegate {
     package override func layout() {
         super.layout()
         let column = column
+        card?.frame = CardSurface.frame(column: column, in: bounds)
         // A label draws its text a couple of points in from its edge.
         let textX = column.minX + metrics.indent - 2
         // Whole points, and a little over: a bold face's last figure reaches
@@ -324,6 +336,27 @@ package final class DayView: NSView, NSTextViewDelegate {
     /// Whether a day is ruled off from the one before it: not where each
     /// note's heading says enough.
     package var drawsRule = true { didSet { needsDisplay = true } }
+
+    /// Drawn as a card of this fill — when it is, beside its name — or on
+    /// the page, as Reflect has it.
+    package var cardFill: NSColor? {
+        didSet {
+            if let cardFill {
+                let surface = card ?? {
+                    let surface = CardSurface()
+                    addSubview(surface, positioned: .below, relativeTo: nil)
+                    card = surface
+                    return surface
+                }()
+                surface.fill = cardFill
+            } else {
+                card?.removeFromSuperview()
+                card = nil
+            }
+            updateTitle()
+        }
+    }
+    private var card: CardSurface?
 
     package override func draw(_ dirtyRect: NSRect) {
         // Days are ruled apart; a note on its own needs no rule.

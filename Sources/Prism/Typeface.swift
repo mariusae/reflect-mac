@@ -256,6 +256,10 @@ enum Ink {
     }
 
     static let paper = dynamic(hex(0xfaf7f2), hex(0x1d1b18))
+    /// What the cards lie on: a shade under the paper.
+    static let page = dynamic(hex(0xf0ece5), hex(0x161412))
+    /// A note's card: lighter than the page.
+    static let card = dynamic(hex(0xfdfcf9), hex(0x23201d))
     static let text = dynamic(hex(0x2b2724), hex(0xece6dc))
     static let secondary = dynamic(hex(0x6f665d), hex(0xa79e92))
     static let faint = dynamic(hex(0x2b2724, alpha: 0.32), hex(0xece6dc, alpha: 0.3))

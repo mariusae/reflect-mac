@@ -23,6 +23,9 @@ extension NSAttributedString.Key {
     static let prismPill = NSAttributedString.Key("PrismPill")
     /// Where a link goes, as tapped: a note's title, or an address.
     static let prismLink = NSAttributedString.Key("PrismLink")
+    /// On a link to a post or a video, once its card is in: the link, its
+    /// card drawn under the row it is in.
+    static let prismCard = NSAttributedString.Key("PrismCard")
     /// On a row not shown at all, its line no height: a note's title row,
     /// in a card whose header says it already.
     static let prismCollapsed = NSAttributedString.Key("PrismCollapsed")
@@ -83,7 +86,7 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
     func textStorage(_ storage: NSTextStorage, didProcessEditing mask: NSTextStorage.EditActions,
                      range edited: NSRange, changeInLength delta: Int) {
         guard storage.length > 0, !paused else { return }
-        let text = storage.string as NSString
+        let text = storage.mutableString
         var range = text.paragraphRange(for: NSRange(location: min(edited.location, text.length), length: min(edited.length, text.length - min(edited.location, text.length))))
         if NSMaxRange(range) < text.length {
             range = NSUnionRange(range, text.paragraphRange(for: NSRange(location: NSMaxRange(range), length: 0)))
@@ -100,15 +103,20 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
 
     func restyle(_ storage: NSTextStorage, around location: Int) {
         guard storage.length > 0 else { return }
-        let text = storage.string as NSString
+        let text = storage.mutableString
         let paragraph = text.paragraphRange(for: NSRange(location: min(location, text.length - 1), length: 0))
         storage.beginEditing()
         style(storage, in: paragraph)
         storage.endEditing()
     }
 
+    /// The style of the row an edit under way began in: what the row stays,
+    /// when all of it is what was typed — an accepted suggestion, a picture
+    /// pasted — and the typed text came styled as some other row.
+    var editingRow: (location: Int, style: RowStyle)?
+
     private func unify(_ storage: NSTextStorage, in range: NSRange, inserted: NSRange) {
-        let text = storage.string as NSString
+        let text = storage.mutableString
         for paragraph in OutlineText.paragraphs(text.substring(with: range) as NSString) {
             let paragraph = NSRange(location: paragraph.location + range.location, length: paragraph.length)
             var styles: [RowStyle] = []
@@ -119,7 +127,8 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
                 let typed = NSIntersectionRange(run, inserted).length == run.length && inserted.length > 0
                 if winner == nil && !typed { winner = style }
             }
-            let style = winner ?? styles.last ?? RowStyle(.blank)
+            let began = editingRow.flatMap { NSLocationInRange($0.location, paragraph) || $0.location == paragraph.location ? $0.style : nil }
+            let style = winner ?? began ?? styles.last ?? RowStyle(.blank)
             guard styles.count > 1 || styles.first !== style else { continue }
             storage.addAttribute(.outlineRow, value: style, range: paragraph)
             for lost in styles where lost !== style && lost.row.isFolded {
@@ -133,7 +142,7 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
     }
 
     private func style(_ storage: NSTextStorage, in range: NSRange) {
-        let text = storage.string as NSString
+        let text = storage.mutableString
         for paragraph in OutlineText.paragraphs(text.substring(with: range) as NSString) {
             let paragraph = NSRange(location: paragraph.location + range.location, length: paragraph.length)
             let style = OutlineText.style(storage, at: paragraph.location)
@@ -197,7 +206,7 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
     /// The inline Markdown in a row, drawn: its marks hidden — but for the
     /// span the caret is in — links as pills, and the rest as it reads.
     private func styleInline(_ storage: NSTextStorage, in paragraph: NSRange, row: Row) {
-        let text = storage.string as NSString
+        let text = storage.mutableString
         let body = NSRange(location: paragraph.location, length: max(0, paragraph.length - 1))
         let base = metrics.font(for: row)
         func font(at location: Int) -> UIFont { storage.attribute(.font, at: location, effectiveRange: nil) as? UIFont ?? base }
@@ -219,6 +228,10 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             case .link(let target), .url(let target):
                 storage.addAttributes([.foregroundColor: Ink.accent, .prismLink: target], range: content)
                 if !inHeading { storage.addAttribute(.prismPill, value: true, range: span.range) }
+                // A post's or a video's: its card under the row, once it is in.
+                if !inHeading, PhoneCards.lookup(target) != nil {
+                    storage.addAttribute(.prismCard, value: target, range: NSRange(location: span.range.location, length: 1))
+                }
                 // A bare address, as the Mac shows it: its site and the ends of
                 // its path, the link icon before — whole while the caret is in it.
                 if case .url = span.kind, !revealed, !inHeading, PhoneLayoutManager.drawsPills {
@@ -445,6 +458,9 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                        in textContainer: NSTextContainer, forGlyphRange glyphRange: NSRange) -> Bool {
         guard let storage = textStorage else { return false }
         let characters = characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+        // A row's last line: room under it for the cards of its links.
+        let cards = cardsEnding(at: characters, in: textContainer)
+        let cardRoom = cards.isEmpty ? 0 : cards.reduce(0) { $0 + $1.size.height + Self.cardGap } + 2
         if characters.location < storage.length, storage.attribute(.prismCollapsed, at: characters.location, effectiveRange: nil) != nil {
             lineFragmentRect.pointee.size.height = 0
             lineFragmentUsedRect.pointee.size.height = 0
@@ -464,20 +480,98 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         // Back over hidden markup: it is laid out on the line before.
         var start = characters.location
         while start > 0, start <= storage.length, storage.attribute(.prismHidden, at: start - 1, effectiveRange: nil) != nil { start -= 1 }
-        if start < storage.length, start == 0 || (storage.string as NSString).character(at: start - 1) == 0x0A,
+        if start < storage.length, start == 0 || plainText.character(at: start - 1) == 0x0A,
            let value = storage.attribute(.prismSpaceBefore, at: start, effectiveRange: nil) as? CGFloat {
             above = value
         }
-        guard height != nil || above > 0 else { return false }
+        guard height != nil || above > 0 || cardRoom > 0 else { return false }
         if let height {
             lineFragmentRect.pointee.size.height = height
             lineFragmentUsedRect.pointee.size.height = height
             baselineOffset.pointee = height - PhoneImageBox.margin
         }
+        lineFragmentRect.pointee.size.height += cardRoom
         lineFragmentRect.pointee.size.height += above
         lineFragmentUsedRect.pointee.origin.y += above
         baselineOffset.pointee += above
         return true
+    }
+
+    static let cardGap: CGFloat = 8
+
+    /// Where a folded row's pill is, in the container: after the words of
+    /// its last line, on the middle of their capitals.
+    func foldPill(for paragraph: NSRange) -> CGRect? {
+        guard let storage = textStorage, paragraph.length > 0 else { return nil }
+        let last = glyphIndexForCharacter(at: NSMaxRange(paragraph) - 1)
+        guard last < numberOfGlyphs else { return nil }
+        let line = lineFragmentRect(forGlyphAt: last, effectiveRange: nil)
+        let used = lineFragmentUsedRect(forGlyphAt: last, effectiveRange: nil)
+        let font = storage.attribute(.font, at: paragraph.location, effectiveRange: nil) as? UIFont ?? metrics.body
+        let baseline = line.minY + location(forGlyphAt: last).y
+        let height = round(font.capHeight + 9)
+        let middle = baseline - font.capHeight / 2
+        return CGRect(x: used.maxX + 6, y: round(middle - height / 2), width: round(height * 1.7), height: height)
+    }
+
+    /// A pill with three dots in it, on their middle.
+    static func drawFoldPill(in rect: CGRect) {
+        Ink.text.withAlphaComponent(0.07).setFill()
+        UIBezierPath(roundedRect: rect, cornerRadius: rect.height / 2).fill()
+        Ink.secondary.setFill()
+        let dot = max(2.5, round(rect.height * 0.16))
+        let gap = dot * 1.1
+        let total = 3 * dot + 2 * gap
+        for i in 0..<3 {
+            let x = rect.midX - total / 2 + CGFloat(i) * (dot + gap)
+            UIBezierPath(ovalIn: CGRect(x: x, y: rect.midY - dot / 2, width: dot, height: dot)).fill()
+        }
+    }
+
+    /// The cards of a row's links, when these characters end its last line.
+    private func cardsEnding(at characters: NSRange, in container: NSTextContainer) -> [(source: String, card: PhoneCard, size: CGSize)] {
+        guard let storage = textStorage, storage.length > 0, characters.length > 0 else { return [] }
+        let text = plainText
+        // Not the row's last line: none. Known from its last character —
+        // the row found only for its last line, not each: a row thousands
+        // of characters long, searched through for each of its lines, made
+        // laying a note out take seconds.
+        let end = min(NSMaxRange(characters), text.length)
+        guard end == text.length || text.character(at: end - 1) == 0x0A else { return [] }
+        let paragraph = text.paragraphRange(for: NSRange(location: end - 1, length: 0))
+        var found: [(String, PhoneCard, CGSize)] = []
+        storage.enumerateAttribute(.prismCard, in: paragraph) { value, range, _ in
+            guard let source = value as? String, let card = PhoneCards.lookup(source) else { return }
+            found.append((source, card, PhoneCardView.size(card, room: lineWidth(at: range.location, in: container))))
+        }
+        return found
+    }
+
+    /// Where each card of some rows is drawn, in the text container.
+    func cards(in characters: NSRange) -> [(source: String, card: PhoneCard, frame: CGRect)] {
+        guard let storage = textStorage, let container = textContainers.first, storage.length > 0 else { return [] }
+        let text = plainText
+        var found: [(String, PhoneCard, CGRect)] = []
+        var at = characters.location
+        while at < min(NSMaxRange(characters), text.length) {
+            let paragraph = text.paragraphRange(for: NSRange(location: at, length: 0))
+            at = NSMaxRange(paragraph)
+            let last = glyphIndexForCharacter(at: NSMaxRange(paragraph) - 1)
+            guard last < numberOfGlyphs else { continue }
+            var lineGlyphs = NSRange()
+            _ = lineFragmentRect(forGlyphAt: last, effectiveRange: &lineGlyphs)
+            let lineCharacters = characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil)
+            let cards = cardsEnding(at: lineCharacters, in: container)
+            guard !cards.isEmpty else { continue }
+            let used = lineFragmentUsedRect(forGlyphAt: last, effectiveRange: nil)
+            let indent = (storage.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle)?.headIndent ?? 0
+            var y = used.maxY + Self.cardGap
+            for card in cards {
+                found.append((card.source, card.card, CGRect(x: indent, y: y, width: card.size.width, height: card.size.height)))
+                y += card.size.height + Self.cardGap
+            }
+        }
+        return found
     }
 
     /// The pictures among some characters: each with its Markdown's range
@@ -519,11 +613,62 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         }
     }
 
+    /// The tasks and checklist items under each row, by its paragraph's
+    /// start: found once for each change to the text, not each drawing.
+    private var progressUnder: [Int: Checkboxes.Progress]?
+    /// Set while typing within a row: the checkboxes under each row are as
+    /// they were, not found again through the whole note for each key.
+    var keepsProgress = false
+
+    /// The text, as a plain string, for the layout's questions: the
+    /// storage's own string reads each character through the storage, and
+    /// a paragraph found in it, for each line laid out, made laying out a
+    /// long note take seconds. Copied once for each change.
+    private var plainCopy: NSString?
+    override var textStorage: NSTextStorage? {
+        didSet {
+            plainCopy = nil
+            progressUnder = nil
+        }
+    }
+    var plainText: NSString {
+        if let plainCopy { return plainCopy }
+        let copy = (textStorage?.mutableString.copy() as? NSString) ?? ""
+        plainCopy = copy
+        return copy
+    }
+
+    override func processEditing(for textStorage: NSTextStorage, edited editMask: NSTextStorage.EditActions, range newCharRange: NSRange,
+                                 changeInLength delta: Int, invalidatedRange invalidatedCharRange: NSRange) {
+        if editMask.contains(.editedCharacters) { plainCopy = nil }
+        if keepsProgress {
+            // The rows' places after the typing moved by what it added.
+            if delta != 0, let found = progressUnder {
+                progressUnder = Dictionary(uniqueKeysWithValues: found.map { ($0.key > newCharRange.location ? $0.key + delta : $0.key, $0.value) })
+            }
+        } else {
+            progressUnder = nil
+        }
+        super.processEditing(for: textStorage, edited: editMask, range: newCharRange, changeInLength: delta, invalidatedRange: invalidatedCharRange)
+    }
+
+    private func progress(at location: Int) -> Checkboxes.Progress? {
+        guard let storage = textStorage else { return nil }
+        if progressUnder == nil {
+            let paragraphs = OutlineText.paragraphs(plainText)
+            let under = Checkboxes.underEach(paragraphs.map { OutlineText.style(storage, at: $0.location).row })
+            var found: [Int: Checkboxes.Progress] = [:]
+            for (paragraph, progress) in zip(paragraphs, under) where !progress.isEmpty { found[paragraph.location] = progress }
+            progressUnder = found
+        }
+        return progressUnder?[location]
+    }
+
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage, storage.length > 0, let container = textContainers.first else { return }
         let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
-        let text = storage.string as NSString
+        let text = plainText
         let covered = text.paragraphRange(for: characters)
         // Only the rows being drawn: the whole note's would be found anew
         // for every stroke drawn.
@@ -535,6 +680,9 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             at = NSMaxRange(paragraph)
         }
         drawImages(in: covered, at: origin)
+        for card in cards(in: covered) {
+            PhoneCardView.draw(card.card, in: card.frame.offsetBy(dx: origin.x, dy: origin.y), source: card.source)
+        }
         defer { drawIcons(in: covered, at: origin) }
         // Pills behind links, as Slack draws them.
         storage.enumerateAttribute(.prismPill, in: covered) { value, range, _ in
@@ -638,22 +786,21 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                     let size = label.size()
                     label.draw(at: CGPoint(x: metrics.textIndent(for: row) + origin.x - size.width - 6, y: baseline - size.height + 3))
                 } else {
-                    if row.isFolded {
-                        Ink.rule.setFill()
-                        let ring = round(font.pointSize * 0.75)
-                        UIBezierPath(ovalIn: CGRect(x: markerX - ring / 2, y: middle - ring / 2, width: ring, height: ring)).fill()
-                    }
                     Ink.secondary.setFill()
                     let dot = max(4.5, round(font.pointSize * 0.3))
                     UIBezierPath(ovalIn: CGRect(x: markerX - dot / 2, y: middle - dot / 2, width: dot, height: dot)).fill()
+                    // To-dos under it: how far along they are, round the bullet.
+                    if let progress = progress(at: paragraph.location) {
+                        let side = round(font.pointSize * 0.95)
+                        ProgressRing.draw(progress, in: CGRect(x: markerX - side / 2, y: middle - side / 2, width: side, height: side),
+                                          lineWidth: 1.6, tick: false)
+                    }
                 }
             default:
-                if row.isFolded {
-                    Ink.faint.setFill()
-                    let dot: CGFloat = 5
-                    UIBezierPath(ovalIn: CGRect(x: markerX - dot / 2, y: line.midY - dot / 2, width: dot, height: dot)).fill()
-                }
+                break
             }
+            // Folded, whatever it is: a pill after its words says so.
+            if row.isFolded, let pill = foldPill(for: paragraph) { Self.drawFoldPill(in: pill.offsetBy(dx: origin.x, dy: origin.y)) }
         }
     }
 }
@@ -713,10 +860,13 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// The characters of the title row not shown, when one is not.
     private var collapsedTitle: NSRange? {
-        guard hidesTitle, textStorage.length > 0 else { return nil }
+        guard hidesTitle, textStorage.length > 0,
+              textStorage.attribute(.prismCollapsed, at: 0, effectiveRange: nil) != nil else { return nil }
+        // Its own row only: looked for in the first paragraph, not the whole
+        // note — which, for a note with none, would be read through each key.
+        let first = textStorage.mutableString.paragraphRange(for: NSRange(location: 0, length: 0))
         var title = NSRange()
-        guard textStorage.attribute(.prismCollapsed, at: 0, longestEffectiveRange: &title,
-                                    in: NSRange(location: 0, length: textStorage.length)) != nil else { return nil }
+        _ = textStorage.attribute(.prismCollapsed, at: 0, longestEffectiveRange: &title, in: first)
         return title
     }
 
@@ -781,6 +931,20 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             return true
         }
         pictureHold.addTarget(self, action: #selector(heldPicture(_:)))
+        // A row held — anywhere on it when reading, by its bullet when
+        // typing, where holding the words moves the caret — is picked up.
+        rowHold.minimumPressDuration = 0.4
+        rowHold.isOnPicture = { [weak self] point in
+            guard let self, self.isEditable, self.rowUnder(point) != nil else { return false }
+            switch self.target(at: point) {
+            case .image: return false
+            case .marker: return true
+            default: return !self.isFirstResponder
+            }
+        }
+        rowHold.addTarget(self, action: #selector(heldRow(_:)))
+        rowHold.delegate = self
+        addGestureRecognizer(rowHold)
         pictureHold.delegate = self
         addGestureRecognizer(pictureHold)
         addInteraction(pictureMenu)
@@ -808,7 +972,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             MainActor.assumeIsolated {
                 guard let self, let source = note.object as? String else { return }
                 // Only the rows showing it, restyled.
-                let text = self.textStorage.string as NSString
+                let text = self.textStorage.mutableString
                 var at = text.range(of: source)
                 guard at.location != NSNotFound else { return }
                 self.adjusting = true
@@ -822,6 +986,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             }
         })
     }
+
 
     nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
@@ -905,7 +1070,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// those read since, shown now; the others asked for, to be shown —
     /// with this editor now here to hear — when they are in.
     private func showPicturesLoadedMeanwhile() {
-        let text = textStorage.string as NSString
+        let text = textStorage.mutableString
         guard text.range(of: "![").location != NSNotFound else { return }
         var restyled = Set<Int>()
         adjusting = true
@@ -933,7 +1098,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// Each heading's place and words, from the rows' styles alone.
     var headings: [(location: Int, text: String)] {
         var found: [(Int, String)] = []
-        let text = textStorage.string as NSString
+        let text = textStorage.mutableString
         textStorage.enumerateAttribute(.outlineRow, in: NSRange(location: 0, length: textStorage.length)) { value, range, _ in
             guard let style = value as? RowStyle, case .heading = style.row.kind else { return }
             // A run may hold several headings' paragraphs with the same style.
@@ -950,7 +1115,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// Each row's characters: kept till the text changes.
     var paragraphRanges: [NSRange] {
         if let cachedRanges { return cachedRanges }
-        let ranges = OutlineText.paragraphs(textStorage.string as NSString)
+        let ranges = OutlineText.paragraphs(textStorage.mutableString)
         cachedRanges = ranges
         return ranges
     }
@@ -1042,7 +1207,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         // Only the paragraph typed in, found directly: the rows of the whole
         // note are worked out only for what changes them — on a long note,
         // every keystroke would otherwise go through all of it.
-        let storageText = textStorage.string as NSString
+        let storageText = textStorage.mutableString.copy() as! NSString
         guard storageText.length > 0 else { return true }
         let paragraph = storageText.paragraphRange(for: NSRange(location: min(range.location, storageText.length - 1), length: 0))
         var rows: [Row] { self.rows }
@@ -1117,10 +1282,15 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         // and only that row measured again.
         plainEdit = !text.contains("\n") && !text.contains(OutlineText.lineSeparator)
             && NSMaxRange(range) < NSMaxRange(paragraph) && range.location >= paragraph.location
+        // Past where a row's kind is written: its checkboxes, and those of
+        // the rows around it, are as they were.
+        outlineLayout.keepsProgress = plainEdit && range.location > paragraph.location + 5
         if plainEdit, measured != nil {
             typedRowBefore = (paragraph.location, height(ofParagraphsIn: paragraph))
             localChanges += 1
         }
+        // The row it begins in: kept as it is, whatever style the typing came in.
+        styler.editingRow = (paragraph.location, OutlineText.style(textStorage, at: paragraph.location))
         return true
     }
 
@@ -1130,6 +1300,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     private var typedRowBefore: (location: Int, height: CGFloat)?
 
     func textViewDidChange(_ textView: UITextView) {
+        styler.editingRow = nil
+        outlineLayout.keepsProgress = false
         if let before = typedRowBefore {
             typedRowBefore = nil
             localChanges -= 1
@@ -1155,7 +1327,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// `@` at a word's start, or `[[`, just typed outside code: a link to finish.
     private func beginCompletion(typedAt location: Int) {
         guard completing == nil, Self.suggest != nil, location < textStorage.length,
-              let trigger = LinkSuggestions.trigger(in: textStorage.string as NSString, typedAt: location) else { return }
+              let trigger = LinkSuggestions.trigger(in: textStorage.mutableString, typedAt: location) else { return }
         if case .code = rows[rowIndex(at: location)].kind { return }
         if textStorage.attribute(.font, at: location, effectiveRange: nil).map({ ($0 as? UIFont)?.fontDescriptor.symbolicTraits.contains(.traitMonoSpace) == true }) == true { return }
         completing = (trigger, location + 1)
@@ -1165,7 +1337,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     private func refreshCompletion() {
         guard let completing else { return }
         guard selectedRange.length == 0,
-              let query = LinkSuggestions.query(in: textStorage.string as NSString, start: completing.start,
+              let query = LinkSuggestions.query(in: textStorage.mutableString, start: completing.start,
                                                 caret: selectedRange.location, trigger: completing.trigger) else { return endCompletion() }
         var found = Self.suggest?(query) ?? []
         // After `[[`, a name nothing has yet: a note to make by following it.
@@ -1187,7 +1359,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// A choice put in, as `[[Name]]`, over what was typed for it.
     private func accept(_ candidate: LinkSuggestions.Candidate) {
         guard let completing else { return }
-        let put = LinkSuggestions.accepting(candidate, in: textStorage.string as NSString, start: completing.start,
+        let put = LinkSuggestions.accepting(candidate, in: textStorage.mutableString, start: completing.start,
                                            caret: selectedRange.location, trigger: completing.trigger)
         endCompletion()
         selectedRange = put.range
@@ -1209,7 +1381,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         // A selection touching a picture takes all of it: its Markdown is
         // mostly hidden, and a cut or a paste would leave half of it.
         if selectedRange.length > 0, NSMaxRange(selectedRange) <= textStorage.length {
-            let paragraphs = (textStorage.string as NSString).paragraphRange(for: selectedRange)
+            let paragraphs = textStorage.mutableString.paragraphRange(for: selectedRange)
             var widened = selectedRange
             for picture in outlineLayout.images(in: paragraphs) where NSIntersectionRange(picture.span, widened).length > 0 {
                 widened = NSUnionRange(widened, picture.span)
@@ -1227,7 +1399,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         guard old != styler.caret else { return }
         let last = max(0, textStorage.length - 1)
         let around = [old, styler.caret].compactMap { $0.map { min($0, last) } }
-        let text = textStorage.string as NSString
+        let text = textStorage.mutableString
         // One row restyled once, though the caret moved within it.
         let rows = around.count == 2 && text.paragraphRange(for: NSRange(location: around[0], length: 0)).location
             == text.paragraphRange(for: NSRange(location: around[1], length: 0)).location ? [around[0]] : around
@@ -1295,6 +1467,87 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
     @objc func moveDown() { perform("Move Down") { OutlineEditing.moveDown(&$0, $1) } }
 
+    // MARK: Formatting
+
+    @objc func makeBold() { toggleMark("**") }
+    @objc func makeItalic() { toggleMark("*") }
+    @objc func makeStruck() { toggleMark("~~") }
+    @objc func makeHighlighted() { toggleMark("==") }
+    @objc func makeCode() { toggleMark("`") }
+
+    /// Marks the words chosen — or, marked so already, unmarks them; with
+    /// none chosen, the marks put in with the caret between them, to type in.
+    private func toggleMark(_ mark: String) {
+        let text = textStorage.mutableString.copy() as! NSString
+        let range = selectedRange
+        let length = (mark as NSString).length
+        let paragraph = text.paragraphRange(for: NSRange(location: min(range.location, max(0, text.length - 1)), length: 0))
+        styler.editingRow = (paragraph.location, OutlineText.style(textStorage, at: paragraph.location))
+        defer { styler.editingRow = nil }
+        let before = NSRange(location: range.location - length, length: length)
+        let after = NSRange(location: NSMaxRange(range), length: length)
+        let marked = before.location >= 0 && NSMaxRange(after) <= text.length
+            && text.substring(with: before) == mark && text.substring(with: after) == mark
+            // `*` is not half of `**`.
+            && !(mark == "*" && (before.location > 0 && text.character(at: before.location - 1) == 0x2A))
+        undoManager?.beginUndoGrouping()
+        if marked {
+            replaceText(after, with: "")
+            replaceText(before, with: "")
+            selectedRange = NSRange(location: range.location - length, length: range.length)
+        } else {
+            let words = text.substring(with: range)
+            // Nothing chosen, just after a word: a space first, to start a word of its own.
+            let lead = range.length == 0 && range.location > paragraph.location
+                && !(CharacterSet.whitespaces.contains(Unicode.Scalar(text.character(at: range.location - 1)) ?? " ")) ? " " : ""
+            replaceText(range, with: lead + mark + words + mark)
+            selectedRange = NSRange(location: range.location + (lead as NSString).length + length, length: range.length)
+        }
+        undoManager?.endUndoGrouping()
+        undoManager?.setActionName("Format")
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    /// Text replaced as typing would replace it: undone the same way.
+    private func replaceText(_ range: NSRange, with string: String) {
+        guard let start = position(from: beginningOfDocument, offset: range.location),
+              let end = position(from: start, offset: range.length),
+              let textRange = textRange(from: start, to: end) else { return }
+        replace(textRange, withText: string)
+    }
+
+    /// The rows chosen a heading, one level smaller each time — then plain again.
+    @objc func cycleHeading() {
+        let caret = self.caret
+        var all = rows
+        let selection = selectedRowRange
+        guard let first = selection.first, all.indices.contains(first) else { return }
+        let next: Row.Kind = switch all[first].kind {
+        case .heading(let level) where level < 3: .heading(level + 1)
+        case .heading: .bullet
+        default: .heading(1)
+        }
+        for i in selection where all.indices.contains(i) {
+            all[i].kind = next
+            if case .heading = next { all[i].task = nil }
+        }
+        replace(all, caret: caret, undoName: "Heading")
+    }
+
+    /// The rows chosen a quote, or a quote no longer.
+    @objc func toggleQuote() {
+        let caret = self.caret
+        var all = rows
+        let selection = selectedRowRange
+        guard let first = selection.first, all.indices.contains(first) else { return }
+        let quoting = all[first].kind != .quote
+        for i in selection where all.indices.contains(i) {
+            all[i].kind = quoting ? .quote : .bullet
+            if quoting { all[i].task = nil }
+        }
+        replace(all, caret: caret, undoName: "Quote")
+    }
+
     @objc func cycleChecklist() {
         let caret = self.caret
         var all = rows
@@ -1345,6 +1598,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         case link(String)
         /// A picture: its Markdown's range.
         case image(NSRange)
+        /// A folded row's pill.
+        case fold(Int)
     }
 
     private func target(at point: CGPoint) -> Target? {
@@ -1358,6 +1613,12 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         guard inContainer.y >= line.minY - 4, inContainer.y <= line.maxY + 4 else { return nil }
         if let picture = outlineLayout.images(in: paragraphRanges[index]).first(where: { $0.frame.contains(inContainer) }) {
             return .image(picture.span)
+        }
+        if let card = outlineLayout.cards(in: paragraphRanges[index]).first(where: { $0.frame.contains(inContainer) }) {
+            return .link(card.source)
+        }
+        if row.isFolded, let pill = outlineLayout.foldPill(for: paragraphRanges[index]), pill.insetBy(dx: -8, dy: -8).contains(inContainer) {
+            return .fold(index)
         }
         if inContainer.x < metrics.textIndent(for: row) - 2, inContainer.x > metrics.indent * CGFloat(row.depth) - 6 {
             return .marker(index)
@@ -1379,7 +1640,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
-        gesture === pictureHold && other.view === self && other !== markerTap
+        (gesture === pictureHold || gesture === rowHold) && other.view === self && other !== markerTap
+            && other !== pictureHold && other !== rowHold
     }
 
     func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
@@ -1400,6 +1662,9 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             UISelectionFeedbackGenerator().selectionChanged()
         case .link(let link):
             onOpenLink?(link)
+        case .fold(let index):
+            toggleFold(at: index)
+            UISelectionFeedbackGenerator().selectionChanged()
         case .image(let span):
             // The caret after it, the picture still shown: its Markdown is
             // for the caret to go into, not for a tap.
@@ -1458,6 +1723,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     private let pictureHold = PictureHold()
+    private let rowHold = PictureHold()
+    var rowDrag: RowDragState?
     private lazy var pictureMenu = UIEditMenuInteraction(delegate: self)
 
     @objc private func heldPicture(_ gesture: UILongPressGestureRecognizer) {
@@ -1472,7 +1739,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// The file a picture's Markdown shows, in the graph.
     private func pictureFile(_ span: NSRange) -> URL? {
         guard NSMaxRange(span) <= textStorage.length else { return nil }
-        let markdown = (textStorage.string as NSString).substring(with: span)
+        let markdown = textStorage.mutableString.substring(with: span)
         guard let open = markdown.range(of: "]("), let close = markdown.range(of: ")", options: .backwards),
               open.upperBound <= close.lowerBound else { return nil }
         var source = String(markdown[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespaces)
@@ -1500,7 +1767,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// Where a picture is drawn, in the editor, by its Markdown's range.
     private func pictureFrame(_ span: NSRange) -> CGRect? {
-        let paragraph = (textStorage.string as NSString).paragraphRange(for: NSRange(location: span.location, length: 0))
+        let paragraph = textStorage.mutableString.paragraphRange(for: NSRange(location: span.location, length: 0))
         guard let frame = outlineLayout.images(in: paragraph).first(where: { $0.span == span })?.frame else { return nil }
         return frame.offsetBy(dx: textContainerInset.left, dy: textContainerInset.top)
     }
@@ -1538,7 +1805,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// How tall some rows are laid out: their lines alone, laid out alone.
     private func height(ofParagraphsIn range: NSRange) -> CGFloat {
-        let text = textStorage.string as NSString
+        let text = textStorage.mutableString
         guard text.length > 0 else { return 0 }
         let paragraphs = text.paragraphRange(for: NSRange(location: min(range.location, text.length - 1),
                                                           length: max(0, min(range.length, text.length - min(range.location, text.length - 1)))))
@@ -1595,7 +1862,9 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 final class OutlineToolbar: UIInputView {
     init(editor: OutlineEditor) {
         super.init(frame: CGRect(x: 0, y: 0, width: 400, height: 46), inputViewStyle: .keyboard)
-        let items: [(String, Selector, String)] = [
+        // The outline's tools; behind Aa, the words'.
+        let outline: [(String, Selector?, String)] = [
+            ("textformat", nil, "Formatting"),
             ("decrease.indent", #selector(OutlineEditor.outdent), "Outdent"),
             ("increase.indent", #selector(OutlineEditor.indent), "Indent"),
             ("arrow.up", #selector(OutlineEditor.moveUp), "Move Up"),
@@ -1605,25 +1874,54 @@ final class OutlineToolbar: UIInputView {
             ("link", #selector(OutlineEditor.insertLink), "Link"),
             ("keyboard.chevron.compact.down", #selector(UIResponder.resignFirstResponder), "Done"),
         ]
+        let words: [(String, Selector?, String)] = [
+            ("chevron.left", nil, "Back"),
+            ("bold", #selector(OutlineEditor.makeBold), "Bold"),
+            ("italic", #selector(OutlineEditor.makeItalic), "Italic"),
+            ("strikethrough", #selector(OutlineEditor.makeStruck), "Strikethrough"),
+            ("highlighter", #selector(OutlineEditor.makeHighlighted), "Highlight"),
+            ("chevron.left.forwardslash.chevron.right", #selector(OutlineEditor.makeCode), "Code"),
+            ("number", #selector(OutlineEditor.cycleHeading), "Heading"),
+            ("text.quote", #selector(OutlineEditor.toggleQuote), "Quote"),
+            ("keyboard.chevron.compact.down", #selector(UIResponder.resignFirstResponder), "Done"),
+        ]
         let stack = UIStackView()
-        stack.axis = .horizontal
-        stack.distribution = .fillEqually
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        for (symbol, action, label) in items {
-            let button = UIButton(type: .system)
-            button.setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)), for: .normal)
-            button.tintColor = Ink.text
-            button.accessibilityLabel = label
-            button.addTarget(editor, action: action, for: .touchUpInside)
-            stack.addArrangedSubview(button)
+        let formatting = UIStackView()
+        for (row, items) in [(stack, outline), (formatting, words)] {
+            row.axis = .horizontal
+            row.distribution = .fillEqually
+            row.translatesAutoresizingMaskIntoConstraints = false
+            for (symbol, action, label) in items {
+                let button = UIButton(type: .system)
+                button.setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)), for: .normal)
+                button.tintColor = Ink.text
+                button.accessibilityLabel = label
+                if let action {
+                    button.addTarget(editor, action: action, for: .touchUpInside)
+                } else {
+                    // Aa, and back: one row of tools for the other.
+                    let toWords = row === stack
+                    button.addAction(UIAction { [weak stack, weak formatting] _ in
+                        stack?.isHidden = toWords
+                        formatting?.isHidden = !toWords
+                    }, for: .touchUpInside)
+                }
+                row.addArrangedSubview(button)
+            }
         }
+        formatting.isHidden = true
         backgroundColor = Ink.paper
         let rule = UIView()
         rule.backgroundColor = Ink.rule
         rule.translatesAutoresizingMaskIntoConstraints = false
         addSubview(rule)
         addSubview(stack)
+        addSubview(formatting)
         NSLayoutConstraint.activate([
+            formatting.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            formatting.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            formatting.topAnchor.constraint(equalTo: topAnchor),
+            formatting.bottomAnchor.constraint(equalTo: bottomAnchor),
             rule.leadingAnchor.constraint(equalTo: leadingAnchor),
             rule.trailingAnchor.constraint(equalTo: trailingAnchor),
             rule.topAnchor.constraint(equalTo: topAnchor),
@@ -1722,5 +2020,48 @@ final class PictureHold: UILongPressGestureRecognizer {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesBegan(touches, with: event)
         if let touch = touches.first, isOnPicture?(touch.location(in: view)) != true { state = .failed }
+    }
+}
+
+/// A ring whose rim fills, clockwise from the top, with the share of some
+/// checkboxes done — all done, whole, with a tick when there is room.
+enum ProgressRing {
+    static func draw(_ progress: Checkboxes.Progress, in rect: CGRect, lineWidth width: CGFloat, tick: Bool = true) {
+        let ring = rect.insetBy(dx: width / 2, dy: width / 2)
+        let center = CGPoint(x: ring.midX, y: ring.midY)
+        let radius = ring.width / 2
+        let rim = UIBezierPath(ovalIn: ring)
+        rim.lineWidth = width
+        Ink.rule.setStroke()
+        rim.stroke()
+        guard progress.total > 0 else { return }
+        Ink.accent.setStroke()
+        if progress.done >= progress.total {
+            rim.stroke()
+            guard tick else { return }
+            let scale = radius / 6.4
+            let mark = UIBezierPath()
+            mark.move(to: CGPoint(x: center.x - 3 * scale, y: center.y))
+            mark.addLine(to: CGPoint(x: center.x - 0.8 * scale, y: center.y + 2.3 * scale))
+            mark.addLine(to: CGPoint(x: center.x + 3.2 * scale, y: center.y - 2.4 * scale))
+            mark.lineWidth = 1.6
+            mark.lineCapStyle = .round
+            mark.lineJoinStyle = .round
+            mark.stroke()
+        } else if progress.done > 0 {
+            let start = -CGFloat.pi / 2
+            let arc = UIBezierPath(arcCenter: center, radius: radius, startAngle: start,
+                                   endAngle: start + 2 * .pi * CGFloat(progress.share), clockwise: true)
+            arc.lineWidth = width
+            arc.lineCapStyle = .round
+            arc.stroke()
+        }
+    }
+
+    /// The ring as a picture, to put among words.
+    static func image(_ progress: Checkboxes.Progress, side: CGFloat) -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
+            draw(progress, in: CGRect(x: 0, y: 0, width: side, height: side), lineWidth: 1.8)
+        }
     }
 }

@@ -18,13 +18,23 @@ final class NoteBlock: UIView {
     private var editorStorage: OutlineEditor?
     private var storedMetrics: PhoneMetrics
     private let header = UIButton(type: .system)
+    /// The card it is drawn on, and when it is, at its top right.
+    private let card = CardBackground()
+    private let metaLabel = UILabel()
+    /// How far along its to-dos are, in the margin before its name.
+    private let ringView = UIImageView()
+    /// How the card shows the note: whole, short, or its name alone.
+    private(set) var mode: CardMode = .full
+    private var summaryView: CardSummaryView?
+    private let cardTap = UITapGestureRecognizer()
+    nonisolated(unsafe) private var modeObserver: NSObjectProtocol?
     /// A button at the header's end: the inbox's Done.
     private(set) var accessory: UIButton?
     /// The note's own menu — pin, inbox, copy link — at the header's end.
     private let menuButton = UIButton(type: .system)
     /// What the ⋯ shows, asked for each time it opens.
     var noteMenu: (() -> UIMenu?)? {
-        didSet { menuButton.isHidden = noteMenu == nil || header.isHidden; setNeedsLayout() }
+        didSet { setNeedsLayout() }
     }
     /// In the editor's place while the note holds a sync conflict.
     private var conflict: ConflictView?
@@ -60,6 +70,21 @@ final class NoteBlock: UIView {
         self.showsHeader = showsHeader
         storedMetrics = metrics
         super.init(frame: .zero)
+        addSubview(card)
+        Card.styleMeta(metaLabel, size: metrics.size)
+        addSubview(metaLabel)
+        ringView.isHidden = true
+        addSubview(ringView)
+        // Listed, a note shows as it was last asked to; alone, whole.
+        if showsHeader {
+            mode = CardModes.mode(ref.path)
+            modeObserver = NotificationCenter.default.addObserver(forName: CardModes.changed, object: nil, queue: .main) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let self, note.object as? String == self.ref.path else { return }
+                    self.setMode(CardModes.mode(self.ref.path))
+                }
+            }
+        }
         header.contentHorizontalAlignment = .leading
         menuButton.setImage(UIImage(systemName: "ellipsis", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)), for: .normal)
         menuButton.tintColor = Ink.secondary
@@ -71,13 +96,71 @@ final class NoteBlock: UIView {
         menuButton.isHidden = true
         addSubview(menuButton)
         header.addAction(UIAction { [weak self] _ in self?.onOpen?() }, for: .touchUpInside)
+        // Not whole: the card tapped anywhere opens the note.
+        cardTap.addTarget(self, action: #selector(cardTapped))
+        cardTap.isEnabled = false
+        addGestureRecognizer(cardTap)
+        // Held: the note's menu, on any card — its ⋯ shows only on the one typed in.
+        header.addInteraction(UIContextMenuInteraction(delegate: self))
         addSubview(header)
-        if live {
+        if live && mode == .full {
             goLive()
         } else {
             savedText = store.text(ref.path)
             styleHeader()
+            updateSummary()
         }
+    }
+
+    deinit {
+        if let modeObserver { NotificationCenter.default.removeObserver(modeObserver) }
+    }
+
+    // MARK: Showing as
+
+    /// Shows the note whole, short, or by its name alone: what is typed
+    /// in it written first, its editor let go when not whole.
+    func setMode(_ new: CardMode) {
+        guard new != mode else { return }
+        if mode == .full, isLive, let editor = editorStorage {
+            if editor.isFirstResponder { _ = editor.resignFirstResponder() }
+            save()
+            editor.removeFromSuperview()
+            editorStorage = nil
+            isLive = false
+        }
+        mode = new
+        estimate = nil
+        ahead = nil
+        updateSummary()
+        styleHeader()
+        if new == .full, !isHidden, bounds.width > Self.minimumWidth { goLive() }
+        setNeedsLayout()
+        onHeightChange?()
+    }
+
+    @objc private func cardTapped() { onOpen?() }
+
+    /// The short form, made or let go as the mode says, from what is on disk.
+    private func updateSummary() {
+        cardTap.isEnabled = mode != .full
+        guard mode == .summary else {
+            summaryView?.removeFromSuperview()
+            summaryView = nil
+            return
+        }
+        let view = summaryView ?? {
+            let view = CardSummaryView(metrics: storedMetrics)
+            view.onResize = { [weak self] in
+                self?.setNeedsLayout()
+                self?.onHeightChange?()
+            }
+            view.isUserInteractionEnabled = false
+            addSubview(view)
+            summaryView = view
+            return view
+        }()
+        view.show(NoteSummary.of(savedText, title: name))
     }
 
     private func makeEditor() -> OutlineEditor {
@@ -91,6 +174,7 @@ final class NoteBlock: UIView {
             self?.onHeightChange?()
         }
         editor.onFocusChange = { [weak self] focused in
+            self?.setNeedsLayout()
             guard !focused else { return }
             self?.save()
             self?.onEditingEnd?()
@@ -108,7 +192,7 @@ final class NoteBlock: UIView {
     /// first laid out out of sight draws its whole text as one picture: a
     /// long day, a hundred megabytes.) Its height known exactly meanwhile.
     func prepareLive(width: CGFloat) {
-        guard !isLive, !preparing, store != nil, width > Self.minimumWidth else { return }
+        guard mode == .full, !isLive, !preparing, store != nil, width > Self.minimumWidth else { return }
         if let ahead, ahead.text == savedText, ahead.metrics == storedMetrics, abs(ahead.width - width) < 0.5 { return }
         preparing = true
         build(width: width) { [weak self] text, shell, prepared, metrics in
@@ -192,7 +276,7 @@ final class NoteBlock: UIView {
 
     /// Its text into the editor, to be seen and typed in.
     func goLive() {
-        guard !isLive else { return }
+        guard mode == .full, !isLive else { return }
         isLive = true
         // Built ahead, and still as it was built: put in, not built again.
         if let ahead, ahead.text == savedText, ahead.metrics == storedMetrics, abs(ahead.width - bounds.width) < 0.5 {
@@ -227,6 +311,8 @@ final class NoteBlock: UIView {
         button.addAction(UIAction { _ in action() }, for: .touchUpInside)
         addSubview(button)
         accessory = button
+        // The margin the Done's now: the ring after the name.
+        styleHeader()
         setNeedsLayout()
     }
 
@@ -257,6 +343,8 @@ final class NoteBlock: UIView {
                 savedText = text
                 estimate = nil
                 ahead = nil
+                updateSummary()
+                styleHeader()
                 onHeightChange?()
             }
             return
@@ -382,12 +470,41 @@ final class NoteBlock: UIView {
     }
 
     private func styleHeader() {
-        header.setAttributedTitle(Card.header(name: name, meta: Card.meta(for: ref.path, store: store), size: storedMetrics.size), for: .normal)
+        let title = NSMutableAttributedString(attributedString: Card.header(name: name, meta: nil, size: storedMetrics.size))
+        metaLabel.text = Card.meta(for: ref.path, store: store)
+        metaLabel.sizeToFit()
+        // Its to-dos, how far along, at the end of its name.
+        let text = isLive ? nil : savedText
+        let progress = text.map { Checkboxes.progress(in: $0) } ?? {
+            let all = Checkboxes.progress(of: editor.rows)
+            return all.isEmpty ? nil : all
+        }()
+        // How far along, in the margin where the rows' bullets are — the
+        // name in line with the text under it. With the inbox's Done there,
+        // after the name instead.
+        ringView.isHidden = true
+        if let progress {
+            let side = round(storedMetrics.size * 0.85)
+            let image = ProgressRing.image(progress, side: side)
+            if accessory == nil {
+                ringView.image = image
+                ringView.isHidden = false
+                ringView.bounds = CGRect(x: 0, y: 0, width: side, height: side)
+            } else {
+                let ring = NSTextAttachment(image: image)
+                let cap = UIFont.systemFont(ofSize: storedMetrics.size, weight: .bold).capHeight
+                ring.bounds = CGRect(x: 0, y: ((cap - side) / 2).rounded(), width: side, height: side)
+                title.append(NSAttributedString(string: "  "))
+                title.append(NSAttributedString(attachment: ring))
+            }
+        }
+        header.setAttributedTitle(title, for: .normal)
         // The note's name, whole: in a card, the only place it shows.
         header.titleLabel?.numberOfLines = 0
         header.titleLabel?.lineBreakMode = .byWordWrapping
         // Alone, a note whose first heading is its name needs no other.
         header.isHidden = !showsHeader && titleIsHeading
+        metaLabel.isHidden = header.isHidden
         headerMeasure = nil
         setNeedsLayout()
     }
@@ -404,7 +521,7 @@ final class NoteBlock: UIView {
 
     // MARK: Layout
 
-    static let side: CGFloat = 36
+    static let side: CGFloat = 38
     /// Narrower than this, nothing is laid out: text at no width never ends.
     static let minimumWidth: CGFloat = 300
 
@@ -417,10 +534,11 @@ final class NoteBlock: UIView {
     /// its height often.
     private func headerSize(width: CGFloat) -> CGSize {
         if let headerMeasure, abs(headerMeasure.width - width) < 0.5 { return headerMeasure.size }
-        let room = width - 2 * Self.side - 36
+        let room = width - 2 * Self.side - max(36, ceil(metaLabel.bounds.width) + 12)
         let bounds = header.attributedTitle(for: .normal)?.boundingRect(with: CGSize(width: room, height: .greatestFiniteMagnitude),
                                                                          options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil) ?? .zero
-        let size = CGSize(width: min(ceil(bounds.width), room), height: ceil(bounds.height))
+        // A little over: the label wraps what only just fits, a ring at its end.
+        let size = CGSize(width: min(ceil(bounds.width) + 4, room), height: ceil(bounds.height))
         headerMeasure = (width, size)
         return size
     }
@@ -460,6 +578,15 @@ final class NoteBlock: UIView {
 
     func height(width: CGFloat) -> CGFloat {
         guard width > Self.minimumWidth else { return 0 }
+        switch mode {
+        case .collapsed:
+            return Card.top + headerHeight(width: width) - Card.gap + Card.bottom
+        case .summary:
+            let summary = summaryView?.height(width: width - 2 * Self.side) ?? 0
+            return Card.top + headerHeight(width: width) + (summary > 0 ? summary + 4 : -Card.gap) + Card.bottom
+        case .full, .view:
+            break
+        }
         guard isLive else { return Card.top + headerHeight(width: width) + estimatedHeight(width: width) + Card.bottom }
         let editorWidth = width - 2 * Self.side + storedMetrics.indent
         let editorHeight = conflict.map { $0.height(width: width - 2 * Self.side) + 8 } ?? editor.rowsHeight(width: editorWidth)
@@ -469,6 +596,7 @@ final class NoteBlock: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         guard bounds.width > Self.minimumWidth else { return }
+        card.frame = Card.frame(in: bounds)
         let indent = storedMetrics.indent
         var y: CGFloat = Card.top
         if !header.isHidden {
@@ -479,9 +607,22 @@ final class NoteBlock: UIView {
         // The ⋯ at the header's end, on its first line's middle; the inbox's
         // Done hanging in the margin before the name, as a task's box does.
         let firstLine = Card.top + ceil(UIFont.systemFont(ofSize: storedMetrics.size, weight: .bold).lineHeight) / 2
-        menuButton.isHidden = noteMenu == nil || header.isHidden
+        // The ⋯ only on the card being typed in; held, any card's header has it.
+        menuButton.isHidden = noteMenu == nil || header.isHidden || !(isLive && editor.isFirstResponder)
         menuButton.frame = CGRect(x: bounds.width - Self.side - 8, y: firstLine - 18, width: 36, height: 36)
+        // When, at the top right; the ⋯ in its place while typed in.
+        let metaSize = metaLabel.bounds.size
+        metaLabel.frame = CGRect(x: bounds.width - Self.side - metaSize.width, y: (firstLine - metaSize.height / 2).rounded(),
+                                 width: metaSize.width, height: metaSize.height)
+        metaLabel.alpha = menuButton.isHidden ? 1 : 0
+        if let summaryView {
+            let inner = bounds.width - 2 * Self.side
+            summaryView.frame = CGRect(x: Self.side, y: y + 4, width: inner, height: summaryView.height(width: inner))
+        }
         accessory?.frame = CGRect(x: Self.side - 28, y: firstLine - 16, width: 32, height: 32)
+        // On the bullets' line down the margin, and the name's middle.
+        ringView.center = CGPoint(x: Self.side - storedMetrics.indent / 2, y: firstLine)
+        ringView.isHidden = ringView.image == nil || header.isHidden || ringView.isHidden
         // The text in line with the name; the markers hang in the margin.
         let width = bounds.width - 2 * Self.side + indent
         // The empty line after the last row hangs below the block: a text
@@ -588,10 +729,28 @@ enum Formats {
 /// day's distance from today, any other note's last change.
 @MainActor
 enum Card {
-    /// A card's margins: above its header, between header and text, below.
-    static let top: CGFloat = 16
-    static let gap: CGFloat = 2
-    static let bottom: CGFloat = 16
+    /// A card's edge, in from its block's sides; the room above and below
+    /// it, half the space between two cards.
+    static let inset: CGFloat = 10
+    static let spacing: CGFloat = 6
+    static let radius: CGFloat = 18
+    /// A block's margins: above its header, between header and text, below
+    /// — the card's own and the space outside it.
+    static let top: CGFloat = spacing + 16
+    static let gap: CGFloat = 6
+    static let bottom: CGFloat = 14 + spacing
+
+    /// Where a block's card is, in it.
+    static func frame(in bounds: CGRect) -> CGRect {
+        CGRect(x: inset, y: spacing, width: max(0, bounds.width - 2 * inset), height: max(0, bounds.height - 2 * spacing))
+    }
+
+    /// When, at a card's top right.
+    static func styleMeta(_ label: UILabel, size: CGFloat) {
+        label.font = UIFont.systemFont(ofSize: round(size * 0.88), weight: .regular)
+        label.textColor = Ink.secondary
+        label.textAlignment = .right
+    }
 
     static func header(name: String, meta: String?, size: CGFloat) -> NSAttributedString {
         let text = NSMutableAttributedString(string: name, attributes: [
@@ -642,5 +801,13 @@ enum Card {
             let sameYear = Calendar.current.isDate(date, equalTo: now, toGranularity: .year)
             return Formats.date(sameYear ? "MMMd" : "MMMdyyyy").string(from: date)
         }
+    }
+}
+
+extension NoteBlock: UIContextMenuInteractionDelegate {
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                                configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        guard let menu = noteMenu?() else { return nil }
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in menu }
     }
 }

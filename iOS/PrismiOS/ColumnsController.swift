@@ -4,19 +4,31 @@ import ReflectCore
 import PrismCore
 
 /// Prism's views, a tab each along the bottom — the days, the inbox, the
-/// tasks, the pinned notes — each a stack of sheets: going somewhere pushes
-/// one, Back or a swipe from the edge pops it. Over them, a button to write
-/// a new note; on top of every sheet, the menu and search.
+/// tasks — each a stack of sheets: going somewhere pushes one, Back or a
+/// swipe from the edge pops it. Among them, a button to write in today; at
+/// their right, apart, search — which, tapped, opens out into a field, the
+/// tabs gathered into one button at its left to go back by.
 final class ColumnsController: UITabBarController, UITabBarControllerDelegate, UINavigationControllerDelegate {
     let store: PrismStore
-    private let compose = UIButton(type: .system)
+    /// The bar along the bottom, in the system's tab bar's place.
+    private lazy var bar = BottomBar(items: Self.tabs.map { BottomBar.Item(title: $0.title, symbol: $0.symbol) })
+    private var barToBottom: NSLayoutConstraint?
+    /// How far the keyboard reaches up the screen, from its foot.
+    private var keyboardHeight: CGFloat = 0
+    /// Each column's tab, in order.
+    private var columnTabs: [UITab] = []
+    private var searchTab: UISearchTab?
+    /// Going to a note or a day, or searching every note: in the search tab.
+    private lazy var finder = FinderController(store: store, embedded: true)
+    private lazy var searchNavigation = UINavigationController(rootViewController: finder)
+    /// The tab shown before search: where what is found there opens.
+    private var lastColumn = 0
 
     /// The tabs, in order, with what each shows and its icon.
     static let tabs: [(kind: SheetKind, title: String, symbol: String)] = [
         (.timeline, "Days", "house"),
         (.inbox, "Inbox", "tray"),
         (.tasks, "Tasks", "checkmark.circle"),
-        (.pinned, "Pinned", "pin"),
     ]
 
     init(store: PrismStore) {
@@ -28,45 +40,45 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     required init?(coder: NSCoder) { fatalError() }
 
     /// Each tab's stack.
-    var columns: [UINavigationController] { (viewControllers ?? []).compactMap { $0 as? UINavigationController } }
+    private(set) var columns: [UINavigationController] = []
 
     override func viewDidLoad() {
         super.viewDidLoad()
         StallWatch.mark("columns loading")
         defer { StallWatch.mark("columns loaded") }
-        view.backgroundColor = Ink.paper
+        view.backgroundColor = Ink.page
         delegate = self
         // What a name typed after `@` or `[[` could link to.
         OutlineEditor.suggest = { [weak store] query in
             guard let index = store?.index else { return [] }
             return LinkSuggestions.candidates(query, index: index)
         }
-        viewControllers = Self.tabs.map { tab in
+        columns = Self.tabs.map { tab in
             let navigation = UINavigationController(rootViewController: makeSheet(tab.kind, around: tab.kind == .timeline ? .day(.today) : nil))
             navigation.delegate = self
-            // An icon alone, as Threads has it; its name for VoiceOver.
-            navigation.tabBarItem = UITabBarItem(title: nil, image: UIImage(systemName: tab.symbol),
-                                                 selectedImage: UIImage(systemName: tab.symbol + ".fill"))
-            navigation.tabBarItem.accessibilityLabel = tab.title
             styleBar(navigation)
             return navigation
         }
-        tabBar.tintColor = Ink.text
-        tabBar.unselectedItemTintColor = Ink.faint
-        setUpCompose()
+        columnTabs = zip(Self.tabs, columns).map { tab, navigation in
+            UITab(title: tab.title, image: UIImage(systemName: tab.symbol), identifier: tab.title) { _ in navigation }
+        }
+        // Search: the finder, the field for it in the bar.
+        styleBar(searchNavigation)
+        finder.onChoose = { [weak self] place in self?.open(place) }
+        let search = UISearchTab { [searchNavigation] _ in searchNavigation }
+        searchTab = search
+        tabs = columnTabs + [search]
+        // The system's bar hidden: ours in its place, and the sheets kept
+        // clear of it.
+        setTabBarHidden(true, animated: false)
+        additionalSafeAreaInsets.bottom = BottomBar.height + BottomBar.margin - 34 + BottomBar.gap
+        setUpBar()
         restoreLayout()
         // Left for the background, or about to be: everything kept as it is.
         for name in [UIApplication.willResignActiveNotification, UIApplication.didEnterBackgroundNotification] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.saveLayout() }
             }
-        }
-        // The keyboard up, the compose button out of its way.
-        NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.setComposeShown(false) }
-        }
-        NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.setComposeShown(true) }
         }
         observe()
         observeSync()
@@ -75,12 +87,12 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         // sheets not built at launch at all.
         if let page = pendingPage {
             pendingPage = nil
-            selectedIndex = page
+            select(column: page)
         }
     }
 
     /// `-PrismOpen <kind>` — `search:<query>`, `backlinks:<path>`,
-    /// `note:<path>`, `inbox`, `tasks`, `pinned` — at launch, for scripted
+    /// `note:<path>`, `inbox`, `tasks`, `find` — at launch, for scripted
     /// checks.
     private func openForScript() {
         guard let spec = UserDefaults.standard.string(forKey: "PrismOpen"), let column = columns.first else { return }
@@ -88,7 +100,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         switch head {
         case "inbox": pendingPage = 1
         case "tasks": pendingPage = 2
-        case "pinned": pendingPage = 3
+        case "find": DispatchQueue.main.async { self.showSearch() }
         case "search": column.pushViewController(makeSheet(.search(rest)), animated: false)
         case "backlinks": column.pushViewController(makeSheet(.backlinks(rest)), animated: false)
         case "note": column.pushViewController(makeSheet(.note(rest)), animated: false)
@@ -139,45 +151,114 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
 
     // MARK: Writing a new note
 
-    /// The floating button, bottom right, over the tab bar.
-    private func setUpCompose() {
-        var configuration = UIButton.Configuration.filled()
-        configuration.image = UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .medium))
-        configuration.cornerStyle = .capsule
-        configuration.baseBackgroundColor = Ink.composeBack
-        configuration.baseForegroundColor = Ink.composeInk
-        compose.configuration = configuration
-        compose.accessibilityLabel = "New Note"
-        compose.layer.shadowColor = UIColor.black.cgColor
-        compose.layer.shadowOpacity = 0.18
-        compose.layer.shadowRadius = 12
-        compose.layer.shadowOffset = CGSize(width: 0, height: 4)
-        compose.addAction(UIAction { [weak self] _ in
-            guard let self, let sheet = (selectedViewController as? UINavigationController)?.topViewController as? SheetController else { return }
+    /// A column's tab, shown.
+    private func select(column: Int) {
+        guard columnTabs.indices.contains(column) else { return }
+        if bar.isSearching { leaveSearch(back: false) }
+        selectedTab = columnTabs[column]
+        lastColumn = column
+        bar.selected = column
+    }
+
+    // MARK: The bar
+
+    private func setUpBar() {
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(bar)
+        // At the foot; while searching, over the keyboard when it is up.
+        let toBottom = bar.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -BottomBar.margin)
+        NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated { self?.keyboardMoved(note) }
+        }
+        NSLayoutConstraint.activate([
+            bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bar.heightAnchor.constraint(equalToConstant: BottomBar.height),
+            toBottom,
+        ])
+        barToBottom = toBottom
+        bar.onSelect = { [weak self] column in self?.tabTapped(column) }
+        bar.onWrite = { [weak self] in
+            guard let self else { return }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            self.compose(from: sheet)
-        }, for: .touchUpInside)
-        view.addSubview(compose)
+            writeToday()
+        }
+        bar.onDictateBegin = { [weak self] in self?.beginDictation() }
+        bar.onDictateEnd = { [weak self] cancelled in self?.endDictation(cancelled: cancelled) }
+        bar.onSearch = { [weak self] in self?.showSearch() }
+        bar.onLeaveSearch = { [weak self] in self?.leaveSearch(back: true) }
+        bar.onQuery = { [weak self] text in self?.finder.search(text) }
+        bar.onSubmit = { [weak self] in self?.finder.searchEverything() }
     }
 
-    private func setComposeShown(_ shown: Bool) {
-        UIView.animate(withDuration: 0.2) { self.compose.alpha = shown ? 1 : 0 }
-        compose.isUserInteractionEnabled = shown
+    /// The keyboard came, went, or changed: the bar, searching, kept over it.
+    private func keyboardMoved(_ note: Notification) {
+        guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        let local = view.convert(frame, from: nil)
+        keyboardHeight = max(0, view.bounds.maxY - local.minY)
+        let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+        guard bar.isSearching else { return }
+        placeBar()
+        UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) { self.view.layoutIfNeeded() }
     }
 
-    /// How big the compose button is; sheets keep their scrubber above it.
-    static let composeSize: CGFloat = 60
+    /// At the foot, or — searching — riding on the keyboard.
+    private func placeBar() {
+        let lift = bar.isSearching && keyboardHeight > 0 ? keyboardHeight + BottomBar.gap : BottomBar.margin
+        barToBottom?.constant = -lift
+    }
+
+    /// A view's tab tapped: gone to; tapped again, back to its first sheet —
+    /// the days, to today.
+    private func tabTapped(_ column: Int) {
+        if StallWatch.enabled { StallWatch.mark("tab tapped") }
+        if column == selectedColumn, !bar.isSearching {
+            let navigation = columns[column]
+            if navigation.viewControllers.count > 1 {
+                navigation.popToRootViewController(animated: true)
+            } else if let root = navigation.viewControllers.first as? SheetController, root.kind == .timeline {
+                root.show(.day(.today))
+            }
+        }
+        select(column: column)
+        setChromeHidden(false)
+        layoutChanged()
+    }
+
+    /// The column of the tab showing — or, in search, of the one before.
+    private var selectedColumn: Int { selectedTab.flatMap { tab in columnTabs.firstIndex { $0 === tab } } ?? lastColumn }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let size = Self.composeSize
-        compose.frame = CGRect(x: view.bounds.width - size - 18, y: tabBar.frame.minY - size - 14, width: size, height: size)
-        view.bringSubviewToFront(compose)
+        view.bringSubviewToFront(bar)
         if let page = pendingPage {
             pendingPage = nil
-            selectedIndex = page
+            select(column: page)
         }
     }
+
+    // MARK: Out of the way, while reading
+
+    /// The tab bar and the top's buttons, gone while scrolling down to read,
+    /// back on scrolling up, near the top, or going anywhere.
+    private(set) var chromeHidden = false
+
+    func setChromeHidden(_ hidden: Bool) {
+        guard hidden != chromeHidden else { return }
+        chromeHidden = hidden
+        let bar = selectedNavigation?.navigationBar
+        let bottom = self.bar
+        let drop = BottomBar.height + BottomBar.margin + 20
+        UIView.animate(withDuration: 0.28, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut]) {
+            bottom.transform = hidden ? CGAffineTransform(translationX: 0, y: drop) : .identity
+            bottom.alpha = hidden ? 0 : 1
+            bar?.alpha = hidden ? 0 : 1
+        }
+        bar?.isUserInteractionEnabled = !hidden
+        bottom.isUserInteractionEnabled = !hidden
+    }
+
+    private var selectedNavigation: UINavigationController? { columns.indices.contains(selectedColumn) ? columns[selectedColumn] : nil }
 
     // MARK: Sheets
 
@@ -197,6 +278,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             guard let self, let sheet else { return }
             compose(from: sheet)
         }
+        sheet.onChromeHidden = { [weak self] hidden in self?.setChromeHidden(hidden) }
         sheet.menu = { [weak self] sheet in self?.menu(for: sheet) ?? UIMenu() }
         sheet.noteMenu = { [weak self] sheet, path in self?.noteMenu(path, from: sheet) ?? UIMenu() }
         sheet.onStateChange = { [weak self] in self?.layoutChanged() }
@@ -262,6 +344,12 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         } else if let synced = store.lastSynced {
             sync.append(UIAction(title: "Synced " + synced.formatted(.relative(presentation: .named)), attributes: .disabled) { _ in })
         }
+        sections.insert(UIMenu(options: .displayInline, children: [
+            UIAction(title: "New Note", image: UIImage(systemName: "square.and.pencil")) { [weak self, weak sheet] _ in
+                guard let self, let sheet else { return }
+                compose(from: sheet)
+            },
+        ]), at: 0)
         sections.append(UIMenu(options: .displayInline, children: sync))
         if !store.conflicted.isEmpty {
             sections.append(UIMenu(title: "Edited on Two Devices", options: .displayInline, children: store.conflicted.prefix(8).map { path in
@@ -301,33 +389,147 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         items.append(UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { _ in
             UIPasteboard.general.string = "[[" + (day?.description ?? entry?.title ?? (path as NSString).deletingPathExtension) + "]]"
         })
+        // Among others, how its card shows it.
+        if sheet.listsNotes {
+            let current = CardModes.mode(path)
+            let modes: [(CardMode, String)] = [(.full, "doc.plaintext"), (.summary, "text.below.photo"), (.collapsed, "rectangle.compress.vertical")]
+            items.append(UIMenu(title: "Show As", image: UIImage(systemName: "rectangle.stack"), children: modes.map { mode, symbol in
+                UIAction(title: mode.name, image: UIImage(systemName: symbol), state: mode == current ? .on : .off) { _ in
+                    CardModes.set(mode, for: path)
+                }
+            }))
+        }
         return UIMenu(options: .displayInline, children: items)
     }
 
-    /// Go to a note or a day, or search them all: a day in the days tab, the
-    /// rest on this tab's stack.
+    /// Go to a note or a day, or search them all: the search tab, opened out.
     func showFinder(from sheet: SheetController) {
         sheet.saveAll()
-        let finder = FinderController(store: store)
-        finder.onChoose = { [weak self, weak sheet] place in
-            guard let self, let sheet else { return }
-            switch place {
-            case .day(let day):
-                if self.store.graph?.exists(path: GraphPaths.dailyPath(for: day)) == false { self.store.reveal([day]) }
-                guard let days = self.columns.first, let root = days.viewControllers.first as? SheetController else { return }
-                self.selectedIndex = 0
-                days.popToRootViewController(animated: false)
-                root.show(.day(day), asLeft: true)
-            case .note(let path):
-                self.push(.note(path), from: sheet)
-            case .search(let query):
-                self.push(.search(query), from: sheet)
-            }
-        }
-        present(finder, animated: true)
+        showSearch()
     }
 
+    func showSearch() {
+        guard let searchTab, !bar.isSearching else { return }
+        selectedNavigation?.topViewController.flatMap { $0 as? SheetController }?.saveAll()
+        lastColumn = selectedColumn
+        setChromeHidden(false)
+        selectedTab = searchTab
+        bar.setSearching(true)
+        placeBar()
+        UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0) { self.view.layoutIfNeeded() }
+        bar.field.becomeFirstResponder()
+    }
+
+    /// Search put away: back to the view it was opened from, when `back`.
+    private func leaveSearch(back: Bool) {
+        guard bar.isSearching else { return }
+        bar.field.resignFirstResponder()
+        bar.setSearching(false)
+        placeBar()
+        UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0) { self.view.layoutIfNeeded() }
+        if back { select(column: lastColumn) }
+    }
+
+    /// Something found: a day in the days tab, the rest on the stack of the
+    /// tab search was opened from — gone back to.
+    private func open(_ place: FinderController.Place) {
+        switch place {
+        case .day(let day):
+            if store.graph?.exists(path: GraphPaths.dailyPath(for: day)) == false { store.reveal([day]) }
+            guard let days = columns.first, let root = days.viewControllers.first as? SheetController else { return }
+            select(column: 0)
+            days.popToRootViewController(animated: false)
+            root.show(.day(day), asLeft: true)
+        case .note(let path):
+            openInColumn(.note(path))
+        case .search(let query):
+            openInColumn(.search(query))
+        }
+        finder.reset()
+        bar.field.text = ""
+    }
+
+    private func openInColumn(_ kind: SheetKind) {
+        let column = lastColumn
+        select(column: column)
+        guard let sheet = columns[column].topViewController as? SheetController else { return }
+        push(kind, from: sheet)
+    }
+
+    // MARK: Dictating
+
+    private var dictation: Dictation?
+    /// Asked for leave to listen, and not yet told.
+    private var askingToListen = false
+
+    /// The + held: listening, what is heard shown over the bar.
+    private func beginDictation() {
+        guard dictation == nil, !askingToListen else { return }
+        askingToListen = true
+        Task { @MainActor in
+            let allowed = await Dictation.allowed()
+            askingToListen = false
+            // Let go meanwhile — as when first asked — nothing to hear.
+            guard allowed, bar.isDictating else {
+                bar.hideHeard()
+                if !allowed { currentSheet?.say("Prism can’t listen: allow the microphone and speech recognition in Settings.") }
+                return
+            }
+            let dictation = Dictation()
+            do {
+                try dictation.start { [weak self] text in self?.bar.showHeard(text) }
+                self.dictation = dictation
+            } catch {
+                bar.hideHeard()
+                currentSheet?.say("Dictation isn’t available right now.")
+            }
+        }
+    }
+
+    /// Let go: what was said, the first row of today.
+    private func endDictation(cancelled: Bool) {
+        guard let dictation else {
+            bar.hideHeard()
+            return
+        }
+        self.dictation = nil
+        Task { @MainActor in
+            let text = await dictation.stop()
+            bar.hideHeard()
+            guard !cancelled, !text.isEmpty else { return }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            addToToday(text)
+        }
+    }
+
+    /// A row put first in today — not typed in: shown, and written.
+    func addToToday(_ text: String) {
+        selectedNavigation?.topViewController.flatMap { $0 as? SheetController }?.saveAll()
+        guard let days = columns.first, let root = days.viewControllers.first as? SheetController else { return }
+        select(column: 0)
+        setChromeHidden(false)
+        days.popToRootViewController(animated: false)
+        let today = NoteRef.day(.today)
+        root.show(today)
+        DispatchQueue.main.async { root.addAtTop(of: today, text: text) }
+    }
+
+    private var currentSheet: SheetController? { selectedNavigation?.topViewController as? SheetController }
+
     /// A blank note, on this tab's stack, its title to be typed.
+    /// Today, in the days, a new row at its top with the caret in it.
+    func writeToday() {
+        selectedNavigation?.topViewController.flatMap { $0 as? SheetController }?.saveAll()
+        guard let days = columns.first, let root = days.viewControllers.first as? SheetController else { return }
+        select(column: 0)
+        setChromeHidden(false)
+        days.popToRootViewController(animated: false)
+        let today = NoteRef.day(.today)
+        root.show(today)
+        // Once laid out where today is.
+        DispatchQueue.main.async { root.writeAtTop(of: today) }
+    }
+
     func compose(from sheet: SheetController) {
         sheet.saveAll()
         guard let path = store.newNote() else { return }
@@ -340,21 +542,14 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
 
     // MARK: Tabs
 
-    /// The days tab, tapped while showing them: back to today.
-    func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
-        if StallWatch.enabled { StallWatch.mark("tab tapped") }
-        if viewController === selectedViewController, let navigation = viewController as? UINavigationController,
-           navigation.viewControllers.count == 1, let root = navigation.viewControllers.first as? SheetController, root.kind == .timeline {
-            root.show(.day(.today))
-        }
-        return true
-    }
-
-    func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
+    func tabBarController(_ tabBarController: UITabBarController, didSelectTab tab: UITab, previousTab: UITab?) {
+        if let column = columnTabs.firstIndex(where: { $0 === tab }) { lastColumn = column }
+        setChromeHidden(false)
         layoutChanged()
     }
 
     func navigationController(_ navigationController: UINavigationController, didShow viewController: UIViewController, animated: Bool) {
+        setChromeHidden(false)
         layoutChanged()
     }
 
@@ -386,7 +581,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
                 return Layout.Sheet(kind: sheet.kind, place: sheet.place)
             }
         }
-        return Layout(columns: columns, page: selectedIndex, focusColumn: focusColumn, focus: focus)
+        return Layout(columns: columns, page: selectedColumn, focusColumn: focusColumn, focus: focus)
     }
 
     private var saveTimer: Timer?

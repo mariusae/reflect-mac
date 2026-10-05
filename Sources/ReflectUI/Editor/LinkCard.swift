@@ -145,7 +145,7 @@ package final class LinkCard: NSObject {
             parts.append(label(hover.url.absoluteString, font: .systemFont(ofSize: 13, weight: .semibold)))
             parts.append(label("A file in the graph", font: .systemFont(ofSize: 11), color: .secondaryLabelColor))
             buttons.append(button("Open", symbol: "arrow.up.forward.app") { [weak self] in self?.follow(hover.url, split: false) })
-        } else if Tweet.id(from: hover.url.absoluteString) != nil, let images = textView.images,
+        } else if Tweet.key(from: hover.url.absoluteString) != nil, let images = textView.images,
                   let tweet = images.tweet(hover.url.absoluteString) ?? { _ = images.naturalSize(hover.url.absoluteString); return nil }() {
             parts.append(TweetView(tweet: tweet, images: images, width: Self.width - 2 * Self.padding))
             buttons.append(button("Open", symbol: "safari") { [weak self] in self?.follow(hover.url, split: false) })

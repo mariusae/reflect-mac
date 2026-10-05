@@ -1,7 +1,6 @@
 import AppKit
 import Network
 import ReflectCore
-import ReflectUI
 
 /// Where the browser extension sends what it captures: a small HTTP server
 /// on this Mac alone — `127.0.0.1`, never the network — for as long as the
@@ -19,27 +18,39 @@ import ReflectUI
 ///     POST /capture   {"url", "title", "description", "highlights", "screenshot"} → {"path", "title"}
 ///     POST /open      {"path"}: the note shown, and the app brought forward
 @MainActor
-final class CaptureServer {
-    /// A scripted run listens beside the app in use, not in its place.
-    static let isScripted = ProcessInfo.processInfo.environment["REFLECT_SCRIPT"] != nil
-    static let port: UInt16 = isScripted ? 47_812 : 47_811
-    private static let tokensKey = isScripted ? "CaptureTokens (scripts)" : "CaptureTokens"
+package final class CaptureServer {
     private static let maxBody = 40 * 1024 * 1024
 
+    /// The app's name, as the extension and the person are told it.
+    private let app: String
+    /// Where it listens — each app its own, a scripted run beside it.
+    package let port: UInt16
+    private let tokensKey: String
+    private let isScripted: Bool
+
+    /// `port`, and the key the browsers allowed are kept under: a scripted
+    /// run's apart from the app in use.
+    package init(app: String, port: UInt16, tokensKey: String, isScripted: Bool) {
+        self.app = app
+        self.port = port
+        self.tokensKey = tokensKey
+        self.isScripted = isScripted
+    }
+
     /// Saves a capture, and says where; set by the window.
-    var onCapture: ((WebCapture.Page, _ screenshot: Data?) throws -> (path: String, title: String))?
+    package var onCapture: ((WebCapture.Page, _ screenshot: Data?) throws -> (path: String, title: String))?
     /// Shows a note, bringing the app forward.
-    var onOpen: ((String) -> Void)?
+    package var onOpen: ((String) -> Void)?
     /// The graph's name, for the extension to show.
-    var graphName: () -> String = { "" }
+    package var graphName: () -> String = { "" }
 
     private var listener: NWListener?
 
-    func start() {
+    package func start() {
         guard listener == nil else { return }
         do {
             let parameters = NWParameters.tcp
-            parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: Self.port)!)
+            parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!)
             parameters.allowLocalEndpointReuse = true
             let listener = try NWListener(using: parameters)
             listener.newConnectionHandler = { [weak self] connection in
@@ -52,7 +63,7 @@ final class CaptureServer {
             }
             listener.start(queue: .main)
             self.listener = listener
-            Log.shared.info("capture", "Listening for the browser extension on 127.0.0.1:\(Self.port)")
+            Log.shared.info("capture", "Listening for the browser extension on 127.0.0.1:\(port)")
         } catch {
             Log.shared.warning("capture", "The capture server could not start", detail: error.localizedDescription)
         }
@@ -118,7 +129,7 @@ final class CaptureServer {
     private func handle(_ request: Request, on connection: NWConnection) {
         let origin = request.headers["origin"]
         guard Self.mayAnswer(origin) else {
-            respond(connection, status: 403, json: ["error": "Only the Reflect browser extension may capture."], origin: nil)
+            respond(connection, status: 403, json: ["error": "Only the \(app) browser extension may capture."], origin: nil)
             return
         }
         if request.method == "OPTIONS" {
@@ -130,7 +141,7 @@ final class CaptureServer {
         case ("GET", "/ping"):
             // Which graph, only to a browser allowed to write to it.
             let paired = isAllowed(request)
-            respond(connection, status: 200, json: (["app": "Reflect Mac", "paired": paired] as [String: Any]).merging(paired ? ["graph": graphName()] : [:]) { $1 }, origin: origin)
+            respond(connection, status: 200, json: (["app": app, "paired": paired] as [String: Any]).merging(paired ? ["graph": graphName()] : [:]) { $1 }, origin: origin)
         case ("POST", "/pair"):
             let browser = (body["browser"] as? String).map { String($0.prefix(40)) } ?? "A browser"
             pair(browser) { token in
@@ -142,13 +153,13 @@ final class CaptureServer {
             }
         case ("POST", "/capture"):
             guard isAllowed(request) else {
-                respond(connection, status: 401, json: ["error": "Pair with Reflect Mac first."], origin: origin)
+                respond(connection, status: 401, json: ["error": "Pair with \(app) first."], origin: origin)
                 return
             }
             capture(body, connection: connection, origin: origin)
         case ("POST", "/open"):
             guard isAllowed(request), let path = body["path"] as? String else {
-                respond(connection, status: 401, json: ["error": "Pair with Reflect Mac first."], origin: origin)
+                respond(connection, status: 401, json: ["error": "Pair with \(app) first."], origin: origin)
                 return
             }
             onOpen?(path)
@@ -196,8 +207,8 @@ final class CaptureServer {
     // MARK: Pairing
 
     private var tokens: [String: String] {
-        get { UserDefaults.standard.dictionary(forKey: Self.tokensKey) as? [String: String] ?? [:] }
-        set { UserDefaults.standard.set(newValue, forKey: Self.tokensKey) }
+        get { UserDefaults.standard.dictionary(forKey: tokensKey) as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: tokensKey) }
     }
 
     private func isAllowed(_ request: Request) -> Bool {
@@ -208,7 +219,7 @@ final class CaptureServer {
     /// Asks the person whether a browser may capture into their notes.
     private func pair(_ browser: String, done: @escaping (String?) -> Void) {
         // A script has no one to ask.
-        if Self.isScripted {
+        if isScripted {
             let token = UUID().uuidString
             tokens[token] = browser
             done(token)
@@ -216,8 +227,8 @@ final class CaptureServer {
         }
         NSApp.activate()
         let alert = NSAlert()
-        alert.messageText = "Allow \(browser) to save pages into Reflect?"
-        alert.informativeText = "The Reflect extension in \(browser) will be able to add web pages, their highlights and screenshots to “\(graphName())”."
+        alert.messageText = "Allow \(browser) to save pages into \(app)?"
+        alert.informativeText = "The \(app) extension in \(browser) will be able to add web pages, their highlights and screenshots to “\(graphName())”."
         alert.addButton(withTitle: "Allow")
         alert.addButton(withTitle: "Don’t Allow")
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -231,5 +242,5 @@ final class CaptureServer {
     }
 
     /// Takes every browser's permission away. For the Settings.
-    func forgetBrowsers() { tokens = [:] }
+    package func forgetBrowsers() { tokens = [:] }
 }

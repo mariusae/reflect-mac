@@ -141,6 +141,7 @@ final class TaskGroupBlock: NSView, ColumnBlock {
     /// Each run of tasks at the same place: the path to them, and them.
     private var runs: [(path: TaskPath?, editors: [TaskEditor])] = []
     private let metrics: OutlineMetrics
+    private let card = CardSurface()
 
     override var isFlipped: Bool { true }
 
@@ -154,6 +155,8 @@ final class TaskGroupBlock: NSView, ColumnBlock {
         self.group = group
         self.metrics = metrics
         super.init(frame: .zero)
+        card.fill = Ink.card
+        addSubview(card)
         let typography = metrics.typography
         kicker.attributedStringValue = NSAttributedString(string: group.label.uppercased(), attributes: [
             .font: Typography.font(typography.headingFamily, face: typography.headingFace, size: round(metrics.fontSize * 0.7),
@@ -206,6 +209,7 @@ final class TaskGroupBlock: NSView, ColumnBlock {
     @discardableResult
     private func place(width: CGFloat, laying: Bool) -> CGFloat {
         let column = column(width)
+        if laying { card.frame = CardSurface.frame(column: column, in: bounds) }
         let x = column.minX + metrics.indent - 2
         var y = top
         let kickerHeight = ceil(kicker.intrinsicContentSize.height)
@@ -227,7 +231,7 @@ final class TaskGroupBlock: NSView, ColumnBlock {
             }
             y += gap
         }
-        return y
+        return y + CardSurface.spacing + 4
     }
 
     func desiredHeight(width: CGFloat) -> CGFloat { place(width: width, laying: false) }

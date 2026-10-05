@@ -22,7 +22,7 @@ package final class OutlineLayoutManager: NSLayoutManager {
         switch row.kind {
         case .bullet: return .bullet(folded: row.isFolded)
         case .ordered: return .number("\(row.number)\(row.marker)")
-        default: return row.isFolded ? .bullet(folded: true) : .none
+        default: return .none
         }
     }
 
@@ -105,6 +105,7 @@ package final class OutlineLayoutManager: NSLayoutManager {
             if case .none = handle, index == view.hoveredRow, row.kind != .rule { handle = .ghost }
             drawHandle(handle, row: row, paragraph: paragraph, origin: origin, indent: indent,
                        progress: index < under.count ? under[index] : nil)
+            if row.isFolded, let pill = foldPill(for: paragraph, origin: origin) { Self.drawFoldPill(in: pill) }
             drawPictures(in: paragraph, origin: origin)
             drawFilePills(in: paragraph, origin: origin)
             drawCodeBackgrounds(in: paragraph, origin: origin)
@@ -209,12 +210,8 @@ package final class OutlineLayoutManager: NSLayoutManager {
             view.metrics.typography.ink.tertiary.setStroke()
             ring.stroke()
         case .bullet(let folded):
-            if folded {
-                // A soft halo: there to say there is more, not to be looked at.
-                NSColor.quaternaryLabelColor.setFill()
-                let ring = (font.pointSize * 0.72).rounded()
-                NSBezierPath(ovalIn: NSRect(x: center.x - ring / 2, y: center.y - ring / 2, width: ring, height: ring)).fill()
-            }
+            // Folded: told by the pill after its words, as every row is.
+            _ = folded
             view.metrics.typography.ink.secondary.setFill()
             let dot = max(4, (font.pointSize * 0.34).rounded())
             NSBezierPath(ovalIn: NSRect(x: center.x - dot / 2, y: center.y - dot / 2, width: dot, height: dot)).fill()
@@ -336,6 +333,44 @@ package final class OutlineLayoutManager: NSLayoutManager {
     }
 
     /// The row whose handle is at a point in the text view, if any.
+    /// Where a folded row's pill is: after the words of its last line, on
+    /// the middle of their capitals.
+    package func foldPill(for paragraph: NSRange, origin: NSPoint) -> NSRect? {
+        guard let storage = textStorage, paragraph.length > 0 else { return nil }
+        let last = glyphIndexForCharacter(at: NSMaxRange(paragraph) - 1)
+        guard last < numberOfGlyphs else { return nil }
+        let used = lineFragmentUsedRect(forGlyphAt: last, effectiveRange: nil)
+        let font = storage.attribute(.font, at: paragraph.location, effectiveRange: nil) as? NSFont ?? .systemFont(ofSize: 15)
+        let baseline = self.baseline(ofLineAt: last, font: font)
+        let height = (font.capHeight + 8).rounded()
+        let width = (height * 1.7).rounded()
+        let middle = baseline - font.capHeight / 2
+        return NSRect(x: used.maxX + 6 + origin.x, y: (middle - height / 2).rounded() + origin.y, width: width, height: height)
+    }
+
+    /// A pill with three dots in it, on their middle.
+    package static func drawFoldPill(in rect: NSRect) {
+        NSColor.labelColor.withAlphaComponent(0.07).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
+        NSColor.secondaryLabelColor.setFill()
+        let dot = max(2.5, (rect.height * 0.17).rounded(.toNearestOrEven))
+        let gap = dot * 1.1
+        let total = 3 * dot + 2 * gap
+        for i in 0..<3 {
+            let x = rect.midX - total / 2 + CGFloat(i) * (dot + gap)
+            NSBezierPath(ovalIn: NSRect(x: x, y: rect.midY - dot / 2, width: dot, height: dot)).fill()
+        }
+    }
+
+    /// The folded row whose pill is at a point.
+    package func foldPillHit(at point: NSPoint, origin: NSPoint) -> Int? {
+        guard let view = outlineView, let storage = textStorage else { return nil }
+        for (index, paragraph) in view.paragraphRanges.enumerated() where OutlineText.style(storage, at: paragraph.location).row.isFolded {
+            if let pill = foldPill(for: paragraph, origin: origin), pill.insetBy(dx: -4, dy: -4).contains(point) { return index }
+        }
+        return nil
+    }
+
     package func handleHit(at point: NSPoint, origin: NSPoint) -> Int? {
         guard let view = outlineView, let storage = textStorage else { return nil }
         for (index, paragraph) in view.paragraphRanges.enumerated() {

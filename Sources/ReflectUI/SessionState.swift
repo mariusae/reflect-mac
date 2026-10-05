@@ -82,6 +82,14 @@ package final class SessionState {
         package var beneath: [ColumnPlace]?
         /// Its share of the window's width, when not an even one.
         package var width: Double?
+        /// Whether it stays when the column goes back past it.
+        package var pinned: Bool?
+        /// When it was last looked at, in seconds since 1970.
+        package var seen: Double?
+        /// Whether the column is folded to a strip.
+        package var collapsed: Bool?
+        /// The sheets gone back from, to go forward to again: the nearest first.
+        package var ahead: [ColumnPlace]?
 
         package init(kind: String, note: String?, top: String?, offset: Double) {
             self.kind = kind

@@ -101,7 +101,16 @@ public enum WebCapture {
             if let (index, children) = section("Highlights") {
                 let known = Set(rows[children].map { clean($0.text) })
                 let new = highlights.filter { !known.contains($0) }
-                rows.insert(contentsOf: new.map { Row(kind: .bullet, depth: rows[index].depth + 1, text: $0) }, at: children.upperBound)
+                // Indented as those there already are.
+                let sibling = rows[children].last { $0.depth == rows[index].depth + 1 }
+                rows.insert(contentsOf: new.map { text in
+                    var row = Row(kind: .bullet, depth: rows[index].depth + 1, text: text)
+                    if let sibling {
+                        row.extraIndent = sibling.extraIndent
+                        row.marker = sibling.marker
+                    }
+                    return row
+                }, at: children.upperBound)
             } else {
                 rows.append(Row(kind: .bullet, text: "Highlights"))
                 rows += highlights.map { Row(kind: .bullet, depth: 1, text: $0) }
@@ -109,6 +118,46 @@ public enum WebCapture {
         }
         outline.rows = rows
         return OutlineMarkdown.serialize(outline)
+    }
+
+    // MARK: A page's note, read
+
+    /// The address a page's note is of — its `URL:` row — or nil for a
+    /// note that is not one.
+    public static func url(in source: String) -> String? {
+        for row in Row.unfold(OutlineMarkdown.parse(source).rows) where row.depth == 0 {
+            let text = row.text.trimmingCharacters(in: .whitespaces)
+            guard text.hasPrefix("URL:") else { continue }
+            var address = text.dropFirst(4).trimmingCharacters(in: .whitespaces)
+            if address.hasPrefix("<"), address.hasSuffix(">") { address = String(address.dropFirst().dropLast()) }
+            // `[title](address)`, as some captures write it.
+            if let open = address.range(of: "]("), address.hasSuffix(")") {
+                address = String(address[open.upperBound..<address.index(before: address.endIndex)])
+            }
+            guard address.hasPrefix("http") else { return nil }
+            return address
+        }
+        return nil
+    }
+
+    /// The passages under a page's note's Highlights.
+    public static func highlights(in source: String) -> [String] {
+        let rows = Row.unfold(OutlineMarkdown.parse(source).rows)
+        guard let index = rows.firstIndex(where: { $0.depth == 0 && $0.text.trimmingCharacters(in: .whitespaces) == "Highlights" }) else { return [] }
+        var found: [String] = []
+        var at = index + 1
+        while at < rows.count, rows[at].depth > 0 {
+            if rows[at].depth == rows[index].depth + 1 { found.append(clean(rows[at].text)) }
+            at += 1
+        }
+        return found.filter { !$0.isEmpty }
+    }
+
+    /// A page's note with a passage highlighted on it, under its Highlights,
+    /// unless it is there already.
+    public static func highlighting(_ passage: String, in source: String) -> String {
+        guard let url = url(in: source) else { return source }
+        return merging(Page(url: url, title: "", highlights: [passage]), into: source)
     }
 
     private static func oneLine(_ text: String) -> String {

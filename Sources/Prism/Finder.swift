@@ -17,6 +17,9 @@ final class Finder: NSView, NSTextFieldDelegate {
     private var places: [Place] = []
     private var selection = 0
     private var face: Typeface = .mona
+    /// What the field asks for, empty.
+    var placeholder = "Go to a note"
+    private var rowHeight: CGFloat { places.contains { $0.trail != nil } ? 54 : 40 }
 
     private static let limit = 9
 
@@ -54,7 +57,7 @@ final class Finder: NSView, NSTextFieldDelegate {
     func open(face: Typeface, query: String = "") {
         self.face = face
         field.font = face.font(size: 21)
-        field.placeholderAttributedString = NSAttributedString(string: "Go to a note", attributes: [
+        field.placeholderAttributedString = NSAttributedString(string: placeholder, attributes: [
             .font: face.font(size: 21), .foregroundColor: Ink.faint,
         ])
         field.stringValue = query
@@ -98,7 +101,6 @@ final class Finder: NSView, NSTextFieldDelegate {
             divider.layer?.backgroundColor = Ink.rule.cgColor
         }
         let width = min(600, bounds.width - 48)
-        let rowHeight: CGFloat = 40
         let fieldHeight: CGFloat = 60
         let height = fieldHeight + (rows.isEmpty ? 0 : 1 + 8 + CGFloat(rows.count) * rowHeight + 8)
         card.frame = NSRect(x: floor((bounds.width - width) / 2), y: bounds.height - floor(bounds.height * 0.18) - height,
@@ -164,12 +166,20 @@ final class FinderRow: NSView {
     }
     private let title: NSTextField
     private let detail: NSTextField
+    private let trail: NSTextField?
     private let badges = NoteBadges()
 
     init(place: Place, face: Typeface) {
         title = NSTextField(labelWithString: place.title)
         detail = NSTextField(labelWithString: place.detail ?? "")
+        trail = place.trail.map { NSTextField(labelWithString: $0) }
         super.init(frame: .zero)
+        if let trail {
+            trail.font = face.font(size: 11.5)
+            trail.textColor = Ink.faint
+            trail.lineBreakMode = .byTruncatingHead
+            addSubview(trail)
+        }
         title.font = face.font(size: 15.5)
         title.textColor = Ink.secondary
         title.lineBreakMode = .byTruncatingTail
@@ -188,13 +198,17 @@ final class FinderRow: NSView {
 
     override func layout() {
         super.layout()
-        let detailWidth = min(180, detail.intrinsicContentSize.width)
+        let detailWidth = min(180, ceil(detail.intrinsicContentSize.width) + 4)
         let h = title.intrinsicContentSize.height
         let marks = badges.intrinsicContentSize
         let room = marks.width > 0 ? marks.width + 10 : 0
         // The flags just after the name, however long it is.
         let titleWidth = min(ceil(title.attributedStringValue.size().width) + 4, bounds.width - 28 - detailWidth - 12 - room)
-        title.frame = NSRect(x: 14, y: floor((bounds.height - h) / 2), width: titleWidth, height: h)
+        // The path to a row over it, its own words under.
+        let trailHeight = trail.map { ceil($0.intrinsicContentSize.height) } ?? 0
+        let titleY = trail == nil ? floor((bounds.height - h) / 2) : floor((bounds.height - h - trailHeight) / 2)
+        title.frame = NSRect(x: 14, y: titleY, width: titleWidth, height: h)
+        trail?.frame = NSRect(x: 14, y: title.frame.maxY, width: bounds.width - 28 - detailWidth - 12, height: trailHeight)
         badges.frame = NSRect(x: title.frame.maxX + 6, y: floor((bounds.height - marks.height) / 2), width: marks.width, height: marks.height)
         let dh = detail.intrinsicContentSize.height
         detail.frame = NSRect(x: bounds.width - 14 - detailWidth, y: floor((bounds.height - dh) / 2), width: detailWidth, height: dh)

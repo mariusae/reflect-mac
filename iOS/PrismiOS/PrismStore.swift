@@ -93,12 +93,23 @@ final class PrismStore {
             syncError = error.localizedDescription
             return
         }
-        index?.refresh(path)
         if conflicted.contains(path), !ConflictMarkers.detect(text) { conflicted.removeAll { $0 == path } }
-        changed = [path]
-        revision += 1
-        written()
+        // The index read again away from the typing — a long note's links
+        // and names take a while — and what shows it told after.
+        let index = self.index
+        Self.indexing.async {
+            index?.refresh(path)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.changed = [path]
+                self.revision += 1
+                self.written()
+            }
+        }
     }
+
+    /// Where notes written are read into the index again, one at a time.
+    private static let indexing = DispatchQueue(label: "PrismStore.indexing", qos: .userInitiated)
 
     /// Days with no note shown in the timeline all the same, to write in:
     /// opened from a gap, or gone to. Written in, they are notes like any.

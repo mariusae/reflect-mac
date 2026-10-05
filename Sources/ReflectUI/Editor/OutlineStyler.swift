@@ -296,6 +296,11 @@ package enum InlineMarkdown {
                         LinkPill.mark(storage, span.range, kind: .web)
                     }
                 }
+                // A post's or a video's link shows its card below it, as a bare one does.
+                if Tweet.key(from: target) != nil || Video.id(from: target) != nil, let size = images?.naturalSize(target) {
+                    storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: size),
+                                         range: NSRange(location: span.range.location, length: 1))
+                }
                 // A file in the graph: a pill, its icon and size in the room
                 // its hidden brackets are given.
                 if let pill = images?.filePill(target), let open = span.markup.first, let close = span.markup.last,
@@ -316,7 +321,7 @@ package enum InlineMarkdown {
                 }
                 if pills { LinkPill.markBare(storage, span.range, revealed: caret) }
                 // A post's or a video's bare link shows its card too, below the link.
-                if Tweet.id(from: target) != nil || Video.id(from: target) != nil, let size = images?.naturalSize(target) {
+                if Tweet.key(from: target) != nil || Video.id(from: target) != nil, let size = images?.naturalSize(target) {
                     storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: size),
                                          range: NSRange(location: span.range.location, length: 1))
                 }

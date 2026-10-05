@@ -17,12 +17,39 @@ struct Sheet {
     var title: String
     /// What it looked like when it was left, for ⌘E.
     var snapshot: NSImage?
+    /// Kept when the column goes back past it: it stays on the stack, just
+    /// under where the column went back to.
+    var pinned = false
+    /// When it was last looked at: left, or seen again.
+    var seen = Date()
+
+    /// How long since it was looked at, from 0 (just now) to 1 (two days
+    /// and more): the sheet yellows and its name fades as it ages.
+    var age: CGFloat {
+        let hours = Date().timeIntervalSince(seen) / 3600
+        return CGFloat(min(1, max(0, (hours - 0.5) / 47.5)).squareRoot())
+    }
+}
+
+/// Paper left a while: yellowed toward old newsprint, as far as `age` says.
+enum Aging {
+    private static let yellowed = Ink.dynamic(NSColor(srgbRed: 0.94, green: 0.87, blue: 0.66, alpha: 1),
+                                              NSColor(srgbRed: 0.27, green: 0.23, blue: 0.15, alpha: 1))
+
+    static func fill(_ base: NSColor, age: CGFloat) -> NSColor {
+        guard age > 0.01 else { return base }
+        return base.blended(withFraction: 0.55 * age, of: yellowed) ?? base
+    }
+
+    /// How much of a name still shows, aged.
+    static func ink(_ age: CGFloat) -> CGFloat { 1 - 0.4 * age }
 }
 
 extension Column {
     /// What the column shows now, as a sheet.
     var currentSheet: Sheet {
-        Sheet(kind: kind, place: place, offset: scrollOffset, title: Self.title(of: kind, top: current?.ref), snapshot: snapshot())
+        Sheet(kind: kind, place: place, offset: scrollOffset, title: Self.title(of: kind, top: current?.ref), snapshot: snapshot(),
+              pinned: isPinned, seen: Date())
     }
 
     /// What a sheet is called: the note it shows, or the day at its top.
@@ -34,6 +61,7 @@ extension Column {
         case .inbox: "Inbox"
         case .tasks: "Tasks"
         case .search(let query): query.isEmpty ? "Search" : "“\(query)”"
+        case .web(let ref): name(of: ref).title
         }
     }
 
@@ -59,6 +87,11 @@ extension Column {
 /// A grip at a column's top, shown as the pointer comes near: dragged, it
 /// picks up the column's sheet, to put on another column or one of its own.
 final class SheetGrip: NSView {
+    /// In the title bar: a click here is its own, not the start of moving the window.
+    override var mouseDownCanMoveWindow: Bool { false }
+    /// A click here counts, though the window was not in front.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     /// The pointer went down here and moved: the top sheet is picked up.
     var onDrag: ((NSEvent) -> Void)?
 
@@ -101,8 +134,15 @@ final class SheetGrip: NSView {
 /// Hovered, they are listed, each shown as it was; clicked, the column goes
 /// back to the nearest.
 final class StackPill: NSView {
+    /// In the title bar: a click here is its own, not the start of moving the window.
+    override var mouseDownCanMoveWindow: Bool { false }
+    /// A click here counts, though the window was not in front.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     /// The sheets beneath, the bottom first.
     var sheets: [Sheet] = [] { didSet { restyle() } }
+    /// With none beneath, the nearest gone back from: forward, faintly.
+    var forward: Sheet? { didSet { restyle() } }
     var face: Typeface = .mona { didSet { restyle() } }
     var onClick: (() -> Void)?
     var onHover: ((Bool) -> Void)?
@@ -130,16 +170,27 @@ final class StackPill: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     private var behind: Int { min(max(sheets.count - 1, 0), Self.most - 1) }
+    private var isForward: Bool { sheets.isEmpty && forward != nil }
 
     private func restyle() {
-        guard let top = sheets.last else { return }
-        icon.image = NSImage(systemSymbolName: StackPill.symbol(for: top.kind), accessibilityDescription: nil)?
+        guard let top = sheets.last ?? forward else { return }
+        icon.image = NSImage(systemSymbolName: isForward ? "arrow.forward" : StackPill.symbol(for: top.kind), accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
         icon.contentTintColor = Ink.secondary
-        title.attributedStringValue = NSAttributedString(string: top.title, attributes: [
-            .font: face.font(size: 12.5, weight: .medium), .foregroundColor: Ink.text,
+        let name = NSMutableAttributedString(string: top.title, attributes: [
+            .font: face.font(size: 12.5, weight: .medium),
+            .foregroundColor: (isForward ? Ink.secondary : Ink.text).withAlphaComponent(Aging.ink(top.age)),
         ])
-        toolTip = sheets.count == 1 ? "Back to “\(top.title)”" : "Back to “\(top.title)” — \(sheets.count) sheets beneath"
+        if top.pinned, !isForward {
+            let pin = NSTextAttachment()
+            pin.image = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Pinned")?
+                .withSymbolConfiguration(.init(pointSize: 9, weight: .regular).applying(.init(paletteColors: [Ink.secondary])))
+            name.append(NSAttributedString(string: "  "))
+            name.append(NSAttributedString(attachment: pin))
+        }
+        title.attributedStringValue = name
+        toolTip = isForward ? "Forward to “\(top.title)”"
+            : sheets.count == 1 ? "Back to “\(top.title)”" : "Back to “\(top.title)” — \(sheets.count) sheets beneath"
         needsLayout = true
         needsDisplay = true
     }
@@ -152,6 +203,7 @@ final class StackPill: NSView {
         case .inbox: "tray"
         case .tasks: "checklist"
         case .search: "magnifyingglass"
+        case .web: "safari"
         }
     }
 
@@ -184,10 +236,13 @@ final class StackPill: NSView {
             let offset = CGFloat(level) * Self.step
             let rect = front.offsetBy(dx: -offset, dy: -offset).insetBy(dx: 0.5, dy: 0.5)
             let path = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
-            (level == 0 ? (hovering ? Ink.shelf : Ink.paper) : Ink.shelf).setFill()
+            let base = level == 0 ? (hovering ? Ink.shelf : Ink.paper) : Ink.shelf
+            Aging.fill(base, age: level == 0 ? (sheets.last ?? forward)?.age ?? 0 : 0).withAlphaComponent(isForward ? 0.6 : 1).setFill()
             path.fill()
             Ink.text.withAlphaComponent(level == 0 ? 0.14 : 0.1).setStroke()
             path.lineWidth = 1
+            // The way forward, not a sheet on the stack: dashed.
+            if isForward { path.setLineDash([3, 2], count: 2, phase: 0) }
             path.stroke()
         }
     }
@@ -226,11 +281,16 @@ final class StackPill: NSView {
     }
 }
 
-/// The bunched sheets, hovered: spread across the column's top, one after
-/// another, the oldest at the left and the column's own at the right — to
-/// scrub along, the column showing each as the pointer passes over it, and
-/// to click, going back to it.
+/// The bunched sheets, hovered: dealt out across the column's top, each
+/// tucked under the one to its right — the oldest at the left, furthest
+/// down; the column's own at the right, on top. To scrub along, the column
+/// showing each as the pointer passes over it, and to click, going back.
 final class StackScrubber: NSView {
+    /// In the title bar: a click here is its own, not the start of moving the window.
+    override var mouseDownCanMoveWindow: Bool { false }
+    /// A click here counts, though the window was not in front.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     /// The sheet under the pointer, by its place (0 at the bottom; the
     /// column's own last).
     var onHover: ((Int) -> Void)?
@@ -238,67 +298,201 @@ final class StackScrubber: NSView {
     /// A sheet picked up and moved: being dragged.
     var onDrag: ((Int, NSEvent) -> Void)?
     var onLeave: (() -> Void)?
+    /// A sheet pinned or unpinned from its menu, by its place.
+    var onPin: ((Int) -> Void)?
 
     private var sheets: [Sheet] = []
+    /// Where the column's own is among them: those after it, the way forward.
+    private var own = 0
     private var face: Typeface = .mona
     private(set) var hovered: Int?
-    /// Whether its sheets are named: not while it spreads and gathers.
-    var spread = true { didSet { needsDisplay = true } }
+    /// How far they are dealt out: 0 in their bunch, at the right; 1 across.
+    private var dealt: CGFloat = 0
+    private var target: CGFloat = 0
+    private var link: CADisplayLink?
+    private var lastTick: CFTimeInterval = 0
+    private var onSettled: (() -> Void)?
+    /// Where they gather to: the bunch's front, in its own coordinates.
+    var bunch: NSRect = .zero
 
     override var isFlipped: Bool { true }
 
-    /// `sheets` bottom to top, the column's own last.
-    func show(_ sheets: [Sheet], face: Typeface) {
+    /// `sheets` bottom to top, the column's own at `own`, the way forward after it.
+    func show(_ sheets: [Sheet], own: Int, face: Typeface) {
         self.sheets = sheets
+        self.own = own
         self.face = face
-        hovered = nil
         needsDisplay = true
     }
 
-    private func segment(_ i: Int) -> NSRect {
-        let width = bounds.width / CGFloat(max(sheets.count, 1))
-        return NSRect(x: CGFloat(i) * width, y: 0, width: width, height: bounds.height).insetBy(dx: 2, dy: 2)
+    // MARK: Dealing out, and gathering in
+
+    /// Deals them out from the bunch, the nearest first.
+    func deal(animated: Bool) {
+        target = 1
+        onSettled = nil
+        guard animated else {
+            dealt = 1
+            needsDisplay = true
+            return
+        }
+        start()
+    }
+
+    /// Stops partway dealt out, so far: for a script's picture.
+    func freeze(at dealt: CGFloat) {
+        link?.invalidate()
+        link = nil
+        self.dealt = dealt
+        target = dealt
+        needsDisplay = true
+    }
+
+    /// Gathers them back into the bunch, then calls `done`.
+    func gather(done: @escaping () -> Void) {
+        target = 0
+        onSettled = done
+        start()
+    }
+
+    private func start() {
+        guard link == nil else { return }
+        let link = displayLink(target: self, selector: #selector(tick(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+        lastTick = 0
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        let now = link.timestamp
+        let dt = lastTick == 0 ? 1.0 / 60 : min(now - lastTick, 1.0 / 20)
+        lastTick = now
+        dealt += (target - dealt) * CGFloat(1 - exp(-dt * (target > dealt ? 13 : 18)))
+        if abs(dealt - target) < 0.003 {
+            dealt = target
+            link.invalidate()
+            self.link = nil
+            needsDisplay = true
+            let done = onSettled
+            onSettled = nil
+            done?()
+            return
+        }
+        needsDisplay = true
+    }
+
+    override func removeFromSuperview() {
+        link?.invalidate()
+        link = nil
+        super.removeFromSuperview()
+    }
+
+    // MARK: Where each sheet is
+
+    /// How far a sheet reaches under the one to its right.
+    private static let tuck: CGFloat = 18
+    /// The most a sheet's shown part is wide: enough for its name, to peek.
+    static let widest: CGFloat = 190
+
+    /// How wide so many sheets are, dealt out, each as wide as it may be.
+    static func width(for count: Int) -> CGFloat { CGFloat(count) * widest + tuck }
+
+    /// A sheet's place: dealt out, each one's share of the width and a
+    /// tuck more, under its neighbour; gathered, all at the bunch, each
+    /// further down a little up and left of the one on it. Those nearest
+    /// the top leave the bunch first.
+    private func place(_ i: Int) -> NSRect {
+        let n = CGFloat(max(sheets.count, 1))
+        let share = (bounds.width - Self.tuck) / n
+        // On the stack, each reaches under the one to its right; on the
+        // way forward, under the one to its left.
+        let out = i <= own ? NSRect(x: CGFloat(i) * share, y: 0, width: share + Self.tuck, height: bounds.height)
+            : NSRect(x: CGFloat(i) * share, y: 0, width: share + Self.tuck, height: bounds.height)
+        let below = CGFloat(abs(own - i))
+        let depth = min(below, 2) * 4
+        let home = NSRect(x: bunch.minX - depth, y: bunch.minY - depth, width: bunch.width, height: bunch.height)
+        // Staggered: the further down, the later it leaves, the sooner it's back.
+        let stagger: CGFloat = 0.35 * below / max(CGFloat(max(own, sheets.count - 1 - own)), 1)
+        let f = max(0, min(1, (dealt - stagger) / (1 - stagger)))
+        let e = f * f * (3 - 2 * f)
+        return NSRect(x: home.minX + (out.minX - home.minX) * e, y: home.minY + (out.minY - home.minY) * e,
+                      width: home.width + (out.width - home.width) * e, height: home.height + (out.height - home.height) * e)
+    }
+
+    /// What of a sheet shows, across: up to where the one lying on it starts.
+    private func shown(_ i: Int) -> ClosedRange<CGFloat> {
+        let rect = place(i)
+        if i < own { return rect.minX...max(rect.minX, place(i + 1).minX) }
+        if i > own { return min(rect.maxX, place(i - 1).maxX)...rect.maxX }
+        return rect.minX...rect.maxX
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: bounds.height / 2, yRadius: bounds.height / 2)
-        Ink.paper.setFill()
-        outline.fill()
-        Ink.text.withAlphaComponent(0.14).setStroke()
-        outline.lineWidth = 1
-        outline.stroke()
-        guard spread else { return }
-        let own = sheets.count - 1
-        for (i, sheet) in sheets.enumerated() {
-            let rect = segment(i)
-            if i == hovered {
-                Ink.shelf.setFill()
-                NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
+        let named = dealt > 0.7
+        // Each lies on the one further from the column's own; its own on top.
+        let order = Array(0..<own) + Array(sheets.indices.dropFirst(own + 1).reversed()) + [own]
+        for i in order where sheets.indices.contains(i) {
+            let sheet = sheets[i]
+            let ahead = i > own
+            let rect = place(i).insetBy(dx: 0.5, dy: 0.5)
+            let lifted = i == hovered
+            let sheetRect = lifted ? rect.offsetBy(dx: 0, dy: -1.5) : rect
+            let path = NSBezierPath(roundedRect: sheetRect, xRadius: 10, yRadius: 10)
+            NSGraphicsContext.saveGraphicsState()
+            // A soft shadow, cast toward the sheet beneath.
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor.black.withAlphaComponent(ahead ? 0.05 : i == 0 ? 0.06 : 0.12)
+            shadow.shadowBlurRadius = 5
+            shadow.shadowOffset = NSSize(width: ahead ? 2 : -2, height: -1)
+            shadow.set()
+            // Solid, each hiding what it lies on; the way forward is told by
+            // its dashes and fainter names, not by being seen through.
+            let aged = i == own || lifted ? 0 : sheet.age
+            Aging.fill(lifted || i == own || ahead ? Ink.paper : Ink.shelf, age: aged).setFill()
+            path.fill()
+            NSGraphicsContext.restoreGraphicsState()
+            Ink.text.withAlphaComponent(lifted ? 0.22 : 0.13).setStroke()
+            path.lineWidth = 1
+            // The way forward, gone back from: dashed, faint.
+            if ahead { path.setLineDash([3, 2], count: 2, phase: 0) }
+            path.stroke()
+            guard named else { continue }
+            let span = shown(i)
+            let fade = min(1, (dealt - 0.7) / 0.3)
+            let color = (i == own || lifted ? Ink.text : Ink.secondary)
+                .withAlphaComponent(fade * (ahead && !lifted ? 0.6 : 1) * Aging.ink(aged))
+            var x = (ahead ? span.lowerBound + 8 : sheetRect.minX + 11)
+            var right = (ahead ? span.upperBound - 10 : (i < own ? span.upperBound - 4 : sheetRect.maxX - 8))
+            // Pinned: a pin at its shown part's end.
+            if sheet.pinned, right - x > 30,
+               let pin = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Pinned")?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .regular)
+                    .applying(NSImage.SymbolConfiguration(paletteColors: [color]))) {
+                let size = pin.size
+                pin.draw(in: NSRect(x: right - size.width, y: (sheetRect.midY - size.height / 2).rounded(), width: size.width, height: size.height),
+                         from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                right -= size.width + 5
             }
-            if i > 0, i != hovered, i - 1 != hovered {
-                Ink.rule.setFill()
-                NSRect(x: rect.minX - 2.5, y: rect.midY - 6, width: 1, height: 12).fill()
-            }
-            let color = i == own || i == hovered ? Ink.text : Ink.secondary
-            var x = rect.minX + 10
-            if rect.width > 48, let icon = NSImage(systemSymbolName: StackPill.symbol(for: sheet.kind), accessibilityDescription: nil)?
+            if right - x > 40, let icon = NSImage(systemSymbolName: StackPill.symbol(for: sheet.kind), accessibilityDescription: nil)?
                 .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10.5, weight: .regular)
                     .applying(NSImage.SymbolConfiguration(paletteColors: [color]))) {
                 let size = icon.size
-                icon.draw(in: NSRect(x: x, y: (rect.midY - size.height / 2).rounded(), width: size.width, height: size.height),
+                icon.draw(in: NSRect(x: x, y: (sheetRect.midY - size.height / 2).rounded(), width: size.width, height: size.height),
                           from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
                 x += size.width + 5
             }
             let style = NSMutableParagraphStyle()
             style.lineBreakMode = .byTruncatingTail
             let title = NSAttributedString(string: sheet.title, attributes: [
-                .font: face.font(size: 12, weight: i == own ? .semibold : .medium), .foregroundColor: color, .paragraphStyle: style,
+                .font: face.font(size: 12.5, weight: i == own ? .semibold : .medium), .foregroundColor: color, .paragraphStyle: style,
             ])
             let height = ceil(title.size().height)
-            title.draw(with: NSRect(x: x, y: (rect.midY - height / 2).rounded(), width: max(0, rect.maxX - 8 - x), height: height),
+            title.draw(with: NSRect(x: x, y: (sheetRect.midY - height / 2).rounded(), width: max(0, right - x), height: height),
                        options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
         }
     }
+
+    // MARK: The pointer
 
     override func updateTrackingAreas() {
         trackingAreas.forEach(removeTrackingArea)
@@ -307,10 +501,13 @@ final class StackScrubber: NSView {
         super.updateTrackingAreas()
     }
 
+    /// The sheet showing under a point: the topmost whose shown part it is in.
     private func index(at event: NSEvent) -> Int? {
         let point = convert(event.locationInWindow, from: nil)
-        guard bounds.insetBy(dx: -2, dy: -6).contains(point), !sheets.isEmpty else { return nil }
-        return min(sheets.count - 1, max(0, Int(point.x / (bounds.width / CGFloat(sheets.count)))))
+        guard bounds.insetBy(dx: -2, dy: -6).contains(point), !sheets.isEmpty, dealt > 0.5 else { return nil }
+        if place(own).minX...place(own).maxX ~= point.x { return own }
+        if point.x < place(own).minX { return (0..<own).last { place($0).minX <= point.x } ?? 0 }
+        return sheets.indices.dropFirst(own + 1).first { place($0).maxX >= point.x } ?? sheets.count - 1
     }
 
     /// Points at a sheet, as the pointer does.
@@ -343,6 +540,20 @@ final class StackScrubber: NSView {
         self.down = nil
         if index(at: event) == down.index { onChoose?(down.index) }
     }
+
+    /// A sheet's own menu: pinning it, on the stack.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let i = index(at: event), i <= own else { return nil }
+        let menu = NSMenu()
+        let item = NSMenuItem(title: sheets[i].pinned ? "Unpin Sheet" : "Pin Sheet", action: #selector(pinChosen(_:)), keyEquivalent: "")
+        item.target = self
+        item.tag = i
+        item.image = NSImage(systemSymbolName: sheets[i].pinned ? "pin.slash" : "pin", accessibilityDescription: nil)
+        menu.addItem(item)
+        return menu
+    }
+
+    @objc private func pinChosen(_ item: NSMenuItem) { onPin?(item.tag) }
 }
 
 /// ⌘E: the column's sheets as the cards of a file, within it, as
@@ -376,6 +587,11 @@ final class SheetSwitcher: NSView {
     /// Where the sheets beneath fly out from as it opens, and back into as
     /// it closes: their bunch in the title bar, in its own coordinates.
     var origin: NSRect?
+    /// What was typed, to find a sheet by: those it fits stand clear, the
+    /// others fade back. Nil, while nothing has been.
+    private(set) var query: String?
+    private let queryLabel = NSTextField(labelWithString: "")
+    private var titles: [String] = []
 
     override var isFlipped: Bool { false }
 
@@ -387,6 +603,7 @@ final class SheetSwitcher: NSView {
         place = CGFloat(sheets.count - 1)
         home = sheets.count - 1
         cards = sheets.map { SwitcherCard(sheet: $0, contentSize: contentSize, face: face) }
+        titles = sheets.map { $0.title.lowercased() }
         super.init(frame: .zero)
         wantsLayer = true
         layer?.masksToBounds = true
@@ -395,6 +612,44 @@ final class SheetSwitcher: NSView {
             card.onClick = { [weak self] in self?.pick(i) }
             addSubview(card)
         }
+        queryLabel.isHidden = true
+        queryLabel.alignment = .center
+        addSubview(queryLabel)
+    }
+
+    /// Whether a sheet fits what was typed.
+    private func fits(_ i: Int) -> Bool {
+        guard let query, !query.isEmpty else { return true }
+        return titles[i].contains(query.lowercased())
+    }
+
+    /// Finds by what was typed: the nearest sheet down the stack that fits,
+    /// chosen — or the choice left, when none does.
+    func find(_ typed: String) {
+        guard !isClosing else { return }
+        query = typed
+        let fitting = cards.indices.filter(fits)
+        if let nearest = fitting.filter({ $0 < cards.count - 1 }).last ?? fitting.last {
+            selection = nearest
+        } else {
+            NSSound.beep()
+        }
+        queryLabel.isHidden = typed.isEmpty
+        let centred = NSMutableParagraphStyle()
+        centred.alignment = .center
+        queryLabel.attributedStringValue = NSAttributedString(string: typed, attributes: [
+            .font: NSFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: Ink.text, .paragraphStyle: centred,
+        ])
+        queryLabel.wantsLayer = true
+        queryLabel.drawsBackground = false
+        queryLabel.layer?.cornerRadius = 12
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            queryLabel.layer?.backgroundColor = Ink.paper.cgColor
+            queryLabel.layer?.borderColor = Ink.rule.cgColor
+        }
+        queryLabel.layer?.borderWidth = 1
+        needsLayout = true
+        startAnimating()
     }
 
     @available(*, unavailable)
@@ -464,6 +719,15 @@ final class SheetSwitcher: NSView {
         }
     }
 
+    /// Stops partway open, so far: for a script's picture of the animation.
+    func freeze(at openness: CGFloat) {
+        place = CGFloat(selection)
+        self.openness = openness
+        link?.invalidate()
+        link = nil
+        layoutCards()
+    }
+
     /// Settles at once where the animation is going: for a script's picture.
     func settle() {
         place = CGFloat(selection)
@@ -481,6 +745,10 @@ final class SheetSwitcher: NSView {
     override func layout() {
         super.layout()
         background.frame = bounds
+        // What was typed, on a slip of paper, over the cards hanging.
+        let size = queryLabel.attributedStringValue.size()
+        let width = ceil(size.width) + 32, height = ceil(size.height) + 6
+        queryLabel.frame = NSRect(x: ((bounds.width - width) / 2).rounded(), y: bounds.height - 8 - height, width: width, height: height)
         layoutCards()
     }
 
@@ -544,8 +812,11 @@ final class SheetSwitcher: NSView {
                 fog *= p
                 alpha = pose.alpha + (1 - pose.alpha) * q
                 chrome = p
-            } else if let origin {
-                // Out of the bunch in the title bar, and back into it.
+            } else if var origin = origin {
+                // Out of the bunch in the title bar, and back into it: the
+                // card in small, its own shape, at the bunch's top.
+                origin = NSRect(x: origin.minX, y: origin.maxY - origin.width * frame.height / max(frame.width, 1),
+                                width: origin.width, height: origin.width * frame.height / max(frame.width, 1))
                 let e = p * p * (3 - 2 * p)
                 frame = NSRect(x: origin.minX + (frame.minX - origin.minX) * e,
                                y: origin.minY + (frame.minY - origin.minY) * e,
@@ -555,6 +826,8 @@ final class SheetSwitcher: NSView {
                 alpha = pose.alpha * min(1, p * 4)
             }
             card.chrome = chrome
+            // Not fitting what was typed: faded back.
+            if !fits(i), i != home || p > 0.5 { fog = max(fog, 0.6) }
             card.fog = fog
             card.alphaValue = alpha
             card.isHidden = alpha < 0.01
@@ -664,6 +937,7 @@ final class SwitcherCard: NSView {
         case .inbox: "tray"
         case .tasks: "checklist"
         case .search: "magnifyingglass"
+        case .web: "safari"
         }
         icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
@@ -740,4 +1014,72 @@ final class SwitcherCard: NSView {
 
     override func mouseDown(with event: NSEvent) {}
     override func mouseUp(with event: NSEvent) { onClick?() }
+}
+
+/// A column folded away: a narrow strip, its name up its length, how many
+/// sheets it holds. Hovered, it shows what is in it; clicked, opens again.
+final class CollapsedStrip: NSView {
+    var title = "" { didSet { needsDisplay = true } }
+    var symbol = "doc.text" { didSet { needsDisplay = true } }
+    var count = 1 { didSet { needsDisplay = true } }
+    var face: Typeface = .mona { didSet { needsDisplay = true } }
+    var onClick: (() -> Void)?
+    var onHover: ((Bool) -> Void)?
+    private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true; onHover?(hovering) } } }
+
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    static let width: CGFloat = 40
+
+    override func draw(_ dirtyRect: NSRect) {
+        (hovering ? Ink.shelf : Ink.paper).setFill()
+        bounds.fill()
+        Ink.rule.setFill()
+        NSRect(x: 0, y: 0, width: 1, height: bounds.height).fill()
+        var top = bounds.height - 56
+        if let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [Ink.secondary]))) {
+            let size = icon.size
+            icon.draw(in: NSRect(x: (bounds.midX - size.width / 2).rounded(), y: top - size.height, width: size.width, height: size.height))
+            top -= size.height + 12
+        }
+        // Its name down its length, as a book's spine.
+        let name = NSAttributedString(string: title, attributes: [
+            .font: face.font(size: 12.5, weight: .semibold), .foregroundColor: Ink.text,
+        ])
+        let length = min(ceil(name.size().width), max(0, top - 60))
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        context.saveGState()
+        context.translateBy(x: bounds.midX + 5, y: top)
+        context.rotate(by: -.pi / 2)
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        let fitted = NSMutableAttributedString(attributedString: name)
+        fitted.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: fitted.length))
+        fitted.draw(with: NSRect(x: 0, y: -14, width: length, height: 18), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        context.restoreGState()
+        if count > 1 {
+            let more = NSAttributedString(string: "\(count)", attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold), .foregroundColor: Ink.secondary,
+            ])
+            let size = more.size()
+            more.draw(at: NSPoint(x: (bounds.midX - size.width / 2).rounded(), y: 24))
+        }
+    }
+
+    override func updateTrackingAreas() {
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func mouseUp(with event: NSEvent) {
+        hovering = false
+        onClick?()
+    }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 }

@@ -148,6 +148,10 @@ enum Ink {
     // As Threads has it: white and near-black, ink black and near-white,
     // greys for the rest.
     static let paper = dynamic(.white, hex(0x101010))
+    /// What the cards lie on, a little darker than they are.
+    static let page = dynamic(hex(0xf3f2ef), hex(0x000000))
+    /// A note's card.
+    static let card = dynamic(hex(0xfdfdfc), hex(0x1a1a1a))
     static let text = dynamic(hex(0x000000), hex(0xf3f5f7))
     static let secondary = dynamic(hex(0x999999), hex(0x777777))
     static let faint = dynamic(hex(0x000000, alpha: 0.3), hex(0xf3f5f7, alpha: 0.3))

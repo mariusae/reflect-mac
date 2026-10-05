@@ -9,6 +9,8 @@ import ReflectUI
 final class PrismApp: NSObject, NSApplicationDelegate {
     private var controller: PrismWindowController?
     private var settings: SettingsWindowController?
+    /// Where the Prism browser extension sends the pages it captures.
+    private var captureServer: CaptureServer?
 
     /// View ▸ Appearance: light, dark, or as the system is.
     @objc func chooseAppearance(_ sender: NSMenuItem) {
@@ -34,10 +36,26 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         let controller = PrismWindowController(graph: Graph(root: root))
         self.controller = controller
         let environment = ProcessInfo.processInfo.environment
+        // Pages from the browser: on a port of Prism's own, beside Reflect
+        // Mac's; a scripted run on another, beside the app in use.
+        let scripted = environment["PRISM_SNAP"] != nil || environment["PRISM_CAPTURE_SCRIPT"] != nil
+        let server = CaptureServer(app: "Prism", port: scripted ? 47_822 : 47_821,
+                                   tokensKey: scripted ? "CaptureTokens (scripts)" : "CaptureTokens", isScripted: scripted)
+        server.graphName = { root.lastPathComponent }
+        server.onCapture = { [weak controller] page, screenshot in
+            guard let controller else { throw CocoaError(.fileWriteUnknown) }
+            return try controller.capture(page, screenshot: screenshot)
+        }
+        server.onOpen = { [weak controller] path in controller?.openCaptured(path) }
+        server.start()
+        captureServer = server
         if environment["PRISM_SNAP"] != nil {
             runScript(controller, environment)
             return
         }
+        // `PRISM_CAPTURE_SCRIPT=1`: the capture server alone, for a script
+        // to send pages to — no window, nothing brought forward.
+        if environment["PRISM_CAPTURE_SCRIPT"] != nil { return }
         controller.showWindow(nil)
         NSApp.activate()
     }
@@ -90,6 +108,12 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         controller.window?.setFrame(NSRect(x: -4000, y: 0, width: Double(environment["PRISM_WIDTH"] ?? "") ?? 1040, height: 760),
                                     display: false)
         controller.window?.contentView?.layoutSubtreeIfNeeded()
+        // `PRISM_CARD_MODES=<path>=summary,<path>=collapsed`: notes' cards shown so, not kept.
+        CardModes.persists = false
+        for pair in (environment["PRISM_CARD_MODES"] ?? "").split(separator: ",") {
+            let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+            if parts.count == 2, let mode = CardMode(rawValue: parts[1]) { CardModes.set(mode, for: parts[0]) }
+        }
         if let face = environment["PRISM_FACE"].flatMap(Typeface.init(rawValue:)) { controller.face = face }
         if let size = environment["PRISM_SIZE"].flatMap(Double.init) { controller.size = CGFloat(size) }
         if let line = environment["PRISM_LINE"].flatMap(Double.init) {
@@ -129,6 +153,22 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         if environment["PRISM_INBOX"] == "1" { controller.showInbox(nil) }
         if environment["PRISM_TASKS"] == "1" { controller.showTasks(nil) }
         for choice in (environment["PRISM_BAR"] ?? "").split(separator: "|") { controller.sheetBarForScript(String(choice)) }
+        if let steps = environment["PRISM_STACK"] { controller.stackForScript(steps) }
+        if let path = environment["PRISM_OPEN_PAGE"] { controller.openPageForScript(path) }
+        if let query = environment["PRISM_RECENT"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { controller.recentForScript(query, go: environment["PRISM_RECENT_GO"] == "1") }
+        }
+        // `PRISM_WRITE_TODAY`: ⌘N, then these words typed in the row it makes (`|` between presses).
+        if let words = environment["PRISM_WRITE_TODAY"] {
+            for (i, text) in words.split(separator: "|").enumerated() {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.6) {
+                    controller.writeToday(nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        (controller.window?.firstResponder as? NSTextView)?.insertText(String(text), replacementRange: NSRange(location: NSNotFound, length: 0))
+                    }
+                }
+            }
+        }
         if let peek = environment["PRISM_PEEK"] { controller.peekForScript(pointingAt: Int(peek)) }
         if environment["PRISM_KEY"] == "1" { controller.becomeKeyForScript() }
         if environment["PRISM_SYNC"] == "1" { controller.syncNow(nil) }
@@ -195,6 +235,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             let wait = environment["PRISM_WAIT"].flatMap(Double.init) ?? 0.6
             DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
                 if environment["PRISM_DEBUG"] != nil { print(controller.scrollsForScript) }
+                if environment["PRISM_DEBUG_SCRUBBER"] != nil { print("scrubbers: \(controller.scrubberAlphasForScript)") }
                 controller.snapshot(to: URL(fileURLWithPath: environment["PRISM_SNAP"]!))
                 controller.save()
                 exit(0)
@@ -307,10 +348,12 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("Switch Sheets", #selector(PrismWindowController.switchSheets(_:)), "e"),
             item("Switch Sheets Backward", #selector(PrismWindowController.switchSheetsBackward(_:)), "e", [.command, .shift]),
             .separator(),
+            item("Fold Column Away", #selector(PrismWindowController.toggleCollapsed(_:)), "c", [.command, .option]),
             item("Close Column", #selector(PrismWindowController.closeColumn(_:)), "w"),
         ])
         submenu("File", [
-            item("New Note", #selector(PrismWindowController.newNote(_:)), "n"),
+            item("New Row in Today", #selector(PrismWindowController.writeToday(_:)), "n"),
+            item("New Note", #selector(PrismWindowController.newNote(_:)), "n", [.command, .option]),
         ])
         submenu("Graph", [
             item("Sync Now", #selector(PrismWindowController.syncNow(_:)), "s"),
@@ -318,9 +361,12 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         submenu("Go", [
             item("Go to Note…", #selector(PrismWindowController.findNote(_:)), "o"),
             item("Today", #selector(PrismWindowController.goToday(_:)), "d"),
-            item("This Week", #selector(PrismWindowController.goThisWeek(_:)), "y"),
+            item("Recent Edits…", #selector(PrismWindowController.showRecentEdits(_:)), "y"),
+            item("This Week", #selector(PrismWindowController.goThisWeek(_:)), "y", [.command, .shift]),
             .separator(),
             item("Back", #selector(PrismWindowController.goBack(_:)), "["),
+            item("Forward", #selector(PrismWindowController.goForward(_:)), "]"),
+            item("Pin Sheet", #selector(PrismWindowController.pinSheet(_:)), "p", [.command, .option]),
         ])
         let window = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
         window.submenu = NSMenu(title: "Window")

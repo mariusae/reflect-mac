@@ -47,7 +47,7 @@ package enum Carousel {
 
     /// A picture that can be in a carousel: not a post's or a video's card.
     package static func isPicture(_ source: String, images: ImageStore) -> Bool {
-        Tweet.id(from: source) == nil && Video.id(from: source) == nil && images.naturalSize(source) != nil
+        Tweet.key(from: source) == nil && Video.id(from: source) == nil && images.naturalSize(source) != nil
     }
 
     // MARK: Drawing

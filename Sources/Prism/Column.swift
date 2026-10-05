@@ -32,6 +32,8 @@ final class Column: NSView, OutlineTextViewNavigator {
         case tasks
         /// The notes some words are found in.
         case search(String)
+        /// A link note's page, on the web, marked with its highlights.
+        case web(NoteRef)
     }
 
     let graph: Graph
@@ -42,6 +44,11 @@ final class Column: NSView, OutlineTextViewNavigator {
     private let scrubber = Scrubber()
     private let tip = ScrubTip()
     private let close = CloseButton()
+    /// Folds the column away, to a strip at the window's right.
+    private let foldButton = CloseButton(symbol: "sidebar.right", pointSize: 11, toolTip: "Fold Column Away (⌥⌘C)")
+    var onFold: ((Column) -> Void)?
+    /// Where it was among the columns before it was folded: gone back to, opened.
+    var unfoldedIndex: Int?
     private let fade = TopFade()
     /// While the pointer is over the column: a sheet of each kind to add.
     private let sheetBar = SheetBar()
@@ -58,13 +65,61 @@ final class Column: NSView, OutlineTextViewNavigator {
     private let preview = NSImageView()
     /// The sheets beneath the one shown, the bottom first: where the column
     /// has been, to go back to.
-    var beneath: [Sheet] = [] {
+    var beneath: [Sheet] = [] { didSet { stackChanged() } }
+    /// The sheets gone back from, the nearest first: the way forward again.
+    var ahead: [Sheet] = [] { didSet { stackChanged() } }
+    /// Whether its own sheet is pinned: kept when the column goes back past it.
+    var isPinned = false { didSet { if isPinned != oldValue { stackChanged() } } }
+    // MARK: Folded away
+
+    /// Folded to a strip at the side: its name, to open it again by.
+    var isCollapsed = false {
         didSet {
-            stackPill.sheets = beneath
-            stackPill.isHidden = beneath.isEmpty || switcher != nil || stackScrubber != nil
-            if beneath.isEmpty { hideSheetList() }
+            guard isCollapsed != oldValue else { return }
+            if isCollapsed { hideSheetList(animated: false) }
+            strip.isHidden = !isCollapsed
+            for view in unfolded { view.isHidden = isCollapsed }
+            if !isCollapsed {
+                stackPill.isHidden = !hasStack
+                close.isHidden = !closable
+                foldButton.isHidden = !closable
+                preview.isHidden = true
+                tip.isHidden = true
+                updateSheetBar()
+            } else {
+                sheetBar.isHidden = true
+            }
+            strip.title = Self.title(of: kind, top: current?.ref)
+            strip.symbol = StackPill.symbol(for: kind)
+            strip.count = beneath.count + 1
+            strip.face = face
             needsLayout = true
         }
+    }
+    let strip = CollapsedStrip()
+    /// What a folded column hides.
+    private var unfolded: [NSView] { [scroll, fade, scrubber, close, foldButton, grip, stackPill] }
+    /// Its folded strip was clicked, or hovered.
+    var onUnfold: ((Column) -> Void)?
+    var onStripHover: ((Column, Bool) -> Void)?
+
+    /// Told to go forward to a sheet gone back from, by its place in `ahead`.
+    var onForward: ((Column, Int) -> Void)?
+    /// Told to pin or unpin a sheet: its own, for nil; else one beneath.
+    var onPinSheet: ((Column, Int?) -> Void)?
+
+    private var hasStack: Bool { !beneath.isEmpty || !ahead.isEmpty }
+
+    /// Whether it shows a page on the web: no sheets on it, nor bar to add
+    /// them — only closed.
+    var isWeb: Bool { if case .web = kind { true } else { false } }
+
+    private func stackChanged() {
+        stackPill.sheets = beneath
+        stackPill.forward = beneath.isEmpty ? ahead.first : nil
+        stackPill.isHidden = !hasStack || switcher != nil || stackScrubber != nil || isCollapsed || isWeb
+        if !hasStack { hideSheetList() }
+        needsLayout = true
     }
     /// A picture drawn of a sheet, at the column's size: for one beneath
     /// that has none, left before a restart.
@@ -76,6 +131,15 @@ final class Column: NSView, OutlineTextViewNavigator {
         if let image = beneath[index].snapshot { return image }
         let image = onNeedPicture?(beneath[index], bounds.size)
         beneath[index].snapshot = image
+        return image
+    }
+
+    /// A sheet on the way forward, its picture drawn if it has none.
+    private func aheadPicture(_ index: Int) -> NSImage? {
+        guard ahead.indices.contains(index) else { return nil }
+        if let image = ahead[index].snapshot { return image }
+        let image = onNeedPicture?(ahead[index], bounds.size)
+        ahead[index].snapshot = image
         return image
     }
 
@@ -111,7 +175,12 @@ final class Column: NSView, OutlineTextViewNavigator {
     var onCurrent: ((Column) -> Void)?
     var onClose: ((Column) -> Void)?
     /// Whether it may be closed: not when it is the only one.
-    var closable = false { didSet { close.isHidden = !closable } }
+    var closable = false {
+        didSet {
+            close.isHidden = !closable || isCollapsed
+            foldButton.isHidden = !closable || isCollapsed
+        }
+    }
 
     init(graph: Graph, images: ImageStore, metrics: OutlineMetrics) {
         self.graph = graph
@@ -127,13 +196,29 @@ final class Column: NSView, OutlineTextViewNavigator {
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification,
                                                object: scroll.contentView)
+        NotificationCenter.default.addObserver(self, selector: #selector(cardModeChanged(_:)), name: CardModes.changed, object: nil)
         scroll.wantsLayer = true
         addSubview(scroll)
         addSubview(fade)
         addSubview(scrubber)
+        // Out of sight till pointed at.
+        scrubber.alphaValue = 0
         addSubview(tip)
         addSubview(close)
+        addSubview(foldButton)
+        foldButton.isHidden = true
+        foldButton.target = self
+        foldButton.action = #selector(foldClicked)
         addSubview(grip)
+        strip.isHidden = true
+        strip.onClick = { [weak self] in
+            guard let self else { return }
+            onUnfold?(self)
+        }
+        strip.onHover = { [weak self] inside in
+            guard let self else { return }
+            onStripHover?(self, inside)
+        }
         preview.imageScaling = .scaleProportionallyUpOrDown
         preview.imageAlignment = .alignTop
         preview.wantsLayer = true
@@ -146,13 +231,12 @@ final class Column: NSView, OutlineTextViewNavigator {
         sheetBar.isHidden = true
         sheetBar.onChoose = { [weak self] choice in
             guard let self else { return }
-            hideSheetBar()
             onAddSheet?(self, choice)
         }
         stackPill.onClick = { [weak self] in
-            guard let self, !beneath.isEmpty else { return }
+            guard let self else { return }
             hideSheetList()
-            onRaise?(self, beneath.count - 1)
+            if !beneath.isEmpty { onRaise?(self, beneath.count - 1) } else if !ahead.isEmpty { onForward?(self, 0) }
         }
         stackPill.onDrag = { [weak self] event in
             guard let self else { return }
@@ -180,40 +264,28 @@ final class Column: NSView, OutlineTextViewNavigator {
     required init?(coder: NSCoder) { fatalError() }
 
     @objc private func closeColumn() { onClose?(self) }
+    @objc private func foldClicked() { onFold?(self) }
 
     // MARK: The bar of sheets to add
 
-    private var barTracking: NSTrackingArea?
+    /// Whether the keyboard is in it: its bar of sheets to add shows.
+    var isFocused = false { didSet { if isFocused != oldValue { updateSheetBar() } } }
 
-    override func updateTrackingAreas() {
-        if let barTracking { removeTrackingArea(barTracking) }
-        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
-        addTrackingArea(area)
-        barTracking = area
-        super.updateTrackingAreas()
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        guard event.trackingArea === barTracking else { return super.mouseEntered(with: event) }
-        showSheetBar()
-    }
-
-    func showSheetBar() {
-        sheetBar.backlinksEnabled = current != nil || { if case .backlinks = kind { true } else { false } }()
-        sheetBar.isHidden = false
-        NSAnimationContext.runAnimationGroup { $0.duration = 0.15; self.sheetBar.animator().alphaValue = 1 }
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        guard event.trackingArea === barTracking else { return super.mouseExited(with: event) }
-        hideSheetBar()
-    }
-
-    private func hideSheetBar() {
-        NSAnimationContext.runAnimationGroup({ $0.duration = 0.15; self.sheetBar.animator().alphaValue = 0 }) { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, self.sheetBar.alphaValue == 0 else { return }
-                self.sheetBar.isHidden = true
+    /// The bar shown on the focused column, always — but not over its stack
+    /// dealt out, nor over ⌘E's cards.
+    func updateSheetBar() {
+        let shown = isFocused && stackScrubber == nil && switcher == nil && !isCollapsed && livePeek == nil && !isWeb
+        if shown { sheetBar.backlinksEnabled = current != nil || { if case .backlinks = kind { true } else { false } }() }
+        guard shown != (!sheetBar.isHidden && sheetBar.alphaValue > 0) else { return }
+        if shown {
+            sheetBar.isHidden = false
+            NSAnimationContext.runAnimationGroup { $0.duration = 0.15; self.sheetBar.animator().alphaValue = 1 }
+        } else {
+            NSAnimationContext.runAnimationGroup({ $0.duration = 0.12; self.sheetBar.animator().alphaValue = 0 }) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.sheetBar.alphaValue == 0 else { return }
+                    self.sheetBar.isHidden = true
+                }
             }
         }
     }
@@ -230,85 +302,158 @@ final class Column: NSView, OutlineTextViewNavigator {
     func showSheetListForScript(pointingAt index: Int?) {
         showSheetList(animated: false)
         if let index { stackScrubber?.hover(index) }
+        if let at = ProcessInfo.processInfo.environment["PRISM_PEEK_AT"].flatMap(Double.init) { stackScrubber?.freeze(at: CGFloat(at)) }
+    }
+
+    /// The middle of the oldest sheet's shown part, dealt out: for a script's click.
+    var oldestSheetPointForScript: NSPoint? {
+        guard let scrubber = stackScrubber else { return nil }
+        return NSPoint(x: scrubber.frame.minX + 40, y: scrubber.frame.midY)
     }
 
     /// Spreads the bunched sheets across the top, to scrub along: the
     /// column shows each pointed at, as it was; a click goes back to it.
     private func showSheetList(animated: Bool = true) {
-        guard !beneath.isEmpty, switcher == nil, stackScrubber == nil else { return }
-        let sheets = beneath + [Sheet(kind: kind, place: nil, offset: 0, title: Self.title(of: kind, top: current?.ref), snapshot: nil)]
+        guard hasStack, switcher == nil, stackScrubber == nil, !isWeb else { return }
+        let own = Sheet(kind: kind, place: nil, offset: 0, title: Self.title(of: kind, top: current?.ref), snapshot: nil, pinned: isPinned)
         let scrubber = StackScrubber()
-        scrubber.show(sheets, face: face)
+        scrubber.show(beneath + [own] + ahead, own: beneath.count, face: face)
         scrubber.onHover = { [weak self] index in self?.showPreview(index) }
+        // Its places: the sheets beneath, its own, then the way forward.
         scrubber.onChoose = { [weak self] index in
             guard let self else { return }
             hideSheetList(animated: false)
-            if index < beneath.count { onRaise?(self, index) }
+            if index < beneath.count { onRaise?(self, index) } else if index > beneath.count { onForward?(self, index - beneath.count - 1) }
+        }
+        scrubber.onPin = { [weak self] index in
+            guard let self, index <= beneath.count else { return }
+            onPinSheet?(self, index < beneath.count ? index : nil)
+            scrubber.show(beneath + [Sheet(kind: kind, place: nil, offset: 0, title: own.title, snapshot: nil, pinned: isPinned)] + ahead,
+                          own: beneath.count, face: face)
         }
         scrubber.onDrag = { [weak self] index, event in
-            guard let self else { return }
+            guard let self, index <= beneath.count else { return }
             hideSheetList(animated: false)
             onDragSheet?(self, index < beneath.count ? index : nil, event)
         }
-        scrubber.onLeave = { [weak self] in self?.hideSheetList() }
+        scrubber.onLeave = { [weak self] in
+            // Peeking live, the pointer goes down into the sheet: it stays.
+            guard let self, livePeek == nil else { return }
+            hideSheetList()
+        }
+        // ⌥ down: the sheet pointed at, live; let go: back to its own.
+        optionMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            guard let self, let scrubber = stackScrubber else { return event }
+            if event.modifierFlags.contains(.option) {
+                if let index = scrubber.hovered, index != beneath.count { peekLive(index) }
+            } else if livePeek != nil {
+                endLivePeek()
+                let point = convert(event.locationInWindow, from: nil)
+                if scrubber.frame.contains(point), let index = scrubber.hovered { showPreview(index) } else { hideSheetList() }
+            }
+            return event
+        }
         stackScrubber = scrubber
         addSubview(scrubber)
         stackPill.isHidden = true
-        sheetBar.isHidden = true
-        // Out from the bunch, leftward across the top.
-        let pill = stackPill.frame.offsetBy(dx: 0, dy: 0)
+        updateSheetBar()
+        // Dealt out from the bunch, leftward across the top.
+        let pill = stackPill.frame
         let front = NSRect(x: pill.maxX - stackPill.front.width, y: pill.maxY - stackPill.front.maxY,
                            width: stackPill.front.width, height: stackPill.front.height)
-        let across = NSRect(x: 16, y: front.minY, width: front.maxX - 16, height: front.height)
-        guard animated else {
-            scrubber.frame = across
-            return
+        // As tall as the title bar, about the bunch's middle.
+        let barHeight: CGFloat = 40
+        // Clear of the window's buttons, in the column under them.
+        var left: CGFloat = 16
+        if let window, let zoom = window.standardWindowButton(.zoomButton), let buttons = zoom.superview {
+            let corner = convert(buttons.convert(zoom.frame, to: nil), from: nil)
+            if corner.maxX > 0, corner.minY < bounds.maxY { left = max(left, corner.maxX + 14) }
         }
-        scrubber.spread = false
-        scrubber.frame = front
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.18
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            scrubber.animator().frame = across
-        }) { [weak scrubber] in
-            MainActor.assumeIsolated { scrubber?.spread = true }
-        }
+        // Each a peek's width at most: a few sheets stay by the bunch.
+        let width = min(front.maxX - left, StackScrubber.width(for: beneath.count + 1 + ahead.count))
+        let across = NSRect(x: front.maxX - width, y: (front.midY - barHeight / 2).rounded(), width: width, height: barHeight)
+        scrubber.frame = across
+        // The bunch, in the scrubber's own (flipped) coordinates.
+        scrubber.bunch = NSRect(x: front.minX - across.minX, y: across.maxY - front.maxY, width: front.width, height: front.height)
+        scrubber.deal(animated: animated)
+    }
+
+    // MARK: Peeking live, ⌥ held
+
+    /// A sheet made, live, to read and scroll in — not to stay: the controller's.
+    var onLivePeek: ((Sheet, NSSize) -> Column?)?
+    /// The sheet being peeked at live, over this one, while ⌥ is held.
+    private var livePeek: Column?
+    private var livePeekIndex: Int?
+    private var optionMonitor: Any?
+
+    /// The sheet at a place among those spread out: beneath, its own, ahead.
+    private func spreadSheet(_ index: Int) -> Sheet? {
+        if index < beneath.count { return beneath[index] }
+        if index > beneath.count { return ahead.indices.contains(index - beneath.count - 1) ? ahead[index - beneath.count - 1] : nil }
+        return nil
+    }
+
+    /// Shows a sheet live over this one — scrolled in, read, copied from —
+    /// till ⌥ is let go.
+    private func peekLive(_ index: Int) {
+        guard index != livePeekIndex else { return }
+        endLivePeek()
+        guard let sheet = spreadSheet(index), let live = onLivePeek?(sheet, bounds.size) else { return }
+        live.frame = bounds
+        live.autoresizingMask = [.width, .height]
+        // Its own paper: what it lies over does not show through.
+        live.wantsLayer = true
+        effectiveAppearance.performAsCurrentDrawingAppearance { live.layer?.backgroundColor = Ink.page.cgColor }
+        if let scrubber = stackScrubber { addSubview(live, positioned: .below, relativeTo: scrubber) } else { addSubview(live) }
+        livePeek = live
+        livePeekIndex = index
+        preview.isHidden = true
+        updateSheetBar()
+    }
+
+    func peekLiveForScript(_ index: Int) { peekLive(index) }
+    var scrubberAlphaForScript: CGFloat { scrubber.alphaValue }
+
+    private func endLivePeek() {
+        livePeek?.saveAll()
+        livePeek?.removeFromSuperview()
+        livePeek = nil
+        livePeekIndex = nil
     }
 
     /// The column shows a sheet beneath as it was; its own, as it is.
     private func showPreview(_ index: Int) {
-        guard index < beneath.count, let image = pictured(index) else {
+        if NSEvent.modifierFlags.contains(.option), index != beneath.count { return peekLive(index) }
+        endLivePeek()
+        let image: NSImage? = if index < beneath.count { pictured(index) }
+            else if index > beneath.count { aheadPicture(index - beneath.count - 1) } else { nil }
+        guard let image else {
             preview.isHidden = true
             return
         }
         preview.image = image
         preview.frame = bounds
-        effectiveAppearance.performAsCurrentDrawingAppearance { preview.layer?.backgroundColor = Ink.paper.cgColor }
+        effectiveAppearance.performAsCurrentDrawingAppearance { preview.layer?.backgroundColor = Ink.page.cgColor }
         preview.isHidden = false
     }
 
     private func hideSheetList(animated: Bool = true) {
         guard let scrubber = stackScrubber else { return }
+        endLivePeek()
+        if let optionMonitor { NSEvent.removeMonitor(optionMonitor) }
+        optionMonitor = nil
         stackScrubber = nil
         preview.isHidden = true
         preview.image = nil
         let done = { [weak self] in
             scrubber.removeFromSuperview()
             guard let self else { return }
-            stackPill.isHidden = beneath.isEmpty || switcher != nil
+            stackPill.isHidden = !hasStack || switcher != nil
+            updateSheetBar()
         }
-        guard animated, !beneath.isEmpty else { return done() }
-        scrubber.spread = false
-        let pill = stackPill.frame
-        let front = NSRect(x: pill.maxX - stackPill.front.width, y: pill.maxY - stackPill.front.maxY,
-                           width: stackPill.front.width, height: stackPill.front.height)
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.15
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            scrubber.animator().frame = front
-        }) {
-            MainActor.assumeIsolated { done() }
-        }
+        guard animated, hasStack else { return done() }
+        scrubber.gather { done() }
     }
 
     /// Opens ⌘E's cards on the sheet just beneath the top — ⇧⌘E, on the
@@ -327,6 +472,7 @@ final class Column: NSView, OutlineTextViewNavigator {
         addSubview(switcher)
         self.switcher = switcher
         stackPill.isHidden = true
+        updateSheetBar()
         switcher.present()
     }
 
@@ -345,14 +491,21 @@ final class Column: NSView, OutlineTextViewNavigator {
             guard let self else { return }
             self.switcher = nil
             if chosen != top { onRaise?(self, chosen) }
-            stackPill.isHidden = beneath.isEmpty
+            stackPill.isHidden = !hasStack
+            updateSheetBar()
         }
     }
 
     var switcherSelection: Int? { switcher?.selection }
+    /// What was typed in ⌘E's cards, to find a sheet by.
+    var switcherQuery: String? { switcher?.query }
+    func findInSwitcher(_ typed: String) { switcher?.find(typed) }
+    /// A folded column's picture, as it was when folded: shown when its strip is hovered.
+    var foldedPicture: NSImage?
 
     /// Settles the cards at once, for a script's picture.
     func settleSwitcherForScript() { switcher?.settle() }
+    func freezeSwitcherForScript(at openness: CGFloat) { switcher?.freeze(at: openness) }
 
     // MARK: Searching
 
@@ -483,6 +636,12 @@ final class Column: NSView, OutlineTextViewNavigator {
     var onNoteMenu: ((DayView, NSButton) -> Void)?
     /// What each note's frontmatter says of it, by path: the graph's index's.
     static var flags: (String) -> NoteFlags = { _ in [] }
+    /// The page a link note is of, by path: nil for any other note.
+    static var linkPage: (String) -> URL? = { _ in nil }
+    /// Each link note's open button, at the right of its name: its page, beside.
+    private var openButtons: [NoteRef: NSButton] = [:]
+    /// A link note's page asked for: to open in a column of its own.
+    var onOpenPage: ((NoteRef, Column) -> Void)?
     /// Over each note's header, among many: a click opens the note alone.
     private var headerLinks: [NoteRef: NoteHeaderLink] = [:]
     /// A note's header was clicked: the note, to open on its own — with ⌘,
@@ -498,13 +657,10 @@ final class Column: NSView, OutlineTextViewNavigator {
             kind = .inbox
             settled = false
         }
-        var existing: [NoteRef: DayView] = [:]
-        var header: InboxHeader?
-        for block in blocks {
-            if let view = block as? DayView { existing[view.ref] = view } else if let block = block as? InboxHeader { header = block }
-        }
+        var existing = notesShown()
+        let header = blocks.lazy.compactMap { $0 as? InboxHeader }.first
         let wanted = Set(refs)
-        let kept = blocks.compactMap { ($0 as? DayView)?.ref }.filter(wanted.contains)
+        let kept = blocks.compactMap { ($0 as? DayView)?.ref ?? ($0 as? NoteCardBlock)?.ref }.filter(wanted.contains)
         let ordered = refs.filter { !kept.contains($0) } + kept
         let head = header ?? {
             let head = InboxHeader(metrics: metrics)
@@ -513,8 +669,8 @@ final class Column: NSView, OutlineTextViewNavigator {
         }()
         head.metrics = metrics
         head.count = ordered.count
-        blocks = [head] + ordered.map { ref in existing.removeValue(forKey: ref) ?? makeView(ref) }
-        for view in existing.values { letGo(view) }
+        blocks = [head] + ordered.map { ref in reuse(ref, from: &existing) }
+        existing.values.forEach(letGo)
         for (ref, handle) in handles where !wanted.contains(ref) {
             handle.removeFromSuperview()
             handles[ref] = nil
@@ -545,21 +701,8 @@ final class Column: NSView, OutlineTextViewNavigator {
         placeBadges()
         guard kind == .inbox else { return }
         let notes = views
-        while rules.count < max(0, notes.count - 1) {
-            let rule = NSView()
-            rule.wantsLayer = true
-            document.addSubview(rule)
-            rules.append(rule)
-        }
-        while rules.count > max(0, notes.count - 1) { rules.removeLast().removeFromSuperview() }
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            for (rule, view) in zip(rules, notes.dropFirst()) {
-                let column = min(metrics.columnWidth, view.frame.width - 48)
-                rule.frame = NSRect(x: view.frame.minX + ((view.frame.width - column) / 2).rounded(), y: view.frame.minY,
-                                    width: column, height: 1)
-                rule.layer?.backgroundColor = Ink.rule.cgColor
-            }
-        }
+        // The cards part the notes: no rules between.
+        while let rule = rules.popLast() { rule.removeFromSuperview() }
         // The check hangs in the margin before the name, where a task's box is.
         for view in notes {
             guard let handle = handles[view.ref] else { continue }
@@ -568,6 +711,61 @@ final class Column: NSView, OutlineTextViewNavigator {
             handle.frame = NSRect(x: round(marker - 12), y: round(nameMiddle(of: view)) - 12, width: 24, height: 24)
         }
     }
+
+    @objc private func openPageClicked(_ sender: NSButton) {
+        guard let path = sender.identifier?.rawValue else { return }
+        onOpenPage?(NoteRef(path: path), self)
+    }
+
+    // MARK: A page on the web
+
+    private var webPage: WebPageView?
+    private let webTitle: NSTextField = {
+        let label = NSTextField(labelWithString: "")
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = Ink.secondary
+        label.alignment = .center
+        label.lineBreakMode = .byTruncatingMiddle
+        label.isHidden = true
+        return label
+    }()
+    /// A passage highlighted on the page shown: to keep in its note.
+    var onHighlight: ((NoteRef, String) -> Void)?
+
+    /// Shows a link note's page, its highlights marked.
+    func showWeb(_ ref: NoteRef, url: URL, highlights: [String]) {
+        if kind != .web(ref) { removeBlocks() }
+        kind = .web(ref)
+        let page = webPage ?? {
+            let page = WebPageView()
+            addSubview(page, positioned: .above, relativeTo: scroll)
+            webPage = page
+            return page
+        }()
+        page.onHighlight = { [weak self] passage in
+            guard let self else { return }
+            onHighlight?(ref, passage)
+        }
+        page.load(url)
+        page.highlights = highlights
+        scroll.isHidden = true
+        // Only a page: its site over it, and the ×.
+        webTitle.stringValue = url.host.map { $0.hasPrefix("www.") ? String($0.dropFirst(4)) : $0 } ?? url.absoluteString
+        webTitle.isHidden = false
+        stackPill.isHidden = true
+        grip.isHidden = true
+        updateSheetBar()
+        needsLayout = true
+        settled = true
+    }
+
+    func checkWebForScript(choosing passage: String?, done: @escaping (String) -> Void) {
+        guard let webPage else { return done("no page") }
+        webPage.checkForScript(choosing: passage, done: done)
+    }
+
+    /// The page shown, its highlights as its note now says.
+    func updateWebHighlights(_ highlights: [String]) { webPage?.highlights = highlights }
 
     @objc private func noteMenuClicked(_ sender: NSButton) {
         guard let path = sender.identifier?.rawValue, let view = view(for: NoteRef(path: path)) else { return }
@@ -658,6 +856,27 @@ final class Column: NSView, OutlineTextViewNavigator {
                 button.frame = NSRect(x: right - menuSide, y: round(nameMiddle(of: view) - menuSide / 2) + 3, width: menuSide, height: menuSide)
             }
         }
+        // A link note's page, a button away.
+        for (ref, button) in openButtons where !shown.contains(ref) || Self.linkPage(ref.path) == nil {
+            button.removeFromSuperview()
+            openButtons[ref] = nil
+        }
+        for view in notes where Self.linkPage(view.ref.path) != nil {
+            let button = openButtons[view.ref] ?? {
+                let button = NSButton(image: NSImage(systemSymbolName: "safari", accessibilityDescription: "Open Page")!,
+                                      target: self, action: #selector(openPageClicked(_:)))
+                button.isBordered = false
+                button.contentTintColor = Ink.secondary
+                button.toolTip = "Open the page beside this note, its highlights marked"
+                document.addSubview(button)
+                openButtons[view.ref] = button
+                return button
+            }()
+            button.identifier = NSUserInterfaceItemIdentifier(view.ref.path)
+            let column = min(metrics.columnWidth, view.frame.width - 48)
+            let right = view.frame.minX + ((view.frame.width - column) / 2).rounded() + column - (listsNotes ? menuSide : 0)
+            button.frame = NSRect(x: right - menuSide, y: round(nameMiddle(of: view) - menuSide / 2) + 3, width: menuSide, height: menuSide)
+        }
         for view in notes {
             var flags = Self.flags(view.ref.path)
             // In the inbox, being in it goes without saying: its check says so.
@@ -677,6 +896,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             badge.size = round(metrics.fontSize * 0.8)
             let column = min(metrics.columnWidth, view.frame.width - 48)
             let right = view.frame.minX + ((view.frame.width - column) / 2).rounded() + column - 4 - (listsNotes ? menuSide : 0)
+                - (openButtons[view.ref] != nil ? menuSide : 0)
             let size = badge.intrinsicContentSize
             badge.frame = NSRect(x: right - size.width, y: round(nameMiddle(of: view) - size.height / 2), width: size.width, height: size.height)
         }
@@ -740,16 +960,86 @@ final class Column: NSView, OutlineTextViewNavigator {
     /// The timeline's notes in place of those shown: those still shown kept
     /// as they are, the others made, or written and let go.
     private func setBlocks(_ refs: ArraySlice<NoteRef>) {
-        var existing: [NoteRef: DayView] = [:]
-        for block in blocks {
-            if let view = block as? DayView { existing[view.ref] = view } else { block.removeFromSuperview() }
-        }
+        var existing = notesShown()
+        for block in blocks where !(block is DayView || block is NoteCardBlock) { block.removeFromSuperview() }
         blocks = refs.map { ref -> ColumnBlock in
             if let gap = ref.gap { return makeGap(gap) }
-            return existing.removeValue(forKey: ref) ?? makeView(ref)
+            return reuse(ref, from: &existing)
         }
-        for view in existing.values { letGo(view) }
+        existing.values.forEach(letGo)
         relayout()
+    }
+
+    // MARK: Cards
+
+    /// The notes shown, each whole or as a card, by note.
+    private func notesShown() -> [NoteRef: ColumnBlock] {
+        var shown: [NoteRef: ColumnBlock] = [:]
+        for block in blocks {
+            if let view = block as? DayView { shown[view.ref] = view } else if let card = block as? NoteCardBlock { shown[card.ref] = card }
+        }
+        return shown
+    }
+
+    /// A note's block among those shown, when it shows as asked; else made.
+    private func reuse(_ ref: NoteRef, from existing: inout [NoteRef: ColumnBlock]) -> ColumnBlock {
+        let mode = CardModes.mode(ref.path)
+        if let block = existing[ref], (block as? NoteCardBlock)?.mode ?? .full == mode {
+            existing[ref] = nil
+            return block
+        }
+        return makeBlock(ref)
+    }
+
+    /// A note among many: whole, or — asked for — its card short or closed.
+    private func makeBlock(_ ref: NoteRef) -> ColumnBlock {
+        let mode = CardModes.mode(ref.path)
+        guard mode == .summary || mode == .collapsed else { return makeView(ref) }
+        let name = Self.name(of: ref).title
+        let card = NoteCardBlock(ref: ref, mode: mode, name: name, when: Self.when(of: ref), source: graph.read(path: ref.path) ?? "",
+                                 metrics: metrics, images: images)
+        card.onOpen = { [weak self] newColumn in
+            guard let self else { return }
+            onOpenAlone?(ref, self, newColumn)
+        }
+        card.onResize = { [weak self] in self?.setNeedsRelayout() }
+        document.addSubview(card)
+        return card
+    }
+
+    /// When a note is, on its card: a day by how far off it is, any other
+    /// note by when it last changed.
+    static func when(of ref: NoteRef) -> String? {
+        if let day = ref.day {
+            let today = Day.today
+            switch day {
+            case today: return "Today"
+            case today.adding(-1): return "Yesterday"
+            case today.adding(1): return "Tomorrow"
+            default:
+                guard let a = today.date, let b = day.date else { return nil }
+                return CardSurface.distance(days: Calendar.current.dateComponents([.day], from: a, to: b).day ?? 0)
+            }
+        }
+        return modified(ref.path).map { CardSurface.ago($0) }
+    }
+
+    /// When a note last changed: the graph's index's.
+    static var modified: (String) -> Date? = { _ in nil }
+
+    private func letGo(_ block: ColumnBlock) {
+        if let view = block as? DayView { letGo(view) } else { block.removeFromSuperview() }
+    }
+
+    /// A note's card asked to show it otherwise: shown so, where it is listed.
+    @objc private func cardModeChanged(_ notification: Notification) {
+        guard listsNotes, let path = notification.object as? String,
+              blocks.contains(where: { ($0 as? DayView)?.ref.path == path || ($0 as? NoteCardBlock)?.ref.path == path }) else { return }
+        if isTimeline {
+            setBlocks(entries[shown])
+        } else if kind == .inbox {
+            showInbox(blocks.compactMap { ($0 as? DayView)?.ref ?? ($0 as? NoteCardBlock)?.ref })
+        }
     }
 
     /// Shows a note on its own.
@@ -842,6 +1132,13 @@ final class Column: NSView, OutlineTextViewNavigator {
     }
 
     private func removeBlocks() {
+        webPage?.removeFromSuperview()
+        webPage = nil
+        webTitle.isHidden = true
+        grip.isHidden = false
+        scroll.isHidden = false
+        openButtons.values.forEach { $0.removeFromSuperview() }
+        openButtons = [:]
         headerLinks.values.forEach { $0.removeFromSuperview() }
         headerLinks = [:]
         badges.values.forEach { $0.removeFromSuperview() }
@@ -882,8 +1179,9 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     private func makeView(_ ref: NoteRef) -> DayView {
         let view = DayView(ref: ref, graph: graph, images: images, metrics: metrics)
-        // The days' headings part them: no rule between.
+        // Each note a card: the cards part them, no rule between.
         view.drawsRule = false
+        view.cardFill = Ink.card
         view.editor.navigator = self
         view.onHeightChange = { [weak self] _ in self?.setNeedsRelayout() }
         view.onSave = { [weak self, weak view] in
@@ -914,22 +1212,36 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     override func layout() {
         super.layout()
+        strip.frame = bounds
+        if strip.superview == nil { addSubview(strip) }
+        guard !isCollapsed else { return }
         // The top sheet: the column's notes, under the sheets beneath.
         let card = bounds
         scroll.frame = card
+        // A page on the web, under the title bar's controls.
+        webPage?.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - 44))
+        if webTitle.superview == nil { addSubview(webTitle) }
+        webTitle.frame = NSRect(x: 60, y: bounds.height - 30, width: max(0, bounds.width - 120), height: 18)
         fade.frame = NSRect(x: 0, y: card.maxY - 64, width: card.width, height: 64)
         scrubber.frame = NSRect(x: 4, y: 56, width: 40, height: max(0, card.height - 112))
+        // It wakes only from left of the cards, not over their text.
+        let column = min(metrics.columnWidth, scroll.contentSize.width - 48)
+        let cardLeft = ((scroll.contentSize.width - column) / 2).rounded() - CardSurface.outset
+        scrubber.wakeWidth = min(40, max(12, cardLeft - 4))
         close.frame = NSRect(x: bounds.width - 34, y: bounds.height - 34, width: 22, height: 22)
+        foldButton.frame = close.frame.offsetBy(dx: -24, dy: 0)
+        // What sits left of the ×: left of the fold button too, when it shows.
+        let controlsLeft = foldButton.isHidden ? close.frame.minX : foldButton.frame.minX
         let bar = sheetBar.fittingSize
         // Centred, or left of the bunched sheets where they would meet.
         var barX = ((bounds.width - bar.width) / 2).rounded()
-        if !beneath.isEmpty { barX = min(barX, close.frame.minX - 6 - stackPill.fittingWidth(within: min(260, bounds.width * 0.45)) - 10 - bar.width) }
+        if !beneath.isEmpty { barX = min(barX, controlsLeft - 6 - stackPill.fittingWidth(within: min(260, bounds.width * 0.45)) - 10 - bar.width) }
         sheetBar.frame = NSRect(x: max(8, barX), y: card.maxY - bar.height - 10, width: bar.width, height: bar.height)
         grip.frame = NSRect(x: 56, y: bounds.height - 12, width: max(0, bounds.width - 112), height: 12)
         // The sheets beneath, bunched left of the ×, on its middle.
         let pillHeight = StackPill.fittingHeight
         let pillWidth = stackPill.fittingWidth(within: max(0, min(260, bounds.width * 0.45)))
-        stackPill.frame = NSRect(x: close.frame.minX - 6 - pillWidth, y: close.frame.maxY - pillHeight + 1,
+        stackPill.frame = NSRect(x: controlsLeft - 6 - pillWidth, y: close.frame.maxY - pillHeight + 1,
                                  width: pillWidth, height: pillHeight)
         switcher?.frame = bounds
         relayout()
@@ -961,8 +1273,9 @@ final class Column: NSView, OutlineTextViewNavigator {
         let laidOut = blocks.filter { placed.contains(ObjectIdentifier($0)) && $0.frame.height > 0 }
         let anchor = (laidOut.last { $0.frame.minY <= top } ?? laidOut.first).map { ($0, top - $0.frame.minY) }
         var y: CGFloat = isTimeline ? 24 : 40
-        // The notes clear of the scrubber, on the left.
-        let inset: CGFloat = 36
+        // The notes across the whole column: the scrubber lies over them,
+        // when it is wanted.
+        let inset: CGFloat = 0
         for view in blocks {
             let height = view.desiredHeight(width: width - inset)
             let frame = NSRect(x: inset, y: y, width: width - inset, height: height)
@@ -1099,7 +1412,21 @@ final class Column: NSView, OutlineTextViewNavigator {
         settled = true
         guard let key, let view = view(for: key), !view.hasConflict else { return }
         window?.makeFirstResponder(view.editor)
-        _ = view.restoreSelection()
+        if view.restoreSelection() { keepCaretInSight(view) }
+    }
+
+    /// The caret put back, in sight: scrolled to, when it is not.
+    func keepCaretInSight(_ view: DayView) {
+        let editor = view.editor
+        guard let layout = editor.layoutManager, let container = editor.textContainer, let storage = editor.textStorage else { return }
+        let location = min(editor.selectedRange().location, max(0, storage.length - 1))
+        let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: location, length: storage.length > 0 ? 1 : 0), actualCharacterRange: nil)
+        let line = layout.boundingRect(forGlyphRange: glyphs, in: container)
+        let caret = document.convert(line.offsetBy(dx: editor.textContainerOrigin.x, dy: editor.textContainerOrigin.y), from: editor)
+        let visible = scroll.contentView.bounds
+        let margin: CGFloat = 80
+        guard caret.minY < visible.minY + margin || caret.maxY > visible.maxY - margin else { return }
+        scroll(toY: max(0, caret.midY - visible.height / 3), animated: false)
     }
 
     /// How far down the column is scrolled.
@@ -1118,7 +1445,7 @@ final class Column: NSView, OutlineTextViewNavigator {
         settled = true
         guard !view.hasConflict else { return }
         window?.makeFirstResponder(view.editor)
-        if !view.restoreSelection() { view.editor.enter(from: .bottom, x: .greatestFiniteMagnitude, scrolling: false) }
+        if view.restoreSelection() { keepCaretInSight(view) } else { view.editor.enter(from: .bottom, x: .greatestFiniteMagnitude, scrolling: false) }
     }
 
     private func drag(to fraction: CGFloat) {
@@ -1147,6 +1474,7 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     func hoverForScript(_ fraction: CGFloat) {
         layoutSubtreeIfNeeded()
+        scrubber.reveal()
         scrubber.hover(atFraction: fraction)
     }
 
@@ -1197,6 +1525,47 @@ final class Scrubber: NSView {
     private var dragged = false
 
     override var isFlipped: Bool { true }
+
+    // MARK: Shown while wanted
+
+    /// Whether the pointer is over it.
+    private var inUse = false
+    /// How far in from its left edge the pointer wakes it: the room left of
+    /// the cards. Out of sight, the rest of it is the cards', to click in.
+    var wakeWidth: CGFloat = 40
+    private var isShown: Bool { alphaValue > 0.5 }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        guard isShown || local.x <= wakeWidth else { return nil }
+        return super.hitTest(point)
+    }
+    private var fadeTimer: Timer?
+
+    /// Shown only while the pointer is over it: else out of the way of the reading.
+    func reveal() {
+        fadeTimer?.invalidate()
+        // At once, as the page moves; it fades away slowly after.
+        if alphaValue < 1 {
+            NSAnimationContext.runAnimationGroup { $0.duration = 0 }
+            alphaValue = 1
+        }
+        guard !inUse else { return }
+        fadeTimer = Timer.scheduledTimer(withTimeInterval: 1.2, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.fadeOut() }
+        }
+    }
+
+    private func fadeOut() {
+        guard !inUse else { return }
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.35; animator().alphaValue = 0 }
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard isShown || convert(event.locationInWindow, from: nil).x <= wakeWidth else { return }
+        inUse = true
+        reveal()
+    }
 
     func update(marks: [ScrubMark], height: CGFloat, visible: NSRect) {
         self.marks = marks.sorted { $0.y < $1.y }
@@ -1264,6 +1633,9 @@ final class Scrubber: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        // Over the text, a ground of the page's colour to read the ticks on.
+        Ink.page.withAlphaComponent(0.92).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10).fill()
         if earlier != nil { drawChevron(in: earlierRect, up: true, hot: hoveredEnd == true) }
         if later != nil { drawChevron(in: laterRect, up: false, hot: hoveredEnd == false) }
         let top = position(visible.minY)
@@ -1305,6 +1677,12 @@ final class Scrubber: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        // Over the cards, out of sight: theirs. From the strip left of them, woken.
+        if !inUse {
+            guard point.x <= wakeWidth else { return }
+            inUse = true
+            reveal()
+        }
         hoveredEnd = end(at: point)
         if let isEarlier = hoveredEnd, let name = isEarlier ? earlier : later {
             hovered = nil
@@ -1329,6 +1707,8 @@ final class Scrubber: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
+        inUse = false
+        reveal()
         hovered = nil
         hoveredEnd = nil
         needsDisplay = true
@@ -1415,7 +1795,7 @@ final class TopFade: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSGradient(colors: [Ink.paper, Ink.paper, Ink.paper.withAlphaComponent(0)],
+        NSGradient(colors: [Ink.page, Ink.page, Ink.page.withAlphaComponent(0)],
                    atLocations: [0, 0.55, 1], colorSpace: .sRGB)?.draw(in: bounds, angle: -90)
     }
 }
@@ -1476,6 +1856,9 @@ final class NoteHeaderLink: NSView {
 /// Over a column while the pointer is in it, as Mail shows its message's
 /// actions: a button for each kind of sheet that can be put on it.
 final class SheetBar: NSView {
+    /// In the title bar: a click here is its own, not the start of moving the window.
+    override var mouseDownCanMoveWindow: Bool { false }
+
     enum Choice: CaseIterable {
         case timeline, backlinks, inbox, tasks, search
 

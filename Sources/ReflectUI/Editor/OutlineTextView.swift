@@ -796,6 +796,15 @@ package final class OutlineTextView: NSTextView {
 
     package override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        // A folded row's pill: opened.
+        if let index = outlineLayout.foldPillHit(at: point, origin: textContainerOrigin) {
+            window?.makeFirstResponder(self)
+            perform("Expand", on: index..<(index + 1), followingCaret: false) { rows, selection in
+                OutlineEditing.unfold(&rows, at: selection.lowerBound)
+                return selection
+            }
+            return
+        }
         if let index = outlineLayout.handleHit(at: point, origin: textContainerOrigin) {
             window?.makeFirstResponder(self)
             // Clicked, a bullet does what it does; moved, it carries its row.
@@ -846,6 +855,28 @@ package final class OutlineTextView: NSTextView {
             return
         }
         LinkCard.shared.hide()
+        // ⌘ held, a row is taken by its words as by its bullet: dragged, it
+        // carries its rows under it; clicked, it does what a ⌘-click does.
+        if event.modifierFlags.contains(.command), event.clickCount == 1, isEditable,
+           let index = rowUnder(point) {
+            window?.makeFirstResponder(self)
+            let start = event.locationInWindow
+            while let next = window?.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) {
+                if next.type == .leftMouseUp {
+                    if let url = link(at: point) { navigator?.outlineView(self, open: url, inSplit: true) }
+                    else {
+                        if selectedRows != nil { leaveRowSelection() }
+                        setSelectedRange(NSRange(location: characterIndexForInsertion(at: point), length: 0))
+                    }
+                    return
+                }
+                if hypot(next.locationInWindow.x - start.x, next.locationInWindow.y - start.y) >= 4 {
+                    beginDraggingRows(from: index, event: event)
+                    return
+                }
+            }
+            return
+        }
         if event.clickCount == 1, let url = link(at: point) {
             // A click on a link follows it — once the button comes up
             // without the pointer having moved off to drag.
@@ -862,6 +893,16 @@ package final class OutlineTextView: NSTextView {
         }
         if selectedRows != nil { leaveRowSelection() }
         super.mouseDown(with: event)
+    }
+
+    /// The row whose line a point is on.
+    private func rowUnder(_ point: NSPoint) -> Int? {
+        guard let layout = layoutManager, let container = textContainer, let storage = textStorage, storage.length > 0 else { return nil }
+        let inContainer = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        let glyph = layout.glyphIndex(for: inContainer, in: container)
+        let line = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        guard inContainer.y >= line.minY - 2, inContainer.y <= line.maxY + 2 else { return nil }
+        return rowIndex(at: layout.characterIndexForGlyph(at: glyph))
     }
 
     /// The link under a point, when the point is on its text.

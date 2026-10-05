@@ -52,7 +52,7 @@ package final class ImageStore: @unchecked Sendable {
     /// the size the note gives, or its own.
     package func size(of reference: ImageReference) -> CGSize? {
         // A post is the card's size, whatever the note says.
-        if Tweet.id(from: reference.source) != nil || Video.id(from: reference.source) != nil { return naturalSize(reference.source) }
+        if Tweet.key(from: reference.source) != nil || Video.id(from: reference.source) != nil { return naturalSize(reference.source) }
         guard let natural = naturalSize(reference.source), natural.width > 0, natural.height > 0 else { return nil }
         // Made larger or smaller here: its width, in its own shape.
         if let given = viewerSize(ImageBox.sizeKey(source: reference.source, carousel: false)) {
@@ -69,7 +69,7 @@ package final class ImageStore: @unchecked Sendable {
     /// A picture's own size in points, or nil when it is not one — or not
     /// here yet, in which case it is sent for.
     package func naturalSize(_ source: String) -> CGSize? {
-        if let id = Tweet.id(from: source) { return tweet(source, id: id).map(TweetCard.size(of:)) }
+        if Tweet.key(from: source) != nil { return tweet(source).map(TweetCard.size(of:)) }
         if let id = Video.id(from: source) { return video(source, id: id).map(VideoCard.size(of:)) }
         if let known = sizes[source] { return known }
         if let file = assetURL(source) {
@@ -113,7 +113,62 @@ package final class ImageStore: @unchecked Sendable {
 
     /// The post a source links, once it is here; sent for when it is not.
     package func tweet(_ source: String) -> Tweet? {
-        Tweet.id(from: source).flatMap { tweet(source, id: $0) }
+        if let id = Tweet.id(from: source) { return tweet(source, id: id) }
+        if let path = Tweet.threadsPath(from: source) { return threadsPost(source, path: path) }
+        return nil
+    }
+
+    /// A Threads post, from its embed page — a share link followed to the
+    /// post it leads to first.
+    private func threadsPost(_ source: String, path: String) -> Tweet? {
+        if let known = tweets[source] { return known }
+        let key = "threads-" + path.replacingOccurrences(of: "/", with: "-")
+        let cached = Self.cacheDirectory.appendingPathComponent("\(key).html")
+        if FileManager.default.fileExists(atPath: cached.path + ".gone") {
+            tweets[source] = .some(nil)
+            return nil
+        }
+        if let data = try? Data(contentsOf: cached) {
+            let post = Tweet(threadsEmbed: String(decoding: data, as: UTF8.self), path: path)
+            tweets[source] = post
+            if let post { want(post, for: source) }
+            return post
+        }
+        guard !fetching.contains(source) else { return nil }
+        fetching.insert(source)
+        Task.detached(priority: .utility) {
+            let found = await Self.fetchThreads(path: path, to: cached)
+            if !found { Log.shared.info("images", "No Threads post at \(source)") }
+            await MainActor.run {
+                self.fetching.remove(source)
+                self.tweets[source] = nil
+                if found { NotificationCenter.default.post(name: Self.didLoad, object: source) }
+            }
+        }
+        return nil
+    }
+
+    private nonisolated static func fetchThreads(path: String, to cached: URL) async -> Bool {
+        var path = path
+        let agent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
+        func get(_ url: URL) async -> (Data, URL?, Int)? {
+            var request = URLRequest(url: url)
+            request.setValue(agent, forHTTPHeaderField: "User-Agent")
+            guard let (data, response) = try? await URLSession.shared.data(for: request) else { return nil }
+            return (data, response.url, (response as? HTTPURLResponse)?.statusCode ?? 200)
+        }
+        // A share link: where it leads, first.
+        if path.hasPrefix("share/"), let url = URL(string: "https://www.threads.com/" + path),
+           let (_, final, _) = await get(url), let final, let resolved = Tweet.threadsPath(from: final.absoluteString),
+           !resolved.hasPrefix("share/") {
+            path = resolved
+        }
+        guard let url = URL(string: "https://www.threads.com/" + path + "/embed"), let (data, _, status) = await get(url) else { return false }
+        if (200..<300).contains(status), Tweet(threadsEmbed: String(decoding: data, as: UTF8.self), path: path) != nil {
+            return (try? data.write(to: cached, options: .atomic)) != nil
+        }
+        if (200..<300).contains(status) || status == 404 { FileManager.default.createFile(atPath: cached.path + ".gone", contents: nil) }
+        return false
     }
 
     private func tweet(_ source: String, id: String) -> Tweet? {
@@ -348,7 +403,7 @@ package final class ImageBox: NSObject {
     /// carousel — not a card, whose size is its own, nor a PDF, which has
     /// its own grip.
     package var isResizable: Bool {
-        carousel != nil || (!isPDF && Tweet.id(from: source) == nil && Video.id(from: source) == nil)
+        carousel != nil || (!isPDF && Tweet.key(from: source) == nil && Video.id(from: source) == nil)
     }
 
     /// Space above and below a picture.

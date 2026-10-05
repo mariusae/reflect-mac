@@ -10,7 +10,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var windowController: MainWindowController?
     /// Where the browser extension sends pages.
-    let captureServer = CaptureServer()
+    let captureServer: CaptureServer = {
+        // A scripted run listens beside the app in use, not in its place.
+        let scripted = ProcessInfo.processInfo.environment["REFLECT_SCRIPT"] != nil
+        return CaptureServer(app: "Reflect Mac", port: scripted ? 47_812 : 47_811,
+                             tokensKey: scripted ? "CaptureTokens (scripts)" : "CaptureTokens", isScripted: scripted)
+    }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         StallWatch.shared.start()

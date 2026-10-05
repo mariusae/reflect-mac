@@ -1,54 +1,6 @@
 import AppKit
 import ReflectCore
 
-/// A YouTube video, as much of it as a card shows: from YouTube's oEmbed
-/// answer, as Reflect's editor reads it.
-package struct Video: Sendable {
-    package var id: String
-    package var title: String
-    package var author: String
-    package var thumbnail: String?
-
-    /// The video a link names: `youtube.com/watch?v=…`, `youtu.be/…`, and
-    /// `/shorts/`, `/live/` and `/embed/` ones — on `www.`, `m.` or `music.`.
-    package static func id(from source: String) -> String? {
-        guard let url = URL(string: source), var host = url.host?.lowercased() else { return nil }
-        for prefix in ["www.", "m.", "music."] where host.hasPrefix(prefix) { host.removeFirst(prefix.count) }
-        let parts = url.path.split(separator: "/").map(String.init)
-        var id: String?
-        switch host {
-        case "youtu.be":
-            id = parts.first
-        case "youtube.com", "youtube-nocookie.com":
-            if parts.first == "watch" {
-                id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "v" }?.value
-            } else if parts.count >= 2, ["shorts", "live", "embed", "v"].contains(parts[0]) {
-                id = parts[1]
-            }
-        default:
-            return nil
-        }
-        guard let id, id.count == 11, id.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) else { return nil }
-        return id
-    }
-
-    /// Where YouTube tells of a video.
-    package static func endpoint(for id: String) -> URL? {
-        let watch = "https://www.youtube.com/watch?v=\(id)"
-        return URL(string: "https://www.youtube.com/oembed?format=json&url=" + (watch.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? watch))
-    }
-
-    /// Reads oEmbed's answer, or nil for anything else.
-    package init?(json data: Data, id: String) {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let title = root["title"] as? String else { return nil }
-        self.id = id
-        self.title = title
-        author = root["author_name"] as? String ?? ""
-        thumbnail = root["thumbnail_url"] as? String ?? "https://i.ytimg.com/vi/\(id)/hqdefault.jpg"
-    }
-}
-
 /// Draws a video as a card: its picture, a play button on it, its title,
 /// and whose it is.
 package enum VideoCard {

@@ -18,7 +18,13 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     private var responderWatch: NSKeyValueObservation?
     private let sidebar = Sidebar()
     private let finder = Finder()
-    private let heading = NSTextField(labelWithString: "")
+    /// ⌘Y: the rows lately written in, to go back to.
+    private let recentFinder = Finder()
+    private var recent = RecentEdits()
+    /// What each note shown said when last read or written: the edits are
+    /// what changed from it.
+    private var lastText: [String: String] = [:]
+    private let heading = PassThroughLabel(labelWithString: "")
     /// What a sync is doing, at the window's foot, for a moment.
     private let syncStatus = NSTextField(labelWithString: "")
     /// The graph's repository kept in step — only when asked, with ⌘S:
@@ -39,7 +45,12 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }()
     /// The column the finder, Today and the sidebar open in.
     private weak var active: Column? {
-        didSet { if active !== oldValue { page.needsLayout = true } }
+        didSet {
+            guard active !== oldValue else { return }
+            page.needsLayout = true
+            // The bar of sheets to add, on the focused column alone.
+            for column in columns { column.isFocused = column === active }
+        }
     }
 
 
@@ -79,7 +90,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
                               backing: .buffered, defer: false)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.backgroundColor = Ink.paper
+        window.backgroundColor = Ink.page
         window.minSize = NSSize(width: 420, height: 320)
         window.setFrameAutosaveName("Prism")
         if !window.setFrameUsingName("Prism") { window.center() }
@@ -109,6 +120,15 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             self?.open(place.path, newColumn: newColumn)
         }
         finder.onClose = { [weak self] in self?.closeFinder() }
+        recentFinder.placeholder = "Go to a recent edit"
+        recentFinder.search = { [weak self] query in self?.findRecent(query) ?? [] }
+        recentFinder.onChoose = { [weak self] place, newColumn in
+            guard let self else { return }
+            closeRecent()
+            if let edit = place.edit { goTo(edit, newColumn: newColumn) }
+        }
+        recentFinder.onClose = { [weak self] in self?.closeRecent() }
+        recent = Self.loadRecent(graph.root)
 
         // The column the keyboard goes into is the one marked, and the one
         // commands act on.
@@ -128,7 +148,12 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             return (NoteRef(path: path), graph.read(path: path) ?? "")
         }
         Column.titles = { [index] path in index.entry(path)?.title }
+        Column.modified = { [index] path in index.entry(path)?.modified }
         Column.flags = { [index] path in NoteFlags(index.entry(path)) }
+        Column.linkPage = { [index] path in
+            guard let body = index.body(path), body.contains("URL:") else { return nil }
+            return WebCapture.url(in: body).flatMap(URL.init(string:))
+        }
         NoteFlags.isEmptyTopic = { [weak self] entry in self?.isEmptyTopic(entry) ?? false }
         let first = makeColumn()
         columns = [first]
@@ -182,17 +207,35 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             self?.saveLayout()
         }
         column.onRaise = { [weak self] column, index in self?.raise(index, in: column) }
+        column.onForward = { [weak self] column, index in self?.forward(index, in: column) }
+        column.onPinSheet = { [weak self] column, index in self?.togglePinnedSheet(index, in: column) }
         column.onOpenAlone = { [weak self] ref, column, newColumn in self?.openAlone(ref, from: column, newColumn: newColumn) }
         column.onDragSheet = { [weak self] column, index, event in self?.drag(index, from: column, event: event) }
         column.onRemoveFromInbox = { [weak self] ref in self?.setFrontmatter(ref.path, "inbox", nil) }
         column.onNoteMenu = { [weak self] view, button in self?.showNoteMenu(for: view, from: button) }
         column.onNeedPicture = { [weak self] sheet, size in self?.picture(of: sheet, size: size) }
+        column.onOpenPage = { [weak self] ref, column in self?.openPage(of: ref, beside: column) }
+        column.onHighlight = { [weak self] ref, passage in self?.highlight(passage, in: ref) }
+        column.onLivePeek = { [weak self] sheet, size in self?.livePeek(of: sheet, size: size) }
+        column.onUnfold = { [weak self] column in self?.setCollapsed(false, column) }
+        column.onFold = { [weak self] column in self?.setCollapsed(true, column) }
+        column.onStripHover = { [weak self] column, inside in self?.showStripPicture(of: column, inside) }
         return column
     }
 
     /// A sheet drawn out of sight, in a column of its own made for it, at a
     /// size: its picture, for one beneath that has none.
     private func picture(of sheet: Sheet, size: NSSize) -> NSImage? {
+        guard let column = sheetColumn(sheet, size: size) else { return nil }
+        column.displayIfNeeded()
+        let image = column.snapshot()
+        column.removeFromSuperview()
+        return image
+    }
+
+    /// A column made for a sheet alone, out of sight, at a size, laid out
+    /// where the sheet was read to: none of the window's columns.
+    private func sheetColumn(_ sheet: Sheet, size: NSSize) -> Column? {
         guard size.width > 0, size.height > 0 else { return nil }
         let column = Column(graph: graph, images: images, metrics: metrics)
         column.face = face
@@ -206,10 +249,89 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         // Where it was read to, again, now that its notes are laid out.
         if let place = sheet.place { column.restore(place, key: place.ref) }
         column.layoutSubtreeIfNeeded()
-        column.displayIfNeeded()
-        let image = column.snapshot()
+        return column
+    }
+
+    /// A sheet live, to peek at with ⌥ held: read, scrolled, copied from,
+    /// not written in — it is looked at, not gone to.
+    private func livePeek(of sheet: Sheet, size: NSSize) -> Column? {
+        guard let column = sheetColumn(sheet, size: size) else { return nil }
         column.removeFromSuperview()
-        return image
+        for view in column.views { view.editor.isEditable = false }
+        for editor in column.sliceEditors { editor.view.isEditable = false }
+        return column
+    }
+
+    // MARK: Folding columns away
+
+    /// The column the keyboard is in folded to a strip at its side, or opened.
+    @objc func toggleCollapsed(_ sender: Any?) {
+        let column = focusedColumn
+        setCollapsed(!column.isCollapsed, column)
+    }
+
+    private func setCollapsed(_ collapsed: Bool, _ column: Column) {
+        // One always left open, to read in.
+        guard !collapsed || columns.contains(where: { $0 !== column && !$0.isCollapsed }) else { return NSSound.beep() }
+        showStripPicture(of: column, false)
+        if collapsed {
+            column.saveAll()
+            column.foldedPicture = column.snapshot()
+        }
+        column.isCollapsed = collapsed
+        // Folded, to the right, out of the sidebar's way; opened, back where it was.
+        if let i = columns.firstIndex(where: { $0 === column }) {
+            columns.remove(at: i)
+            if collapsed {
+                column.unfoldedIndex = i
+                columns.append(column)
+            } else {
+                let open = columns.filter { !$0.isCollapsed }.count
+                columns.insert(column, at: min(column.unfoldedIndex ?? open, open))
+                column.unfoldedIndex = nil
+            }
+            columnsChanged()
+        }
+        page.needsLayout = true
+        if collapsed {
+            // The keyboard to the nearest open one.
+            let index = columns.firstIndex { $0 === column } ?? 0
+            let open = columns.indices.filter { !columns[$0].isCollapsed }
+            let next = open.min { abs($0 - index) < abs($1 - index) }.map { columns[$0] }
+            active = next
+            if let view = next?.current { window?.makeFirstResponder(view.editor) }
+        } else {
+            active = column
+            if let view = column.current { window?.makeFirstResponder(view.editor) }
+        }
+        saveLayout()
+    }
+
+    private let stripPicture = NSImageView()
+
+    /// A folded column, hovered: what is in it, beside its strip.
+    private func showStripPicture(of column: Column, _ shown: Bool) {
+        guard shown, let image = column.foldedPicture else {
+            stripPicture.removeFromSuperview()
+            return
+        }
+        stripPicture.image = image
+        stripPicture.imageScaling = .scaleProportionallyUpOrDown
+        stripPicture.wantsLayer = true
+        stripPicture.layer?.cornerRadius = 8
+        stripPicture.layer?.masksToBounds = true
+        stripPicture.layer?.borderWidth = 1
+        page.effectiveAppearance.performAsCurrentDrawingAppearance {
+            stripPicture.layer?.borderColor = Ink.rule.cgColor
+            stripPicture.layer?.backgroundColor = Ink.paper.cgColor
+        }
+        let width = min(360, page.bounds.width * 0.4)
+        let height = width * image.size.height / max(image.size.width, 1)
+        let strip = column.frame
+        // Beside the strip, on the side with room.
+        let x = strip.maxX + width + 12 <= page.bounds.width ? strip.maxX + 8 : strip.minX - 8 - width
+        stripPicture.frame = NSRect(x: x, y: page.bounds.height - 60 - height, width: width, height: height)
+        page.addSubview(stripPicture)
     }
 
     /// A new column, right of another.
@@ -221,7 +343,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     /// when there is one — on its stack, what was there beneath — else a new
     /// one; a new one always, with ⇧. Says whether it is new.
     private func columnBeside(_ column: Column) -> (column: Column, isNew: Bool) {
-        if !wantsNewColumn, let i = columns.firstIndex(where: { $0 === column }), i + 1 < columns.count {
+        if !wantsNewColumn, let i = columns.firstIndex(where: { $0 === column }), i + 1 < columns.count, !columns[i + 1].isWeb {
             return (columns[i + 1], false)
         }
         return (addColumn(after: column), true)
@@ -304,8 +426,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         case .inbox: .init(kind: "inbox", note: nil, top: sheet.place?.ref.path, offset: Double(sheet.place?.offset ?? 0))
         case .tasks: .init(kind: "tasks", note: nil, top: nil, offset: Double(sheet.offset))
         case .search(let query): .init(kind: "search", note: query, top: nil, offset: Double(sheet.offset))
+        case .web(let ref): .init(kind: "web", note: ref.path, top: nil, offset: 0)
         }
         if !beneath.isEmpty { place.beneath = beneath.map { columnPlace($0) } }
+        if sheet.pinned { place.pinned = true }
+        place.seen = sheet.seen.timeIntervalSince1970.rounded()
         return place
     }
 
@@ -322,19 +447,26 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         case "inbox": kind = .inbox
         case "tasks": kind = .tasks
         case "search": kind = .search(place.note ?? "")
+        case "web":
+            guard let note = place.note else { return nil }
+            kind = .web(NoteRef(path: note))
         default: kind = .timeline
         }
         let top = place.top.map(NoteRef.init(path:))
         var spot = top.map { Column.Place(ref: $0, offset: CGFloat(place.offset)) }
         // A note kept before sheets were, by how far down it was scrolled.
         if case .note(let ref) = kind, top == nil { spot = Column.Place(ref: ref, offset: CGFloat(place.offset) - 40) }
-        return Sheet(kind: kind, place: spot, offset: CGFloat(place.offset), title: Column.title(of: kind, top: top), snapshot: nil)
+        return Sheet(kind: kind, place: spot, offset: CGFloat(place.offset), title: Column.title(of: kind, top: top), snapshot: nil,
+                     pinned: place.pinned == true, seen: place.seen.map(Date.init(timeIntervalSince1970:)) ?? Date())
     }
 
     private func writeLayout() {
         let places = columns.map { column in
-            var place = columnPlace(Sheet(kind: column.kind, place: column.place, offset: column.scrollOffset, title: "", snapshot: nil),
+            var place = columnPlace(Sheet(kind: column.kind, place: column.place, offset: column.scrollOffset, title: "", snapshot: nil,
+                                          pinned: column.isPinned),
                                     beneath: column.beneath)
+            if !column.ahead.isEmpty { place.ahead = column.ahead.map { columnPlace($0) } }
+            if column.isCollapsed { place.collapsed = true }
             place.width = column.share == 1 ? nil : Double(column.share)
             return place
         }
@@ -370,10 +502,14 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             guard let top = sheet(place) else { continue }
             let column = i == 0 ? columns[0] : addColumn(after: columns[i - 1])
             column.beneath = (place.beneath ?? []).compactMap(sheet)
+            column.ahead = (place.ahead ?? []).compactMap(sheet)
             column.share = place.width.map { CGFloat($0) } ?? 1
             materialize(top, in: column, key: key)
+            if place.collapsed == true { column.isCollapsed = true }
         }
-        if let index = state.activeColumn, columns.indices.contains(index) { active = columns[index] }
+        // Never all folded away.
+        if columns.allSatisfy(\.isCollapsed) { columns.first?.isCollapsed = false }
+        if let index = state.activeColumn, columns.indices.contains(index), !columns[index].isCollapsed { active = columns[index] }
         if window?.firstResponder is OutlineTextView == false, let view = active?.current {
             window?.makeFirstResponder(view.editor)
             _ = view.restoreSelection()
@@ -385,15 +521,20 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// Puts what a column shows on its stack, under what comes next. The
     /// stack is kept to so many; the oldest are put away.
-    private func push(_ column: Column) {
+    private func push(_ column: Column, keepingAhead: Bool = false) {
         guard !column.blocks.isEmpty else { return }
         column.beneath.append(column.currentSheet)
         if column.beneath.count > 24 { column.beneath.removeFirst(column.beneath.count - 24) }
+        // What comes next is a sheet of its own: not pinned for the one before it.
+        column.isPinned = false
+        // Somewhere new: the way forward is another way now.
+        if !keepingAhead { column.ahead = [] }
     }
 
     /// Shows a sheet in a column, as it was left.
     private func materialize(_ sheet: Sheet, in column: Column, key: NoteRef? = nil, remember: Bool = true) {
         active = column
+        column.isPinned = sheet.pinned
         switch sheet.kind {
         case .timeline:
             let ref = sheet.place?.ref ?? .day(.today)
@@ -414,7 +555,10 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             column.scroll(toY: sheet.offset + 12, animated: false)
         case .search(let query):
             search(query, in: column, offset: sheet.offset)
+        case .web(let ref):
+            showPage(of: ref, in: column)
         }
+        column.updateSheetBar()
         guard remember else { return }
         showHeading()
         refreshSidebar()
@@ -428,16 +572,44 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         guard column.beneath.indices.contains(index) else { return }
         column.saveAll()
         let sheet = column.beneath[index]
-        column.beneath.removeSubrange(index...)
+        // Those gone back past, the nearest first: pinned ones kept on the
+        // stack, just under where it goes back to; the rest the way forward.
+        let passed = Array(column.beneath[(index + 1)...]) + [column.currentSheet]
+        column.beneath = Array(column.beneath[..<index]) + passed.filter(\.pinned)
+        column.ahead = passed.filter { !$0.pinned } + column.ahead
         materialize(sheet, in: column)
+        saveLayout()
+    }
+
+    /// Forward along the way gone back from, to a sheet on it, by its place
+    /// (0 the nearest): those before it go back on the stack, as they were.
+    private func forward(_ index: Int, in column: Column) {
+        guard column.ahead.indices.contains(index) else { return NSSound.beep() }
+        column.saveAll()
+        let sheet = column.ahead[index]
+        let before = Array(column.ahead[..<index])
+        column.ahead.removeSubrange(...index)
+        push(column, keepingAhead: true)
+        column.beneath += before
+        materialize(sheet, in: column)
+        saveLayout()
+    }
+
+    /// Pins or unpins a sheet: the column's own, for nil; else one beneath.
+    private func togglePinnedSheet(_ index: Int?, in column: Column) {
+        if let index {
+            guard column.beneath.indices.contains(index) else { return }
+            column.beneath[index].pinned.toggle()
+        } else {
+            column.isPinned.toggle()
+        }
         saveLayout()
     }
 
     /// Takes the top sheet off, back to the one beneath.
     private func pop(_ column: Column) {
-        guard let sheet = column.beneath.popLast() else { return NSSound.beep() }
-        column.saveAll()
-        materialize(sheet, in: column)
+        guard !column.beneath.isEmpty else { return NSSound.beep() }
+        raise(column.beneath.count - 1, in: column)
     }
 
     // MARK: Dragging sheets
@@ -492,6 +664,9 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         let side = min(110, column.frame.width * 0.2)
         let drop: Drop = point.x < column.frame.minX + side ? .newColumn(i)
             : point.x > column.frame.maxX - side ? .newColumn(i + 1) : .stack(column)
+        // A page's column takes no sheets, nor is its page a sheet to move.
+        if case .stack(let target) = drop, target.isWeb { return nil }
+        if source.isWeb, index == nil { return nil }
         let at = columns.firstIndex { $0 === source } ?? -1
         switch drop {
         // The top sheet onto its own stack.
@@ -580,6 +755,22 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
                 self.endSwitcher(choosing: nil)
                 return nil
             }
+            // Typed, ⌘ held: a sheet found by its name. E steps along till
+            // something has been typed; then it is typed too.
+            if event.type == .keyDown {
+                var typed = column.switcherQuery ?? ""
+                if event.keyCode == 51 {
+                    guard !typed.isEmpty else { return nil }
+                    typed.removeLast()
+                    column.findInSwitcher(typed)
+                    return nil
+                }
+                guard let characters = event.charactersIgnoringModifiers?.lowercased(), characters.count == 1,
+                      let character = characters.first, character.isLetter || character.isNumber || character == " " else { return event }
+                if character == "e", typed.isEmpty { return event }
+                column.findInSwitcher(typed + String(character))
+                return nil
+            }
             return event
         }
     }
@@ -611,11 +802,17 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     private func layoutPage() {
         let bounds = page.bounds
         let left = sidebarPinned ? Sidebar.width + 16 : 0
-        // Each column its share of the width.
-        let total = columns.reduce(0) { $0 + $1.share }
+        // Each column its share of the width; a folded one, a strip's.
+        let open = columns.filter { !$0.isCollapsed }
+        let folded = CGFloat(columns.count - open.count) * CollapsedStrip.width
+        let total = open.reduce(0) { $0 + $1.share }
+        let last = open.last
         var x = left
-        for (i, column) in columns.enumerated() {
-            let width = i == columns.count - 1 ? bounds.width - x : round((bounds.width - left) * column.share / max(total, 0.01))
+        for column in columns {
+            let after = CGFloat(columns.drop { $0 !== column }.dropFirst().count) * CollapsedStrip.width
+            let width = column.isCollapsed ? CollapsedStrip.width
+                : column === last ? bounds.width - x - after
+                : round((bounds.width - left - folded) * column.share / max(total, 0.01))
             column.frame = NSRect(x: round(x), y: 0, width: width, height: bounds.height)
             x += width
         }
@@ -699,7 +896,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// Opens a note in the column the keyboard is in, or in a new one.
     func open(_ path: String, remember: Bool = true, newColumn: Bool = false, from source: Column? = nil) {
-        var column = source ?? focusedColumn
+        var column = notesColumn(source ?? focusedColumn)
         var fresh = false
         if newColumn { (column, fresh) = columnBeside(column) }
         if remember, !fresh {
@@ -883,6 +1080,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }
 
     private func noteShown(_ view: DayView) {
+        if lastText[view.ref.path] == nil { lastText[view.ref.path] = graph.read(path: view.ref.path) ?? "" }
         guard view.ref.day == nil, settledTitles[view.ref.path] == nil, let title = title(of: view) else { return }
         settledTitles[view.ref.path] = title
     }
@@ -890,6 +1088,8 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     /// A note written: a title typed in it waits to settle, then is taken.
     private func noteSaved(_ view: DayView) {
         let path = view.ref.path
+        noteEdits(path)
+        refreshPages(of: view.ref)
         guard let title = title(of: view), title != settledTitles[path] else {
             retitleTimers.removeValue(forKey: path)?.invalidate()
             pendingTitles[path] = nil
@@ -1122,8 +1322,15 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// A view opened as a new sheet on the column the keyboard is in, what
     /// was there going beneath it.
+    /// Where a sheet goes, asked of a column: never on a page's column — the
+    /// nearest column of notes before it, else a new one beside it.
+    private func notesColumn(_ column: Column) -> Column {
+        guard column.isWeb, let i = columns.firstIndex(where: { $0 === column }) else { return column }
+        return columns[..<i].last { !$0.isWeb } ?? addColumn(after: column)
+    }
+
     private func openSheet(_ kind: Column.Kind, at ref: NoteRef? = nil, on target: Column? = nil) {
-        let column = target ?? focusedColumn
+        let column = notesColumn(target ?? focusedColumn)
         push(column)
         materialize(Sheet(kind: kind, place: ref.map { Column.Place(ref: $0, offset: -12) }, offset: 0,
                           title: Column.title(of: kind, top: ref), snapshot: nil), in: column)
@@ -1452,6 +1659,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         item("Backlinks", #selector(showBacklinks(_:)))
         item("Copy Link", #selector(copyNoteLink(_:)))
         item("Reveal in Finder", #selector(revealNoteInFinder(_:)))
+        // Among others, how its card shows it.
+        if columns.contains(where: { $0.listsNotes && $0.views.contains(view) }) {
+            menu.addItem(.separator())
+            NoteCardBlock.showAsItems(view.ref.path).forEach(menu.addItem)
+        }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.isFlipped ? button.bounds.height + 4 : -4), in: button)
     }
 
@@ -1540,13 +1752,120 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         open(GraphPaths.weeklyPath(for: .current), from: timeline)
     }
 
+    /// ⌘N: a new row at the top of today — under its title, if it has
+    /// one — the caret in it; in today's own empty row, when it has none.
+    @objc func writeToday(_ sender: Any?) {
+        goToday(sender)
+        let today = NoteRef.day(.today)
+        // Once today is laid out where it was gone to.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let view = columns.lazy.compactMap({ $0.view(for: today) }).first else { return NSSound.beep() }
+            let editor = view.editor
+            let rows = editor.rows
+            window?.makeFirstResponder(editor)
+            let at = rows.first.map { if case .heading(1) = $0.kind { 1 } else { 0 } } ?? 0
+            // Its first row empty already: that one, not another.
+            if rows.indices.contains(at), rows[at].text.isEmpty {
+                editor.editText(inRow: at)
+                return
+            }
+            var after = rows
+            after.insert(.blank, at: at)
+            editor.replace(rows, with: after, actionName: "New Row")
+            editor.editText(inRow: at)
+        }
+    }
+
+    // MARK: Link notes' pages
+
+    /// A link note's page, in a column of its own beside the note's — or
+    /// the one already showing it.
+    private func openPage(of ref: NoteRef, beside column: Column) {
+        save()
+        if let open = columns.first(where: { $0.kind == .web(ref) }) {
+            active = open
+            return
+        }
+        let new = addColumn(after: column)
+        materialize(Sheet(kind: .web(ref), place: nil, offset: 0, title: Column.title(of: .web(ref), top: nil), snapshot: nil), in: new)
+        saveLayout()
+    }
+
+    /// Shows a link note's page in a column, its note's highlights marked.
+    private func showPage(of ref: NoteRef, in column: Column) {
+        let source = graph.read(path: ref.path) ?? ""
+        guard let address = WebCapture.url(in: source), let url = URL(string: address) else { return NSSound.beep() }
+        column.showWeb(ref, url: url, highlights: WebCapture.highlights(in: source))
+    }
+
+    /// The pages of a note shown, marked as its note now says.
+    private func refreshPages(of ref: NoteRef) {
+        let pages = columns.filter { $0.kind == .web(ref) }
+        guard !pages.isEmpty else { return }
+        let highlights = WebCapture.highlights(in: graph.read(path: ref.path) ?? "")
+        pages.forEach { $0.updateWebHighlights(highlights) }
+    }
+
+    /// A passage highlighted on a page: kept in its note, under its Highlights.
+    private func highlight(_ passage: String, in ref: NoteRef) {
+        save()
+        guard let source = graph.read(path: ref.path) else { return NSSound.beep() }
+        let updated = WebCapture.highlighting(passage, in: source)
+        guard updated != source else { return }
+        do {
+            try graph.write(updated, path: ref.path)
+        } catch {
+            NSAlert(error: error).runModal()
+            return
+        }
+        index.refresh(ref.path)
+        columns.forEach { $0.reloadFromDisk([ref.path]) }
+    }
+
+    // MARK: Pages captured in a browser
+
+    /// A page the browser extension captured: its screenshot kept in the
+    /// graph's assets, its note written — or, captured before, added to —
+    /// and linked from today; every column showing them caught up.
+    func capture(_ page: WebCapture.Page, screenshot: Data?) throws -> (path: String, title: String) {
+        save()
+        var page = page
+        if let screenshot {
+            let name = "screenshot-" + Assets.slug(WebCapture.title(page.title, url: page.url)).prefix(40) + "-"
+                + Assets.pastedName(extension: "png").replacingOccurrences(of: "pasted-", with: "")
+            page.screenshot = try Assets.add(screenshot, named: name, to: graph.root)
+        }
+        let path = try WebCapture.save(page, in: graph, index: index)
+        notesChanged([path, GraphPaths.dailyPath(for: .today)])
+        sync.noteChanged()
+        return (path, index.entry(path)?.title ?? WebCapture.title(page.title, url: page.url))
+    }
+
+    /// A captured page's note, opened from the browser: the window brought
+    /// forward, the note in the column the keyboard is in.
+    func openCaptured(_ path: String) {
+        NSApp.activate()
+        window?.makeKeyAndOrderFront(nil)
+        open(path)
+    }
+
+    /// ⌘D: today, in the column the keyboard is in — its timeline taken
+    /// there, or, showing anything else, a timeline put on it about today.
     @objc func goToday(_ sender: Any?) {
-        let timeline = focusedColumn.isTimeline ? focusedColumn : columns.first { $0.isTimeline } ?? focusedColumn
-        open(GraphPaths.dailyPath(for: .today), from: timeline)
+        let column = focusedColumn
+        if column.isTimeline {
+            open(GraphPaths.dailyPath(for: .today), from: column)
+        } else {
+            openSheet(.timeline, at: .day(.today), on: column)
+        }
     }
 
     /// Back: the top sheet of the focused column taken off.
     @objc func goBack(_ sender: Any?) { pop(focusedColumn) }
+
+    @objc func goForward(_ sender: Any?) { forward(0, in: focusedColumn) }
+
+    @objc func pinSheet(_ sender: Any?) { togglePinnedSheet(nil, in: focusedColumn) }
 
     @objc func findNote(_ sender: Any?) { showFinder() }
 
@@ -1570,6 +1889,112 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             page.addSubview(finder)
         }
         finder.open(face: face, query: query)
+    }
+
+    // MARK: Recent edits
+
+    /// The rows changed since a note was last read, kept as recent edits.
+    private func noteEdits(_ path: String) {
+        let now = graph.read(path: path) ?? ""
+        let before = lastText[path] ?? now
+        lastText[path] = now
+        guard before != now else { return }
+        recent.note(path, from: before, to: now)
+        saveRecent()
+    }
+
+    private static let ago: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
+    private static func recentURL(_ root: URL) -> URL {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Prism")
+        try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        let scripted = ProcessInfo.processInfo.environment["PRISM_SNAP"] != nil
+        let name = String(root.standardizedFileURL.path.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : "-" })
+        return support.appendingPathComponent("Recent edits\(scripted ? " (scripts)" : "") \(name.suffix(60)).json")
+    }
+
+    private static func loadRecent(_ root: URL) -> RecentEdits {
+        guard let data = try? Data(contentsOf: recentURL(root)) else { return RecentEdits() }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return (try? decoder.decode(RecentEdits.self, from: data)) ?? RecentEdits()
+    }
+
+    private var recentSaving = false
+
+    /// Written a moment later, once for many saves.
+    private func saveRecent() {
+        guard !recentSaving else { return }
+        recentSaving = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self else { return }
+            recentSaving = false
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .secondsSince1970
+            if let data = try? encoder.encode(recent) { try? data.write(to: Self.recentURL(graph.root), options: .atomic) }
+        }
+    }
+
+    /// ⌘Y: the rows lately written in, found by their words or their parents'.
+    @objc func showRecentEdits(_ sender: Any?) {
+        save()
+        _ = focusedColumn
+        if recentFinder.superview == nil {
+            recentFinder.frame = page.bounds
+            page.addSubview(recentFinder)
+        }
+        recentFinder.open(face: face)
+    }
+
+    private func closeRecent() {
+        recentFinder.removeFromSuperview()
+        if let view = active?.current { window?.makeFirstResponder(view.editor) }
+    }
+
+    private func findRecent(_ query: String) -> [Place] {
+        recent.matching(query, title: { Column.name(of: NoteRef(path: $0)).title }).compactMap { edit in
+            guard graph.exists(path: edit.path) else { return nil }
+            let note = NoteRef(path: edit.path)
+            let name = Column.name(of: note).title
+            let path = ([name] + edit.ancestors.map { InlineMarkup.plainText($0) }).joined(separator: "  ›  ")
+            let text = InlineMarkup.plainText(edit.text)
+            return Place(title: text.isEmpty ? "(empty)" : text, path: edit.path, detail: Self.ago.localizedString(for: edit.date, relativeTo: Date()), trail: path, edit: edit)
+        }
+    }
+
+    /// `PRISM_RECENT=<query>`: ⌘Y's finder opened on a query, its rows printed;
+    /// `PRISM_RECENT_GO=1`, the first gone to, and the caret's row printed.
+    func recentForScript(_ query: String, go: Bool) {
+        showRecentEdits(nil)
+        recentFinder.open(face: face, query: query)
+        for place in findRecent(query).prefix(5) { print("recent: \(place.trail ?? "") ›› \(place.title)") }
+        guard go, let edit = findRecent(query).first?.edit else { return }
+        closeRecent()
+        goTo(edit, newColumn: false)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let editor = self?.window?.firstResponder as? OutlineTextView else { return print("caret: none") }
+            let row = editor.rowIndex(at: editor.selectedRange().location)
+            print("caret: row \(row) “\(editor.rows[row].text)”")
+        }
+    }
+
+    /// Goes to an edit's row: its note opened, the row shown, the caret at its end.
+    private func goTo(_ edit: RecentEdits.Edit, newColumn: Bool) {
+        open(edit.path, newColumn: newColumn)
+        let ref = NoteRef(path: edit.path)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let view = columns.lazy.compactMap({ $0.view(for: ref) }).first,
+                  let target = RecentEdits.locate(edit, in: graph.read(path: edit.path) ?? "") else { return }
+            let editor = view.editor
+            guard let row = editor.showRow(unfolded: target) else { return }
+            window?.makeFirstResponder(editor)
+            editor.editText(inRow: row)
+            editor.showFindIndicator(for: editor.paragraphRanges[row])
+        }
     }
 
     private func closeFinder() {
@@ -1613,6 +2038,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         case #selector(copyNoteLink(_:)), #selector(revealNoteInFinder(_:)):
             return menuNote != nil
         case #selector(goBack(_:)): return !focusedColumn.beneath.isEmpty
+        case #selector(goForward(_:)): return !focusedColumn.ahead.isEmpty
+        case #selector(toggleCollapsed(_:)): return columns.count > 1
+        case #selector(pinSheet(_:)):
+            item.title = focusedColumn.isPinned ? "Unpin Sheet" : "Pin Sheet"
+            return true
         default: break
         }
         return true
@@ -1676,14 +2106,86 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }
 
     /// Opens the backlinks column of a note, from the column it is in.
-    func peekForScript(pointingAt index: Int?) { columns.last?.showSheetListForScript(pointingAt: index) }
+    /// `PRISM_STACK`: steps on a column's stack, in turn — `pin:<i>` (`pin:top`
+    /// for its own), `back:<i>`, `forward:<i>`, `open:<title>` — each printed after.
+    func stackForScript(_ steps: String) {
+        let index = ProcessInfo.processInfo.environment["PRISM_PEEK_COLUMN"].flatMap(Int.init)
+        guard let column = index.flatMap({ columns.indices.contains($0) ? columns[$0] : nil }) ?? columns.last else { return }
+        for step in steps.split(separator: "|") {
+            let parts = step.split(separator: ":", maxSplits: 1).map(String.init)
+            let arg = parts.count > 1 ? parts[1] : ""
+            switch parts[0] {
+            case "pin": togglePinnedSheet(arg == "top" ? nil : Int(arg), in: column)
+            case "back": raise(Int(arg) ?? column.beneath.count - 1, in: column)
+            case "forward": forward(Int(arg) ?? 0, in: column)
+            case "open": addSheet(SheetBar.Choice.allCases.first { $0.name.lowercased() == arg } ?? .inbox, on: column)
+            case "age":
+                // `age:<i>:<hours>`: a sheet beneath left so long ago.
+                let bits = arg.split(separator: ":").compactMap { Double($0) }
+                if bits.count == 2, column.beneath.indices.contains(Int(bits[0])) {
+                    column.beneath[Int(bits[0])].seen = Date().addingTimeInterval(-bits[1] * 3600)
+                }
+            case "today":
+                window?.makeFirstResponder(nil)
+                active = column
+                goToday(nil)
+            case "fold": setCollapsed(true, column)
+            case "unfold": setCollapsed(false, column)
+            default: break
+            }
+            print("\(step): " + sheetsForScript)
+        }
+    }
+
+    /// `PRISM_OPEN_PAGE=<path>`: a link note's page opened beside it; after a
+    /// while, the passages marked on it printed — `PRISM_PAGE_CHOOSE` first
+    /// chosen and highlighted, as the button does — and the note's after.
+    func openPageForScript(_ path: String) {
+        let ref = NoteRef(path: path)
+        guard let column = columns.first else { return }
+        openPage(of: ref, beside: column)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+            guard let self, let page = columns.first(where: { $0.kind == .web(ref) }) else { return print("page: none") }
+            page.checkWebForScript(choosing: ProcessInfo.processInfo.environment["PRISM_PAGE_CHOOSE"]) { marked in
+                print("marked: " + marked)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    print("note highlights: " + WebCapture.highlights(in: self.graph.read(path: path) ?? "").joined(separator: " | "))
+                }
+            }
+        }
+    }
+
+    func peekForScript(pointingAt index: Int?) {
+        let env = ProcessInfo.processInfo.environment
+        let column = env["PRISM_PEEK_COLUMN"].flatMap(Int.init).flatMap { columns.indices.contains($0) ? columns[$0] : nil } ?? columns.last
+        guard let column else { return }
+        column.showSheetListForScript(pointingAt: index)
+        if env["PRISM_PEEK_LIVE"] == "1", let index { column.peekLiveForScript(index) }
+        // `PRISM_PEEK_CLICK`: a click on the oldest sheet, as the mouse would send it.
+        guard env["PRISM_PEEK_CLICK"] == "1", let window, let point = column.oldestSheetPointForScript else { return }
+        print("before click: " + sheetsForScript)
+        // Ordered in where it is, off screen, the app not brought forward: windows not in take no clicks.
+        window.orderFrontRegardless()
+        let at = column.convert(point, to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            if let event = NSEvent.mouseEvent(with: type, location: at, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                NSApp.postEvent(event, atStart: false)
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self else { return }
+            print("after click:  " + sheetsForScript)
+        }
+    }
 
     func sheetBarForScript(_ choice: String) {
-        guard let column = columns.last else { return }
-        column.showSheetBar()
+        let index = ProcessInfo.processInfo.environment["PRISM_PEEK_COLUMN"].flatMap(Int.init)
+        guard let column = index.flatMap({ columns.indices.contains($0) ? columns[$0] : nil }) ?? columns.last else { return }
+        column.updateSheetBar()
         guard let pick = SheetBar.Choice.allCases.first(where: { $0.name.lowercased() == choice }) else { return }
         addSheet(pick, on: column)
-        column.showSheetBar()
+        column.updateSheetBar()
     }
 
     func showBacklinksForScript(_ path: String) {
@@ -1745,13 +2247,61 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// Opens ⌘E's cards, moved down so many, settled, and left open.
     func switchForScript(moves: Int, pick: Bool = false) {
-        if pick {
+        if pick || ProcessInfo.processInfo.environment["PRISM_SWITCH_KEYS"] != nil {
             window?.makeFirstResponder(nil)
             active = columns.max { $0.beneath.count < $1.beneath.count }
         }
         cycleSheets(backward: false)
         for _ in 0..<abs(moves) { switcherColumn?.moveSwitcher(moves < 0 ? 1 : -1) }
         switcherColumn?.settleSwitcherForScript()
+        if let typed = ProcessInfo.processInfo.environment["PRISM_SWITCH_TYPE"] {
+            switcherColumn?.findInSwitcher(typed)
+            switcherColumn?.settleSwitcherForScript()
+        }
+        if let at = ProcessInfo.processInfo.environment["PRISM_SWITCH_AT"].flatMap(Double.init) {
+            switcherColumn?.freezeSwitcherForScript(at: CGFloat(at))
+        }
+        // `PRISM_SWITCH_KEYS`: letters typed as the keyboard would, ⌘ held, then ⌘ let go.
+        if let keys = ProcessInfo.processInfo.environment["PRISM_SWITCH_KEYS"], let window {
+            print("before keys: " + sheetsForScript)
+            // Ordered in, off screen, not brought forward: its animations run.
+            window.orderFrontRegardless()
+            for character in keys {
+                let text = character == "<" ? "\u{7f}" : String(character)
+                if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                                                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                context: nil, characters: text, charactersIgnoringModifiers: text, isARepeat: false,
+                                                keyCode: character == "<" ? 51 : 0) {
+                    NSApp.postEvent(event, atStart: false)
+                }
+            }
+            // Then ⌘ let go — which can't be posted as an event — the choice taken.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self, let column = switcherColumn, let chosen = column.switcherSelection else { return }
+                print("typed: \(column.switcherQuery ?? "") chose: \(chosen)")
+                endSwitcher(choosing: nil)
+                if chosen < column.beneath.count { raise(chosen, in: column) }
+                print("after keys:  " + sheetsForScript)
+            }
+            return
+        }
+        // Escape, as the keyboard would send it, ⌘ still down: nothing chosen.
+        if ProcessInfo.processInfo.environment["PRISM_SWITCH_ESC"] == "1", let window {
+            print("before escape: " + sheetsForScript)
+            let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
+                                          windowNumber: window.windowNumber, context: nil, characters: "\u{1b}",
+                                          charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+            NSApp.postEvent(escape, atStart: false)
+            let release = NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                           windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "",
+                                           isARepeat: false, keyCode: 55)
+            if let release { NSApp.postEvent(release, atStart: false) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                guard let self else { return }
+                print("after escape:  " + sheetsForScript + "  switcher open: \(switcherColumn != nil)")
+            }
+            return
+        }
         // ⌘ let go: the stack gone back down to the one chosen.
         guard pick, let column = switcherColumn, let chosen = column.switcherSelection else { return }
         print("before: " + sheetsForScript)
@@ -1760,8 +2310,13 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         print("after:  " + sheetsForScript)
     }
 
+    var scrubberAlphasForScript: [CGFloat] { columns.map(\.scrubberAlphaForScript) }
+
     var sheetsForScript: String {
-        columns.map { column in (column.beneath.map(\.title) + ["[" + column.currentSheet.title + "]"]).joined(separator: " / ") }
+        columns.map { column in
+            (column.beneath.map { $0.title + ($0.pinned ? "📌" : "") } + ["[" + column.currentSheet.title + (column.isPinned ? "📌" : "") + "]"]
+                + column.ahead.map { "→ " + $0.title }).joined(separator: " / ")
+        }
             .joined(separator: "  ||  ")
     }
 
@@ -2001,4 +2556,10 @@ final class PageView: NSView {
     override func mouseMoved(with event: NSEvent) {
         onMouseMoved?(convert(event.locationInWindow, from: nil))
     }
+}
+
+/// A label over other things, to be read, not clicked: clicks go through it
+/// to what is under — the first column's top, its stack of sheets.
+final class PassThroughLabel: NSTextField {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

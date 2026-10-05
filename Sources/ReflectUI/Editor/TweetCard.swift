@@ -1,116 +1,6 @@
 import AppKit
 import ReflectCore
 
-/// A post on X (Twitter), as much of it as a card shows.
-package struct Tweet: Codable, Sendable {
-    package struct User: Codable, Sendable {
-        package var name: String
-        package var screenName: String
-        package var avatar: String?
-    }
-
-    package struct Media: Codable, Sendable {
-        package var url: String
-        package var width: Double
-        package var height: Double
-        package var isVideo: Bool
-    }
-
-    package var id: String
-    package var text: String
-    package var date: Date?
-    package var user: User
-    package var media: Media?
-
-    /// The post a link names: `https://x.com/who/status/123…`, twitter.com's
-    /// — with or without `www.` or `mobile.` — its `/i/web/status/123` and
-    /// `/statuses/123`, and those of the sites that re-embed posts.
-    package static func id(from source: String) -> String? {
-        guard let url = URL(string: source), var host = url.host?.lowercased() else { return nil }
-        for prefix in ["www.", "mobile.", "m."] where host.hasPrefix(prefix) { host.removeFirst(prefix.count) }
-        guard ["x.com", "twitter.com", "fxtwitter.com", "vxtwitter.com", "fixupx.com", "fixvx.com"].contains(host) else { return nil }
-        let parts = url.path.split(separator: "/")
-        guard let at = parts.firstIndex(where: { $0 == "status" || $0 == "statuses" }), at + 1 < parts.count,
-              !parts[at + 1].isEmpty, parts[at + 1].allSatisfy(\.isNumber) else { return nil }
-        return String(parts[at + 1])
-    }
-
-    /// Reads the embed endpoint's answer, or nil for one that is not a
-    /// post. A post that was — deleted, withheld — is a card saying so, as
-    /// the endpoint's tombstone does.
-    package init?(json data: Data, id: String) {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        if root["__typename"] as? String == "TweetTombstone" {
-            let said = ((root["tombstone"] as? [String: Any])?["text"] as? [String: Any])?["text"] as? String
-            self.id = id
-            text = (said ?? "This post is unavailable.").replacingOccurrences(of: " Learn more", with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            user = User(name: "Post unavailable", screenName: "", avatar: nil)
-            return
-        }
-        guard var text = root["text"] as? String,
-              let user = root["user"] as? [String: Any],
-              let name = user["name"] as? String, let screenName = user["screen_name"] as? String
-        else { return nil }
-        // The text runs past what is shown to the links of its media.
-        if let range = root["display_text_range"] as? [Int], range.count == 2 {
-            let scalars = Array(text.unicodeScalars)
-            let upper = min(range[1], scalars.count)
-            if range[0] < upper { text = String(String.UnicodeScalarView(scalars[range[0]..<upper])) }
-        }
-        if let entities = root["entities"] as? [String: Any], let urls = entities["urls"] as? [[String: Any]] {
-            for link in urls {
-                if let short = link["url"] as? String, let shown = link["display_url"] as? String {
-                    text = text.replacingOccurrences(of: short, with: shown)
-                }
-            }
-        }
-        for (entity, character) in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'")] {
-            text = text.replacingOccurrences(of: entity, with: character)
-        }
-        self.id = id
-        self.text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        date = (root["created_at"] as? String).flatMap { formatter.date(from: $0) }
-        self.user = User(name: name, screenName: screenName,
-                         avatar: (user["profile_image_url_https"] as? String)?.replacingOccurrences(of: "_normal.", with: "_bigger."))
-        if let first = (root["mediaDetails"] as? [[String: Any]])?.first, let url = first["media_url_https"] as? String {
-            let info = first["original_info"] as? [String: Any]
-            media = Media(url: url,
-                          width: (info?["width"] as? NSNumber)?.doubleValue ?? 16,
-                          height: (info?["height"] as? NSNumber)?.doubleValue ?? 9,
-                          isVideo: (first["type"] as? String).map { $0 != "photo" } ?? false)
-        }
-    }
-
-    /// The embed endpoint for a post. Its `token` is worked out the way
-    /// the embed code does, from the id.
-    package static func endpoint(for id: String) -> URL? {
-        guard let number = Double(id) else { return nil }
-        let token = base36(number / 1e15 * Double.pi).filter { $0 != "0" && $0 != "." }
-        return URL(string: "https://cdn.syndication.twimg.com/tweet-result?id=\(id)&lang=en&token=\(token.isEmpty ? "a" : token)")
-    }
-
-    private static func base36(_ value: Double) -> String {
-        let digits = Array("0123456789abcdefghijklmnopqrstuvwxyz")
-        var whole = UInt64(value), fraction = value - Double(UInt64(value))
-        var text = ""
-        repeat {
-            text.insert(digits[Int(whole % 36)], at: text.startIndex)
-            whole /= 36
-        } while whole > 0
-        text += "."
-        for _ in 0..<11 {
-            fraction *= 36
-            let digit = Int(fraction)
-            text.append(digits[digit])
-            fraction -= Double(digit)
-        }
-        return text
-    }
-}
-
 /// Draws a post as a card: who, what, when, and its first picture.
 ///
 /// The card is drawn fresh each time, so it takes the window's light or
@@ -189,11 +79,12 @@ package enum TweetCard {
         let textX = avatar.maxX + 10
         NSAttributedString(string: tweet.user.name, attributes: [.font: nameFont, .foregroundColor: NSColor.labelColor])
             .draw(in: NSRect(x: textX, y: padding + 1, width: width - textX - padding - 24, height: 18))
-        var byline = tweet.user.screenName.isEmpty ? "" : "@\(tweet.user.screenName)"
+        var byline = tweet.user.screenName.isEmpty || tweet.site == .threads ? "" : "@\(tweet.user.screenName)"
         if let date = tweet.date { byline += (byline.isEmpty ? "" : " · ") + dateFormatter.string(from: date) }
+        if let when = tweet.when { byline += (byline.isEmpty ? "" : " · ") + when }
         NSAttributedString(string: byline, attributes: [.font: handleFont, .foregroundColor: NSColor.secondaryLabelColor])
             .draw(in: NSRect(x: textX, y: padding + 21, width: width - textX - padding, height: 17))
-        NSAttributedString(string: "𝕏", attributes: [.font: NSFont.systemFont(ofSize: 16, weight: .bold),
+        NSAttributedString(string: tweet.site == .threads ? "@" : "𝕏", attributes: [.font: NSFont.systemFont(ofSize: 16, weight: .bold),
                                                    .foregroundColor: NSColor.labelColor])
             .draw(at: NSPoint(x: width - padding - 14, y: padding))
 

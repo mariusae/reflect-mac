@@ -1,0 +1,124 @@
+/* Prism's cards: a lighter sheet on the page, its name in bold, when at
+   its right, a picture, the line that says what it is, a little more in grey. */
+:root {
+  color-scheme: light dark;
+  --page: #f0ece5;
+  --card: #fdfcf9;
+  --text: #2b2724;
+  --secondary: #6f665d;
+  --faint: rgba(43, 39, 36, 0.32);
+  --rule: rgba(43, 39, 36, 0.1);
+  --hover: rgba(43, 39, 36, 0.05);
+  --marked: rgba(255, 214, 10, 0.45);
+  --shelf: #f2ede5;
+  --shadow: 0 1px 5px rgba(0, 0, 0, 0.07);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #161412;
+    --card: #23201d;
+    --text: #ece6dc;
+    --secondary: #a79e92;
+    --faint: rgba(236, 230, 220, 0.3);
+    --rule: rgba(236, 230, 220, 0.1);
+    --hover: rgba(236, 230, 220, 0.07);
+    --marked: rgba(217, 179, 51, 0.35);
+    --shelf: #262320;
+    --shadow: 0 1px 5px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  width: 380px;
+  background: var(--page);
+  color: var(--text);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+main { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+[hidden] { display: none !important; }
+
+.card {
+  background: var(--card);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 16px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card header { display: flex; align-items: baseline; gap: 10px; }
+.name { flex: 1; font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.when { color: var(--secondary); font-size: 13px; }
+
+.thumb {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  object-position: top left;
+  border-radius: 8px;
+  background: var(--shelf);
+}
+
+.headline {
+  font: 17px/1.35 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  resize: none;
+  overflow: hidden;
+  width: calc(100% + 8px);
+}
+.headline:hover { background: var(--hover); }
+.headline:focus { outline: none; background: var(--hover); }
+
+.snippet {
+  margin: 0;
+  color: var(--secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+#highlights { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto; }
+#highlights li { display: flex; gap: 8px; align-items: flex-start; }
+#highlights li::before { content: "•"; color: var(--faint); }
+#highlights li span {
+  flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+#highlights li mark { background: var(--marked); color: inherit; border-radius: 2px; padding: 0 1px; }
+#highlights li button { border: none; background: none; color: var(--faint); cursor: pointer; font-size: 15px; line-height: 1.3; padding: 0 2px; }
+#highlights li button:hover { color: var(--text); }
+
+.hint { margin: 0; font-size: 12px; color: var(--secondary); }
+
+footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 2px; }
+.toggle { display: flex; align-items: center; gap: 6px; color: var(--secondary); font-size: 13px; cursor: pointer; }
+.toggle input { accent-color: var(--text); margin: 0; }
+
+button.primary {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--card);
+  font: 600 13px -apple-system, BlinkMacSystemFont, sans-serif;
+  cursor: pointer;
+}
+button.primary:disabled { opacity: 0.55; cursor: default; }
+button.link { align-self: center; border: none; background: none; color: var(--text); text-decoration: underline; text-underline-offset: 3px; font: 500 13px -apple-system, sans-serif; cursor: pointer; }
+.status { margin: 0; text-align: center; font-size: 12px; color: var(--secondary); }
+.status.error { color: #d70015; }

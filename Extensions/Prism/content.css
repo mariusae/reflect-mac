@@ -1,0 +1,5 @@
+/* Highlights are drawn with the CSS Custom Highlight API: the page itself is left alone. */
+::highlight(prism-capture) {
+  background-color: rgba(255, 214, 10, 0.45);
+  color: inherit;
+}

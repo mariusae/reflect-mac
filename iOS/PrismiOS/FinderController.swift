@@ -21,13 +21,16 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
 
     private let store: PrismStore
     private let field = UISearchBar()
+    /// In the search tab: its field the tab bar's, the list the whole view.
+    private let embedded: Bool
     private let table = UITableView(frame: .zero, style: .plain)
     private var items: [Item] = []
     /// Told what was chosen; the finder is gone by then.
     var onChoose: ((Place) -> Void)?
 
-    init(store: PrismStore) {
+    init(store: PrismStore, embedded: Bool = false) {
         self.store = store
+        self.embedded = embedded
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -37,13 +40,18 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = Ink.paper
-        field.placeholder = "Search notes and days"
-        field.searchBarStyle = .minimal
-        field.autocapitalizationType = .none
-        field.returnKeyType = .go
-        field.delegate = self
-        field.showsCancelButton = true
-        view.addSubview(field)
+        if embedded {
+            // Its field the bottom bar's.
+            title = "Search"
+        } else {
+            field.placeholder = "Search notes and days"
+            field.searchBarStyle = .minimal
+            field.autocapitalizationType = .none
+            field.returnKeyType = .go
+            field.delegate = self
+            field.showsCancelButton = true
+            view.addSubview(field)
+        }
         table.dataSource = self
         table.delegate = self
         table.backgroundColor = .clear
@@ -55,11 +63,32 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        field.becomeFirstResponder()
+        if !embedded { field.becomeFirstResponder() }
     }
+
+    /// What is typed in the field the finder is searched by, elsewhere.
+    func search(_ text: String) {
+        loadViewIfNeeded()
+        find(text)
+    }
+
+    /// Return in that field: every note searched for the words — as
+    /// “Search notes for …” is; a note or day found is gone to only when
+    /// touched.
+    func searchEverything() {
+        guard let item = items.first(where: { if case .search = $0.place { true } else { false } }) else { return }
+        choose(item.place)
+    }
+
+    /// Back to nothing typed, for next time.
+    func reset() { find("") }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        guard !embedded else {
+            table.frame = view.bounds
+            return
+        }
         let top = view.safeAreaInsets.top + 8
         field.frame = CGRect(x: 8, y: top, width: view.bounds.width - 16, height: 52)
         table.frame = CGRect(x: 0, y: field.frame.maxY + 4, width: view.bounds.width, height: view.bounds.height - field.frame.maxY - 4)
@@ -103,6 +132,10 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
     func searchBarCancelButtonClicked(_ searchBar: UISearchBar) { dismiss(animated: true) }
 
     private func choose(_ place: Place) {
+        if embedded {
+            onChoose?(place)
+            return
+        }
         field.resignFirstResponder()
         dismiss(animated: true) { [onChoose] in onChoose?(place) }
     }

@@ -21,6 +21,9 @@ enum SheetKind: Hashable, Codable {
 final class SheetController: UIViewController, UIScrollViewDelegate {
     let store: PrismStore
     private(set) var kind: SheetKind
+    /// Whether it lists notes, each a card that shows it as asked — not
+    /// one note alone, always whole.
+    var listsNotes: Bool { if case .note = kind { false } else { true } }
     let scroll = UIScrollView()
     private let content = UIView()
     private let scrubber = ScrubberView()
@@ -147,7 +150,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         super.viewDidLoad()
         if StallWatch.enabled { StallWatch.mark("sheet load \(kind)") }
         defer { if StallWatch.enabled { StallWatch.mark("sheet loaded \(kind)") } }
-        view.backgroundColor = Ink.paper
+        view.backgroundColor = Ink.page
         scroll.delegate = self
         scroll.alwaysBounceVertical = true
         scroll.keyboardDismissMode = .interactive
@@ -181,26 +184,23 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             }
         }, for: .valueChanged)
         scroll.refreshControl = refresh
-        // As Threads has it: the menu on the left of a tab's first sheet,
-        // search on the right; deeper, Back on the left and the note's ⋯.
+        // The menu at the right of a tab's first sheet; deeper, Back on the
+        // left and the note's ⋯. Search is the bottom bar's.
         let menuItems = UIMenu(children: [
             UIDeferredMenuElement.uncached { [weak self] done in
                 guard let self, let menu = self.menu?(self) else { return done([]) }
                 done(menu.children)
             },
         ])
-        let find = UIBarButtonItem(image: UIImage(systemName: "magnifyingglass"), primaryAction: UIAction { [weak self] _ in self?.onFind?() })
-        find.accessibilityLabel = "Search"
         if navigationController?.viewControllers.first === self || navigationController == nil {
             let menu = UIBarButtonItem(image: UIImage(systemName: "line.3.horizontal"), menu: menuItems)
             menu.accessibilityLabel = "Menu"
-            navigationItem.leftBarButtonItem = menu
+            navigationItem.rightBarButtonItems = [menu]
             menuButton = (menu, "line.3.horizontal")
-            navigationItem.rightBarButtonItems = [find]
         } else {
             let more = UIBarButtonItem(image: UIImage(systemName: "ellipsis"), menu: menuItems)
             more.accessibilityLabel = "More"
-            navigationItem.rightBarButtonItems = [more, find]
+            navigationItem.rightBarButtonItems = [more]
             menuButton = (more, "ellipsis")
         }
         showSyncing(syncing)
@@ -359,6 +359,48 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
 
     /// The notes shown whole: the timeline's days, a note on its own, the inbox's.
     private var noteBlocks: [NoteBlock] { blocks.compactMap { $0 as? NoteBlock } }
+
+    /// A new row at the top of a note shown here, the caret in it — or its
+    /// one empty row, when it has nothing in it yet.
+    func writeAtTop(of ref: NoteRef) {
+        guard let block = noteBlocks.first(where: { $0.ref == ref }) else { return }
+        if !block.isLive { block.goLive() }
+        let editor = block.editor
+        var rows = editor.rows
+        // Under its title, when its first row is one.
+        let at = rows.first.map { if case .heading(1) = $0.kind { return 1 } else { return 0 } } ?? 0
+        editor.becomeFirstResponder()
+        if rows.indices.contains(at), rows[at].text.isEmpty {
+            // Its first row empty already: that one, not another.
+            editor.setCaret(OutlineKeys.Caret(row: at, offset: 0))
+        } else {
+            rows.insert(.blank, at: min(at, rows.count))
+            editor.replace(rows, caret: OutlineKeys.Caret(row: at, offset: 0), undoName: "New Row")
+        }
+        relayout()
+        DispatchQueue.main.async { self.reveal(block) }
+    }
+
+    /// A row with words in it, first in a note — its first row, when that
+    /// is empty — not typed in: written, and shown.
+    func addAtTop(of ref: NoteRef, text: String) {
+        guard let block = noteBlocks.first(where: { $0.ref == ref }) else { return }
+        if !block.isLive { block.goLive() }
+        let editor = block.editor
+        var rows = editor.rows
+        let at = rows.first.map { if case .heading(1) = $0.kind { return 1 } else { return 0 } } ?? 0
+        if rows.indices.contains(at), rows[at].text.isEmpty, rows[at].task == nil {
+            rows[at].text = text
+        } else {
+            var row = Row.blank
+            row.text = text
+            rows.insert(row, at: min(at, rows.count))
+        }
+        editor.replace(rows, caret: nil, undoName: "Dictation")
+        block.save()
+        relayout()
+        DispatchQueue.main.async { self.reveal(block) }
+    }
 
     func reload() {
         switch kind {
@@ -660,8 +702,8 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         defer { if StallWatch.enabled { StallWatch.mark("sheet laid out \(kind)") } }
         scroll.frame = view.bounds
         let safe = view.safeAreaInsets
-        // Clear of the compose button floating over the foot.
-        let foot = ColumnsController.composeSize + 24
+        // Clear of the tab bar's place at the foot.
+        let foot: CGFloat = 24
         scrubber.frame = CGRect(x: view.bounds.width - 28, y: safe.top + 12, width: 28, height: view.bounds.height - safe.top - safe.bottom - 24 - foot)
         relayout()
     }
@@ -669,6 +711,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     /// Lays the notes out one under another, the one at the top of the
     /// screen kept where it is, however those above it grew or shrank.
     private var separators: [UIView] = []
+    static let rulesBetween = false
 
     func relayout() {
         let width = view.bounds.width
@@ -679,11 +722,12 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         // A hairline across between the notes of a list, as between posts.
         var rules = 0
         for (i, block) in blocks.enumerated() {
-            let height = block.height(width: width - 12)
-            block.frame = CGRect(x: 0, y: y, width: width - 12, height: height)
+            let height = block.height(width: width)
+            block.frame = CGRect(x: 0, y: y, width: width, height: height)
             y += height
+            // No rule between cards: the space above each header parts them.
             let next = blocks.indices.contains(i + 1) ? blocks[i + 1] : nil
-            if let next, !(block is HeadBlock), !(next is HeadBlock), height > 0 {
+            if Self.rulesBetween, let next, !(block is HeadBlock), !(next is HeadBlock), height > 0 {
                 if separators.count == rules {
                     let rule = UIView()
                     rule.backgroundColor = Ink.rule
@@ -776,7 +820,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         guard abs(seen.minY - lastWake) > 60 || !visible.isEmpty || lastWakeHeight != scroll.contentSize.height else { return }
         lastWake = seen.minY
         lastWakeHeight = scroll.contentSize.height
-        let width = view.bounds.width - 12
+        let width = view.bounds.width
         for block in blocks.filter({ !$0.isLive && $0.frame.intersects(near) })
             .sorted(by: { abs($0.frame.midY - middle) < abs($1.frame.midY - middle) }) {
             block.prepareLive(width: width)
@@ -830,7 +874,29 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         }
     }
 
+    /// Told to hide the chrome — reading down — or bring it back.
+    var onChromeHidden: ((Bool) -> Void)?
+    private var lastScrollY: CGFloat = 0
+    private var chromeTravel: CGFloat = 0
+
+    /// Scrolled down by the reader, some way: the chrome goes; up a little,
+    /// or near the top, it comes back.
+    private func followForChrome() {
+        let y = scroll.contentOffset.y
+        defer { lastScrollY = y }
+        guard scroll.isTracking || scroll.isDecelerating else { return }
+        let delta = y - lastScrollY
+        if y < 40 - scroll.adjustedContentInset.top {
+            chromeTravel = 0
+            return onChromeHidden?(false) ?? ()
+        }
+        // The same way a while, before it counts.
+        chromeTravel = (delta > 0) == (chromeTravel > 0) ? chromeTravel + delta : delta
+        if chromeTravel > 24 { onChromeHidden?(true) } else if chromeTravel < -12 { onChromeHidden?(false) }
+    }
+
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        followForChrome()
         scrubber.visible = scroll.contentOffset.y / max(scroll.contentSize.height, 1)
         wakeNearby()
         guard case .timeline = kind, !shown.isEmpty, !relayoutPending else { return }
@@ -893,6 +959,18 @@ final class ScrubberView: UIView {
     }
 
     var marks: [Mark] = [] { didSet { if marks != oldValue { setNeedsDisplay() } } }
+    /// Whether its marks show: only while a thumb is on it, and a moment
+    /// after. Else it is a faint line at the edge.
+    private var revealed = false {
+        didSet {
+            guard revealed != oldValue else { return }
+            UIView.transition(with: self, duration: 0.18, options: [.transitionCrossDissolve, .allowUserInteraction]) {
+                self.setNeedsDisplay()
+                self.layer.displayIfNeeded()
+            }
+        }
+    }
+    private var hideTimer: Timer?
     /// Where the screen's top is, from 0 to 1.
     var visible: CGFloat = 0
     /// Dragged: where along it the thumb is, from 0 to 1.
@@ -922,6 +1000,8 @@ final class ScrubberView: UIView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ rect: CGRect) {
+        // At rest: nothing — it shows when a thumb is on it.
+        guard revealed else { return }
         for mark in marks {
             let y = 6 + mark.fraction * (bounds.height - 12)
             let length: CGFloat = mark.rank == 2 ? 12 : 6
@@ -935,6 +1015,8 @@ final class ScrubberView: UIView {
         let fraction = min(1, max(0, (y - 6) / max(bounds.height - 12, 1)))
         switch gesture.state {
         case .began, .changed:
+            hideTimer?.invalidate()
+            revealed = true
             onScrub?(fraction)
             // The day the thumb is at, said beside it, and felt as it passes.
             let nearest = marks.indices.filter { marks[$0].rank == 2 }.min { abs(marks[$0].fraction - fraction) < abs(marks[$1].fraction - fraction) }
@@ -953,6 +1035,11 @@ final class ScrubberView: UIView {
         default:
             label.isHidden = true
             lastMark = nil
+            // Its marks a moment longer, then the faint line again.
+            hideTimer?.invalidate()
+            hideTimer = Timer.scheduledTimer(withTimeInterval: 0.9, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated { self?.revealed = false }
+            }
         }
     }
 }

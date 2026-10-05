@@ -9,6 +9,10 @@ struct Place: Equatable {
     var detail: String? = nil
     /// What its frontmatter says of it, shown beside its name.
     var flags: NoteFlags = []
+    /// A row in it, gone to: what it is under, shown over it — the note,
+    /// then the rows — and the edit it was.
+    var trail: String? = nil
+    var edit: RecentEdits.Edit? = nil
 }
 
 /// The notes to hand, on a card that slides out from the window's left

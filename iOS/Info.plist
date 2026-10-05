@@ -8,6 +8,10 @@
 	<string>$(GITHUB_CLIENT_ID)</string>
 	<key>GitHubClientSecret</key>
 	<string>$(GITHUB_CLIENT_SECRET)</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>To hear what you say while you hold the + button, and write it into today.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>To write down what you say while you hold the + button.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>To save pictures from your notes to your photos.</string>
 </dict>
