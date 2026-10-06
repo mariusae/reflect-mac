@@ -135,11 +135,14 @@ extension OutlineLayoutManager {
             if slot.free > 0 || slot.isLastBlock, card.maxY - block.baseline > font.pointSize * 2.6 {
                 label(slot.end, at: min(card.maxY - font.capHeight / 2 - 3, card.maxY), color: ink.tertiary, baseline: false)
             }
-            // How long, at the right of its first line.
-            let length = NSAttributedString(string: TimeStamp.length(slot.end - slot.start),
-                                            attributes: [.font: font, .foregroundColor: ink.tertiary])
-            let lengthSize = length.size()
-            length.draw(at: NSPoint(x: card.maxX - 10 - lengthSize.width, y: block.baseline - font.ascender))
+            // How long, at the right of its first line — but for the block
+            // whose time is written out, which its words might run into.
+            if !slot.revealed {
+                let length = NSAttributedString(string: TimeStamp.length(slot.end - slot.start),
+                                                attributes: [.font: font, .foregroundColor: ink.tertiary])
+                let lengthSize = length.size()
+                length.draw(at: NSPoint(x: card.maxX - 10 - lengthSize.width, y: block.baseline - font.ascender))
+            }
             // The free time, told in it when there is room.
             if slot.free > 0, block.free.height >= font.pointSize + 6 {
                 let free = NSAttributedString(string: "\(TimeStamp.length(slot.free)) free",

@@ -248,9 +248,13 @@ extension PhoneLayoutManager {
             if slot.free > 0 || slot.isLastBlock, card.maxY - baseline > font.pointSize * 2.6 {
                 label(slot.end, y: card.maxY - font.capHeight / 2 - 3, color: Ink.faint, onBaseline: false)
             }
-            let length = NSAttributedString(string: TimeStamp.length(slot.end - slot.start), attributes: [.font: font, .foregroundColor: Ink.faint])
-            let lengthSize = length.size()
-            length.draw(at: CGPoint(x: card.maxX - 8 - lengthSize.width, y: baseline - font.ascender))
+            // How long — but for the block whose time is written out, which
+            // its words might run into.
+            if !slot.revealed {
+                let length = NSAttributedString(string: TimeStamp.length(slot.end - slot.start), attributes: [.font: font, .foregroundColor: Ink.faint])
+                let lengthSize = length.size()
+                length.draw(at: CGPoint(x: card.maxX - 8 - lengthSize.width, y: baseline - font.ascender))
+            }
             let free = block.free.offsetBy(dx: origin.x, dy: origin.y)
             if slot.free > 0, free.height >= font.pointSize + 6 {
                 let text = NSAttributedString(string: "\(TimeStamp.length(slot.free)) free",

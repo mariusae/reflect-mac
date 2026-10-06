@@ -206,7 +206,16 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             }
             // A block's time is told at its left; written out only where the caret is.
             if let slot, let stamp = slot.stamp, !slot.revealed, stamp.fullRange.length < paragraph.length {
-                storage.addAttribute(.prismHidden, value: true, range: NSRange(location: paragraph.location, length: stamp.fullRange.length))
+                let hidden = NSRange(location: paragraph.location, length: stamp.fullRange.length)
+                storage.addAttribute(.prismHidden, value: true, range: hidden)
+                // A done block's line through its words only: hidden, the time
+                // is laid out at the line's start, and a line through it would
+                // reach across the times.
+                storage.removeAttribute(.strikethroughStyle, range: hidden)
+            }
+            // Nor through the line break, which a block's foot pushes far down.
+            if slot != nil, paragraph.length > 0 {
+                storage.removeAttribute(.strikethroughStyle, range: NSRange(location: NSMaxRange(paragraph) - 1, length: 1))
             }
             if hidesTitle, paragraph.location == 0, case .heading(1) = row.kind, NSMaxRange(paragraph) < text.length {
                 collapse(storage, paragraph)
@@ -1249,6 +1258,26 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         return ranges
     }
     private var cachedRanges: [NSRange]?
+
+    /// The caret as tall as its type: a time block's last line stands as
+    /// tall as the block lasts, and the caret would reach down through it.
+    override func caretRect(for position: UITextPosition) -> CGRect {
+        var rect = super.caretRect(for: position)
+        let offset = self.offset(from: beginningOfDocument, to: position)
+        guard textStorage.length > 0, PhoneTimeSlot.any(in: textStorage) else { return rect }
+        let at = min(max(0, offset - 1), textStorage.length - 1)
+        let font = textStorage.attribute(.font, at: at, effectiveRange: nil) as? UIFont ?? metrics.body
+        let line = ceil(font.lineHeight * max(1, metrics.lineHeight * metrics.size / max(font.lineHeight, 1)))
+        guard rect.height > line + 2 else { return rect }
+        // On the words' baseline, as tall as they stand.
+        let glyph = outlineLayout.glyphIndexForCharacter(at: min(offset, textStorage.length - 1))
+        guard glyph < outlineLayout.numberOfGlyphs else { return rect }
+        let fragment = outlineLayout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let baseline = fragment.minY + outlineLayout.location(forGlyphAt: glyph).y + textContainerInset.top
+        rect.origin.y = (baseline - font.ascender - 1).rounded()
+        rect.size.height = ceil(font.ascender - font.descender + 2)
+        return rect
+    }
 
     func rowIndex(at location: Int) -> Int {
         let ranges = paragraphRanges

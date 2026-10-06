@@ -839,7 +839,10 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         // The first column's own controls kept clear of them.
         columns.first?.titleBarReserve = max(0, barX - (columns.first?.frame.minX ?? 0))
         // The first column's title clear of the window's buttons.
-        for column in columns { column.titleBarLeft = column === columns.first ? max(0, 116 - column.frame.minX) : 0 }
+        // In full screen there are none: the sidebar's button at the corner.
+        let fullScreen = window?.styleMask.contains(.fullScreen) == true
+        let buttonX: CGFloat = fullScreen ? 16 : 80
+        for column in columns { column.titleBarLeft = column === columns.first ? max(0, buttonX + 36 - column.frame.minX) : 0 }
         let height = ceil(heading.intrinsicContentSize.height)
         let first = columns.first?.frame ?? bounds
         let headingX = max(first.minX + 80, barX)
@@ -848,7 +851,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         sidebar.frame = NSRect(x: sidebarX, y: 8, width: Sidebar.width, height: bounds.height - 16)
         // After the window's buttons, on their middle.
         if sidebarButton.superview !== page { page.addSubview(sidebarButton) }
-        sidebarButton.frame = NSRect(x: 80, y: (bounds.height - StickyHeader.height / 2 - 12).rounded(), width: 26, height: 24)
+        sidebarButton.frame = NSRect(x: buttonX, y: (bounds.height - StickyHeader.height / 2 - 12).rounded(), width: 26, height: 24)
         finder.frame = bounds
     }
 
@@ -902,7 +905,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }
 
     func windowDidResize(_ notification: Notification) { placeWindowButtons() }
-    func windowDidExitFullScreen(_ notification: Notification) { placeWindowButtons() }
+    func windowDidExitFullScreen(_ notification: Notification) {
+        placeWindowButtons()
+        page.needsLayout = true
+    }
+    func windowDidEnterFullScreen(_ notification: Notification) { page.needsLayout = true }
 
     /// Close, minimise, zoom: out of the notes' way, shown as the pointer
     /// comes to the corner they are in.
