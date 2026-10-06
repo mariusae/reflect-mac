@@ -1291,10 +1291,12 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// Prism's own clone: kept in step from now on — a full sync now, on
     /// coming to the front and every few minutes while there, and what is
-    /// written sent once writing pauses. `prepare` runs before each sync.
+    /// written sent ten seconds after writing pauses. `prepare` runs before each sync.
     func ownSync(prepare: @escaping () async throws -> Void) {
         ownsSync = true
         sync.prepare = prepare
+        // Pushed soon after writing pauses: the other devices hear of it at once.
+        sync.idle = 10
         sync.sync()
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {

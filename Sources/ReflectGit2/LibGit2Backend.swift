@@ -50,6 +50,20 @@ public final class LibGit2Backend: GitBackend, @unchecked Sendable {
         let resolvedTop = URL(fileURLWithPath: workdir).resolvingSymlinksInPath().path + "/"
         prefix = resolved.hasPrefix(resolvedTop) ? String(resolved.dropFirst(resolvedTop.count)) : ""
         auth = Auth()
+        ignoreChangeTimes()
+    }
+
+    /// A file's ctime moves when its attributes do — and iOS writes an
+    /// attribute to a file as it is read — so a graph read is a graph whose
+    /// every file looks changed, and staging hashed all of it again, every
+    /// sync: twelve seconds of a phone's time. Its contents are what count.
+    private func ignoreChangeTimes() {
+        var config: OpaquePointer?
+        guard git_repository_config(&config, repository) == 0 else { return }
+        defer { git_config_free(config) }
+        var trusted: Int32 = 1
+        if git_config_get_bool(&trusted, config, "core.trustctime") == 0, trusted == 0 { return }
+        git_config_set_bool(config, "core.trustctime", 0)
     }
 
     deinit { git_repository_free(repository) }
@@ -289,6 +303,14 @@ public final class LibGit2Backend: GitBackend, @unchecked Sendable {
             try check(git_index_add_all(index, spec, GIT_INDEX_ADD_DEFAULT.rawValue, matched, payload), "Staging")
             try check(git_index_update_all(index, spec, matched, payload), "Staging")
         }
+        // What was found the same as it is staged, noted so — its size and
+        // times as they now are — or it is read and hashed again next time:
+        // libgit2 leaves a file it finds unchanged as it was in the index.
+        var options = git_diff_options()
+        git_diff_options_init(&options, UInt32(GIT_DIFF_OPTIONS_VERSION))
+        options.flags = GIT_DIFF_UPDATE_INDEX.rawValue
+        var refresh: OpaquePointer?
+        if git_diff_index_to_workdir(&refresh, repository, index, &options) == 0 { git_diff_free(refresh) }
         try check(git_index_write(index), "Writing the index")
     }
 

@@ -3,7 +3,8 @@ import ReflectCore
 
 /// Keeps the graph's repository in step, on Reflect's schedule.
 ///
-/// Writing is committed and pushed thirty seconds after it stops, and never
+/// Writing is committed and pushed `idle` seconds after it stops — thirty,
+/// as Reflect does, unless the app says otherwise — and never
 /// more than five minutes after it starts. A full sync — commit, fetch,
 /// merge, push — runs at launch, when the app comes to the front, and when
 /// asked; there is no timer beyond that. One cycle runs at a time; asking
@@ -41,7 +42,8 @@ package final class SyncController {
     private var pending: Git.Mode?
     private var lastFullSync = Date.distantPast
 
-    private static let idle: TimeInterval = 30
+    /// How long writing must pause before it is pushed.
+    package var idle: TimeInterval = 30
     private static let longest: TimeInterval = 300
     /// Coming to the front twice in a moment is one sync.
     private static let activationDedupe: TimeInterval = 1.5
@@ -60,7 +62,7 @@ package final class SyncController {
         let now = Date()
         let first = firstUnsaved ?? now
         firstUnsaved = first
-        let wait = min(Self.idle, max(0, Self.longest - now.timeIntervalSince(first)))
+        let wait = min(idle, max(0, Self.longest - now.timeIntervalSince(first)))
         idleTimer?.invalidate()
         idleTimer = Timer.scheduledTimer(withTimeInterval: wait, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.run(.push) }

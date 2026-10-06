@@ -35,4 +35,36 @@ struct SyncTimingTests {
         let fresh = Git(backend: LibGit2Backend(root: phone)!)
         _ = try time("cycle full, fresh launch") { try fresh.cycle(.full) }
     }
+
+    /// A clone libgit2 made — as the phone's is, moved into place — staged
+    /// again and again with nothing changed.
+    @Test func libgit2CloneStaging() throws {
+        let base = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SYNC_TIMING_REPO"]!)
+        let partial = base.appendingPathComponent("lg.partial"), root = base.appendingPathComponent("lg")
+        try? FileManager.default.removeItem(at: partial)
+        try? FileManager.default.removeItem(at: root)
+        _ = try time("libgit2 clone") { try LibGit2Backend.clone(base.appendingPathComponent("remote.git").path, to: partial) }
+        try FileManager.default.moveItem(at: partial, to: root)
+        for n in 1...3 {
+            let backend = LibGit2Backend(root: root)!
+            try time("stageAll #\(n)") { try backend.stageAll() }
+        }
+        // Every file's attributes touched — as iOS does to a file read —
+        // which moves its ctime, not its contents.
+        func touchAttributes() {
+            let walker = FileManager.default.enumerator(atPath: root.path)!
+            for case let path as String in walker where !path.hasPrefix(".git") {
+                setxattr(root.appendingPathComponent(path).path, "com.example.read", "1", 1, 0, 0)
+            }
+        }
+        touchAttributes()
+        try time("stageAll, attributes touched") { try LibGit2Backend(root: root)!.stageAll() }
+        // Times moved without the contents changing: hashed once, then not.
+        let now = Date()
+        for case let path as String in FileManager.default.enumerator(atPath: root.path)! where !path.hasPrefix(".git") {
+            try? FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: root.appendingPathComponent(path).path)
+        }
+        try time("stageAll, times moved") { try LibGit2Backend(root: root)!.stageAll() }
+        try time("stageAll, again") { try LibGit2Backend(root: root)!.stageAll() }
+    }
 }
