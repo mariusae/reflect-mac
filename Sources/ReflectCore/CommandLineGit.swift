@@ -217,6 +217,70 @@ public final class CommandLineGit: GitBackend, @unchecked Sendable {
         (try? run(["diff", "--relative", "-z", "--name-only", from, to]))?.split(separator: "\0").map(String.init) ?? []
     }
 
+    // MARK: Putting things right
+
+    public func gitDirectory() throws -> URL {
+        URL(fileURLWithPath: try run(["rev-parse", "--absolute-git-dir"]).trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    public func abandonOperation() throws {
+        switch try operationInProgress() {
+        case "a merge"?:
+            if (try? run(["merge", "--abort"])) == nil { try run(["reset", "--merge"]) }
+        case "a cherry-pick"?: try run(["cherry-pick", "--abort"])
+        case "a revert"?: try run(["revert", "--abort"])
+        case "a rebase"?: try run(["rebase", "--abort"])
+        case "a bisect"?: try run(["bisect", "reset"])
+        default: break
+        }
+    }
+
+    public func branches() -> [String: String] {
+        var found: [String: String] = [:]
+        for line in ((try? run(["for-each-ref", "--format=%(objectname) %(refname:short)", "refs/heads"])) ?? "").split(separator: "\n") {
+            let parts = line.split(separator: " ", maxSplits: 1)
+            if parts.count == 2 { found[String(parts[1])] = String(parts[0]) }
+        }
+        return found
+    }
+
+    public func isAncestor(_ ancestor: String, of descendant: String) -> Bool {
+        (try? run(["merge-base", "--is-ancestor", ancestor, descendant])) != nil
+    }
+
+    public func attachHead(to branch: String, at commit: String) throws {
+        try run(["update-ref", "refs/heads/\(branch)", commit])
+        try run(["symbolic-ref", "HEAD", "refs/heads/\(branch)"])
+    }
+
+    public func setReference(_ name: String, to commit: String) throws {
+        try run(["update-ref", name, commit])
+    }
+
+    public func references(withPrefix prefix: String) -> [String] {
+        ((try? run(["for-each-ref", "--format=%(refname)", prefix])) ?? "").split(separator: "\n").map(String.init)
+    }
+
+    public func deleteReference(_ name: String) {
+        _ = try? run(["update-ref", "-d", name])
+    }
+
+    public func mergeBase(_ a: String, _ b: String) -> String? {
+        let id = (try? run(["merge-base", a, b]))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return id.isEmpty ? nil : id
+    }
+
+    public func isShallow() -> Bool {
+        (try? run(["rev-parse", "--is-shallow-repository"]))?.trimmingCharacters(in: .whitespacesAndNewlines) == "true"
+    }
+
+    public func deepen(by commits: Int?) throws {
+        try run(["fetch", "--quiet", commits.map { "--deepen=\($0)" } ?? "--unshallow", "origin"], timeout: 120)
+    }
+
+    /// git keeps its note of a shallow clone's end itself.
+    public func markMissingHistory() throws -> Int { 0 }
+
     // MARK: Running git
 
     private static let environment: [String: String] = {

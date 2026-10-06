@@ -312,13 +312,214 @@ enum SyncBackend: String, CaseIterable, CustomStringConvertible {
         #expect(try headMessage(fixture.deviceA) == "Merge changes from other devices")
     }
 
-    @Test(arguments: SyncBackend.allCases) func aDetachedHeadIsRefused(_ backend: SyncBackend) throws {
+    // MARK: Putting things right
+
+    /// HEAD off its branch — by a person's git, or a crash — but where the
+    /// branch is, or ahead of it: put back on it, and the sync goes on.
+    @Test(arguments: SyncBackend.allCases) func aDetachedHeadIsPutBackOnItsBranch(_ backend: SyncBackend) throws {
         let fixture = try Fixture()
         try write(fixture.deviceA, "notes/a.md", "# A\n")
         let git = backend.git(fixture.deviceA)
         _ = try git.cycle(.push)
-        try CommandLineGit(root: fixture.deviceA).run(["checkout", "--quiet", "--detach"])
+        let cli = CommandLineGit(root: fixture.deviceA)
+        try cli.run(["checkout", "--quiet", "--detach"])
+        try write(fixture.deviceA, "notes/b.md", "# B\n")
+        try cli.run(["add", "-A"])
+        try cli.run(["commit", "--quiet", "-m", "Made while detached"])
+        try write(fixture.deviceA, "notes/c.md", "# C\n")
+        let report = try git.cycle(.full)
+        #expect(report.parts.contains("put HEAD back on main"))
+        #expect(try cli.currentBranch() == "main")
+        #expect(try headPaths(fixture.deviceA).contains("notes/b.md"))
+        #expect(try headPaths(fixture.deviceA).contains("notes/c.md"))
+    }
+
+    /// A HEAD no branch leads to is a person's doing: not guessed at.
+    @Test(arguments: SyncBackend.allCases) func aDetachedHeadNoBranchLeadsToIsRefused(_ backend: SyncBackend) throws {
+        let fixture = try Fixture()
+        try write(fixture.deviceA, "notes/a.md", "# A\n")
+        let git = backend.git(fixture.deviceA)
+        _ = try git.cycle(.push)
+        try write(fixture.deviceA, "notes/a.md", "# A\n\nmore\n")
+        _ = try git.cycle(.push)
+        let cli = CommandLineGit(root: fixture.deviceA)
+        try cli.run(["checkout", "--quiet", "--detach", "HEAD~1"])
+        try write(fixture.deviceA, "notes/b.md", "# B\n")
+        try cli.run(["add", "-A"])
+        try cli.run(["commit", "--quiet", "-m", "Gone another way"])
         #expect(throws: GitError.self) { try git.cycle(.full) }
+    }
+
+    /// A merge a crash left in the middle: left, as `--abort` leaves one,
+    /// what was written since kept, and the sync goes on to merge again.
+    @Test(arguments: SyncBackend.allCases) func aMergeLeftInTheMiddleIsLeftAndTheSyncGoesOn(_ backend: SyncBackend) throws {
+        let (fixture, a, b, deviceB) = try shared(backend, "notes/shared.md", "# Shared\n\noriginal line\n")
+        try write(deviceB, "notes/shared.md", "# Shared\n\nedited on b\n")
+        _ = try b.cycle(.push)
+        try write(fixture.deviceA, "notes/shared.md", "# Shared\n\nedited on a\n")
+        let cli = CommandLineGit(root: fixture.deviceA)
+        try cli.run(["commit", "--quiet", "-am", "Edited on a"])
+        try cli.run(["fetch", "--quiet", "origin"])
+        _ = try? cli.run(["merge", "--quiet", "origin/main"])
+        #expect(!isClean(fixture.deviceA))
+        // Written after the crash, before the next sync.
+        try write(fixture.deviceA, "notes/later.md", "# Later\n")
+
+        let report = try a.cycle(.full)
+        #expect(report.parts.contains("left a merge that was never finished"))
+        #expect(isClean(fixture.deviceA))
+        #expect(try read(fixture.deviceA, "notes/later.md") == "# Later\n")
+        #expect(try read(fixture.deviceA, "notes/shared.md")
+                == "# Shared\n\n<<<<<<< this device\nedited on a\n=======\nedited on b\n>>>>>>> other device\n")
+        #expect(try headPaths(fixture.deviceA).contains("notes/later.md"))
+    }
+
+    /// A lock a killed git left: cleared once old; a fresh one, which a git
+    /// may yet hold, waited on.
+    @Test(arguments: SyncBackend.allCases) func aStaleLockIsClearedAndAFreshOneIsNot(_ backend: SyncBackend) throws {
+        let fixture = try Fixture()
+        let git = backend.git(fixture.deviceA)
+        try write(fixture.deviceA, "notes/a.md", "# A\n")
+        _ = try git.cycle(.push)
+        let lock = fixture.deviceA.appendingPathComponent(".git/index.lock")
+        try Data().write(to: lock)
+        try write(fixture.deviceA, "notes/a.md", "# A\n\nmore\n")
+        #expect(throws: (any Error).self) { try git.cycle(.push) }
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-600)], ofItemAtPath: lock.path)
+        let report = try git.cycle(.push)
+        #expect(report.parts.contains("cleared 1 stale lock"))
+        #expect(try headMessage(fixture.deviceA) == "Update A")
+    }
+
+    /// Before each merge, the branch kept where it was, in a reference
+    /// never pushed: whatever the merge does can be undone.
+    @Test(arguments: SyncBackend.allCases) func aMergeKeepsABackupOfTheBranch(_ backend: SyncBackend) throws {
+        let (fixture, a, b, deviceB) = try shared(backend, "notes/shared.md", "# Shared\n")
+        try write(deviceB, "notes/b.md", "# B\n")
+        _ = try b.cycle(.push)
+        try write(fixture.deviceA, "notes/a.md", "# A\n")
+        try CommandLineGit(root: fixture.deviceA).run(["add", "-A"])
+        try CommandLineGit(root: fixture.deviceA).run(["commit", "--quiet", "-m", "A"])
+        let before = CommandLineGit(root: fixture.deviceA).head()
+        _ = try a.cycle(.full)
+        let backups = a.backups()
+        #expect(backups.count == 1)
+        let kept = try CommandLineGit(root: fixture.deviceA).run(["rev-parse", backups[0].reference]).trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(kept == before)
+        // Never pushed.
+        let remoteRefs = try CommandLineGit(root: fixture.remote).run(["for-each-ref", "--format=%(refname)"])
+        #expect(!remoteRefs.contains("sync-backups"))
+    }
+
+    /// libgit2's merge left as `git merge --abort` leaves one: the files it
+    /// conflicted back as they were, every other file as it is — once, a
+    /// hard reset threw away what was written after the cycle's commit.
+    @Test func libgit2LeavingAMergeKeepsOtherWriting() throws {
+        let (fixture, a, b, deviceB) = try shared(.libgit2, "notes/shared.md", "# Shared\n\noriginal line\n")
+        try write(deviceB, "notes/shared.md", "# Shared\n\nedited on b\n")
+        _ = try b.cycle(.push)
+        try write(fixture.deviceA, "notes/shared.md", "# Shared\n\nedited on a\n")
+        try CommandLineGit(root: fixture.deviceA).run(["commit", "--quiet", "-am", "Edited on a"])
+        let backend = LibGit2Backend(root: fixture.deviceA)!
+        try backend.fetch()
+        guard case .conflicted = try backend.merge("refs/remotes/origin/main", message: "m") else {
+            Issue.record("expected a conflict")
+            return
+        }
+        try write(fixture.deviceA, "notes/typed.md", "# Typed during the merge\n")
+        try write(fixture.deviceA, "notes/later.md", "# Later\n")
+        backend.abortMerge()
+        #expect(try backend.operationInProgress() == nil)
+        #expect(try read(fixture.deviceA, "notes/typed.md") == "# Typed during the merge\n")
+        #expect(try read(fixture.deviceA, "notes/shared.md") == "# Shared\n\nedited on a\n")
+    }
+
+    /// Two devices writing and syncing at random, conflicts and all: in the
+    /// end both have the same notes, nothing left mid-merge, and every line
+    /// either ever wrote is in them — merged, or between markers.
+    @Test(arguments: SyncBackend.allCases) func randomWritingOnTwoDevicesLosesNothing(_ backend: SyncBackend) throws {
+        let (fixture, a, b, deviceB) = try shared(backend, "notes/n0.md", "# N0\n")
+        let devices = [(fixture.deviceA, a, "a"), (deviceB, b, "b")]
+        var written: [String: Set<String>] = [:]
+        var rng = SystemRandomNumberGenerator()
+        var serial = 0
+        for _ in 0..<40 {
+            let (root, git, name) = devices[Int.random(in: 0..<2, using: &rng)]
+            for _ in 0..<Int.random(in: 1...3, using: &rng) {
+                let path = "notes/n\(Int.random(in: 0..<3, using: &rng)).md"
+                var lines = TextMerge.lines((try? read(root, path)) ?? "").map(String.init)
+                serial += 1
+                let line = "- \(name) wrote \(serial)\n"
+                lines.insert(line, at: Int.random(in: 0...lines.count, using: &rng))
+                try write(root, path, lines.joined())
+                written[path, default: []].insert(line)
+            }
+            _ = try git.cycle(Bool.random(using: &rng) ? .full : .push)
+        }
+        for _ in 0..<2 { for (_, git, _) in devices { _ = try git.cycle(.full) } }
+        for (path, lines) in written {
+            let onA = try read(fixture.deviceA, path), onB = try read(deviceB, path)
+            #expect(onA == onB)
+            let present = Set(TextMerge.lines(onA).map(String.init))
+            for line in lines { #expect(present.contains(line), "\(line) lost from \(path)") }
+        }
+        #expect(isClean(fixture.deviceA) && isClean(deviceB))
+    }
+
+    /// A shallow clone whose note of where its history stops was lost —
+    /// libgit2 lost it on fetches — has it again, and a fetch keeps it.
+    @Test func aLostShallowNoteIsFoundAgainAndKept() throws {
+        let fixture = try Fixture()
+        let mac = Git(root: fixture.deviceA)
+        for i in 0..<3 {
+            try write(fixture.deviceA, "notes/shared.md", "# Shared\n\nversion \(i)\n")
+            _ = try mac.cycle(.push)
+        }
+        let phoneRoot = fixture.directory.appendingPathComponent("phone")
+        try fixture.shell(["clone", "--quiet", "--depth", "1", "file://" + fixture.remote.path, phoneRoot.path], in: fixture.directory)
+        let note = phoneRoot.appendingPathComponent(".git/shallow")
+        let original = try String(contentsOf: note, encoding: .utf8)
+        try write(fixture.deviceA, "notes/more.md", "# More\n")
+        _ = try mac.cycle(.push)
+        let phone = LibGit2Backend(root: phoneRoot)!
+        try phone.fetch()
+        #expect(try String(contentsOf: note, encoding: .utf8) == original)
+        try FileManager.default.removeItem(at: note)
+        // Opened again, as the app is: libgit2 keeps what it read of the note.
+        #expect(try LibGit2Backend(root: phoneRoot)!.markMissingHistory() == 1)
+        #expect(try String(contentsOf: note, encoding: .utf8) == original)
+        try fixture.shell(["fsck", "--connectivity-only", "--no-progress"], in: phoneRoot)
+    }
+
+    /// The phone's clone has only the latest commit; whatever the two then
+    /// do, the merge finds where they parted.
+    @Test(arguments: SyncBackend.allCases) func aShallowCloneMergesWhenTheyPart(_ backend: SyncBackend) throws {
+        let fixture = try Fixture()
+        let mac = Git(root: fixture.deviceA)
+        for i in 0..<5 {
+            try write(fixture.deviceA, "notes/shared.md", "# Shared\n\nversion \(i)\n")
+            _ = try mac.cycle(.push)
+        }
+        let phoneRoot = fixture.directory.appendingPathComponent("phone")
+        try fixture.shell(["clone", "--quiet", "--depth", "1", "file://" + fixture.remote.path, phoneRoot.path], in: fixture.directory)
+        try fixture.shell(["config", "user.name", "Phone"], in: phoneRoot)
+        try fixture.shell(["config", "user.email", "phone@example.com"], in: phoneRoot)
+        let phone = backend.git(phoneRoot)
+        try write(fixture.deviceA, "notes/mac.md", "# Mac\n")
+        _ = try mac.cycle(.push)
+        try write(phoneRoot, "notes/phone.md", "# Phone\n")
+        guard backend == .commandLine else {
+            // libgit2 fetches history only over the network, not from a
+            // folder: here it must fail cleanly, the clone left as it was.
+            #expect(throws: GitError.self) { try phone.cycle(.full) }
+            #expect(LibGit2Backend(root: phoneRoot)!.isShallow())
+            try fixture.shell(["fsck", "--connectivity-only", "--no-progress"], in: phoneRoot)
+            return
+        }
+        _ = try phone.cycle(.full)
+        _ = try mac.cycle(.full)
+        #expect(try read(phoneRoot, "notes/mac.md") == "# Mac\n")
+        #expect(try read(fixture.deviceA, "notes/phone.md") == "# Phone\n")
     }
 
     /// The phone: a clone through libgit2, syncing with a Mac that

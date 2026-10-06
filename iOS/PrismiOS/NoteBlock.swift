@@ -351,7 +351,9 @@ final class NoteBlock: UIView {
             return
         }
         let text = store?.text(ref.path) ?? ""
-        guard !dirty, text != savedText else { return }
+        guard text != savedText else { return }
+        // Written here and not saved: saved now, merged with what came in.
+        guard !dirty else { return save() }
         // Out of sight: let go, to be built again as it comes near — not
         // laid out where it is not seen.
         if isHidden, let editor = editorStorage, !editor.isFirstResponder, conflict == nil {
@@ -448,8 +450,20 @@ final class NoteBlock: UIView {
         outline.rows = Row.unfold(rows)
         let text = outline.isBlank && savedText.isEmpty ? "" : OutlineMarkdown.serialize(outline)
         guard text != savedText, !(text.isEmpty && savedText.isEmpty) else { return }
-        savedText = text
-        store.write(text, path: ref.path)
+        // Changed on disk since it was read — a sync brought another
+        // device's writing in — merged, not written over: both kept, and
+        // where both changed the same lines, both between markers.
+        let disk = store.text(ref.path)
+        let merged = disk == savedText || disk == text ? TextMerge.Result(text: text, conflicted: false)
+            : TextMerge.merge(base: savedText, ours: text, theirs: disk)
+        savedText = merged.text
+        store.write(merged.text, path: ref.path)
+        if merged.text != text {
+            // What came in shown too, the caret where it was.
+            let caret = editor.caret, editing = editor.isFirstResponder && !merged.conflicted
+            load()
+            if editing { editor.setCaret(caret) }
+        }
         styleHeader()
     }
 

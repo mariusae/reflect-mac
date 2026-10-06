@@ -70,6 +70,37 @@ public protocol GitBackend: AnyObject, Sendable {
     func mergeText(ours: Data, base: Data, theirs: Data, labels: (ours: String, base: String, theirs: String)) throws -> Data
     /// The paths that differ between two commits.
     func changedPaths(from: String, to: String) -> [String]
+
+    // MARK: Putting things right
+
+    /// The repository's own folder, where its locks are: `.git`.
+    func gitDirectory() throws -> URL
+    /// Leaves whatever operation is in progress — a merge, a rebase — as
+    /// git's own `--abort` does, the working tree's other changes kept.
+    func abandonOperation() throws
+    /// The local branches, each with the commit it is at.
+    func branches() -> [String: String]
+    /// Whether a commit is the other, or one of its ancestors.
+    func isAncestor(_ ancestor: String, of descendant: String) -> Bool
+    /// Puts a branch at a commit and HEAD on the branch, leaving the index
+    /// and the working tree as they are.
+    func attachHead(to branch: String, at commit: String) throws
+    /// Points a reference at a commit, making it if need be.
+    func setReference(_ name: String, to commit: String) throws
+    /// The references whose names start so.
+    func references(withPrefix prefix: String) -> [String]
+    func deleteReference(_ name: String)
+    /// The commit two have most recently in common, or nil when, as far as
+    /// this repository can see, none.
+    func mergeBase(_ a: String, _ b: String) -> String?
+    /// Whether the repository has only the latest part of its history.
+    func isShallow() -> Bool
+    /// Fetches more of the history: so many commits more, or nil for all.
+    func deepen(by commits: Int?) throws
+    /// Finds commits whose parents are missing and notes them as where the
+    /// history stops — as a shallow clone notes it — when the note was lost.
+    /// Says how many it noted.
+    func markMissingHistory() throws -> Int
 }
 
 public enum GitPushOutcome: Sendable, Equatable { case pushed, behind, rejected(String) }

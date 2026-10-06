@@ -268,15 +268,47 @@ final class PrismStore {
 
     /// Commit what is written, take in what other devices wrote, send it
     /// all: the full round. The notes it brought are taken in.
-    func sync() async {
-        guard let git, !isSyncing else { return }
+    func sync() async { await run(.full) }
+
+    /// Commits and pushes what is written here, nothing more.
+    func push() async { await run(.push) }
+
+    /// Asked of a sync under way, when the system takes the app's time in
+    /// the background back: stop at the next safe point, to go on next time.
+    func stopSyncing() { git?.stop() }
+
+    /// A sync asked for while one runs, done after it — a full one if any
+    /// was asked for — never dropped: whoever asked waits for it.
+    private var pending: Git.Mode?
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    private func run(_ mode: Git.Mode) async {
+        guard git != nil else { return }
+        if isSyncing {
+            pending = pending == .full || mode == .full ? .full : .push
+            await withCheckedContinuation { waiting.append($0) }
+            return
+        }
         isSyncing = true
-        defer { isSyncing = false }
+        var next: Git.Mode? = mode
+        while let mode = next {
+            pending = nil
+            await cycle(mode)
+            next = pending
+        }
+        isSyncing = false
+        let waited = waiting
+        waiting = []
+        waited.forEach { $0.resume() }
+    }
+
+    private func cycle(_ mode: Git.Mode) async {
+        guard let git else { return }
         do {
             // Signed out, a remote that asks for nothing still syncs.
             if account.isSignedIn { _ = try await account.validAccessToken() }
             StallWatch.mark("sync begun")
-            let report = try await git.sync(.full)
+            let report = try await git.sync(mode)
             StallWatch.mark("sync done, pulled \(report.pulled)")
             lastSynced = Date()
             syncError = nil
@@ -305,21 +337,6 @@ final class PrismStore {
             return "Signed out of GitHub. Choose Sign In to GitHub in the menu to sync again."
         }
         return message
-    }
-
-    /// Commits and pushes what is written here, nothing more.
-    func push() async {
-        guard let git, !isSyncing else { return }
-        isSyncing = true
-        defer { isSyncing = false }
-        do {
-            if account.isSignedIn { _ = try await account.validAccessToken() }
-            _ = try await git.sync(.push)
-            lastSynced = Date()
-            syncError = nil
-        } catch {
-            syncError = describe(error)
-        }
     }
 
     /// Brings a repository down into the graph's place, then reads it.
@@ -386,10 +403,24 @@ final class SyncScheduler {
         pushTimer?.invalidate()
         pushTimer = nil
         beforeSync()
-        let task = UIApplication.shared.beginBackgroundTask(withName: "Push")
+        // When the system wants its time back, the sync is asked to stop at
+        // its next safe point; what it committed stays, and the next sync
+        // goes on — the background task is never left running out.
+        var task = UIBackgroundTaskIdentifier.invalid
+        let end = {
+            guard task != .invalid else { return }
+            UIApplication.shared.endBackgroundTask(task)
+            task = .invalid
+        }
+        task = UIApplication.shared.beginBackgroundTask(withName: "Push") { [weak store] in
+            MainActor.assumeIsolated {
+                store?.stopSyncing()
+                end()
+            }
+        }
         Task {
             await store.push()
-            UIApplication.shared.endBackgroundTask(task)
+            end()
         }
     }
 }

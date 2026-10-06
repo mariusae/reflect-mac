@@ -221,7 +221,8 @@ final class SliceBlock: UIView, SheetBlock {
     func save() {
         saveTimer?.invalidate()
         guard !dirty.isEmpty, let store else { return }
-        var source = store.text(path)
+        // Put into the note as it was read: the pieces' places are its.
+        var source = savedText
         for i in dirty.sorted() {
             let slice = slices[i]
             let rows = Row.unfold(editors[i].rows).map { row -> Row in
@@ -237,20 +238,29 @@ final class SliceBlock: UIView, SheetBlock {
         }
         dirty = []
         guard source != savedText else { return }
-        savedText = source
-        store.write(source, path: path)
+        // Changed on disk since — a sync — merged, not written over.
+        let disk = store.text(path)
+        let merged = disk == savedText || disk == source ? source : TextMerge.merge(base: savedText, ours: source, theirs: disk).text
+        savedText = merged
+        store.write(merged, path: path)
+        if merged != source { refresh([path], force: true) }
     }
 
     /// Changed on disk: when not typed in here, the pieces read again from
     /// what the note says now — those the same left as they are.
-    func notesChanged(_ paths: Set<String>) {
-        guard paths.isEmpty || paths.contains(path), let store, dirty.isEmpty, !isTyping else { return }
+    func notesChanged(_ paths: Set<String>) { refresh(paths, force: false) }
+
+    private func refresh(_ paths: Set<String>, force: Bool) {
+        guard paths.isEmpty || paths.contains(path), let store else { return }
+        // Written here and not saved: saved now, merged with what came in.
+        if !dirty.isEmpty, store.text(path) != savedText { return save() }
+        guard force || (dirty.isEmpty && !isTyping) else { return }
         guard isLive else {
             savedText = store.text(path)
             return
         }
         let text = store.text(path)
-        guard text != savedText else { return }
+        guard force || text != savedText else { return }
         savedText = text
         let rows = OutlineMarkdown.parse(text).rows
         for (i, slice) in slices.enumerated() where slice.start + slice.count <= rows.count {

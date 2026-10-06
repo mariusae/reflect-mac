@@ -50,8 +50,6 @@ package final class DayView: NSView, NSTextViewDelegate {
     package var hasConflict: Bool { conflictView != nil }
     /// What another app or a sync wrote while there was writing here not
     /// yet saved; saving waits on the choice between the two.
-    private var parked: String?
-    private var parkedNotice: ChangedOnDiskNotice?
     /// The least height to take, however little is written.
     package var minimumHeight: CGFloat = 0 {
         didSet { if oldValue != minimumHeight { onHeightChange?(self) } }
@@ -231,11 +229,6 @@ package final class DayView: NSView, NSTextViewDelegate {
             focusBar.frame = NSRect(x: column.minX + metrics.indent - 6, y: y, width: column.width - metrics.indent + 6, height: FocusBar.height)
             y += focusBarRoom
         }
-        if let parkedNotice {
-            let height = parkedNotice.height(forWidth: column.width)
-            parkedNotice.frame = NSRect(x: column.minX, y: y, width: column.width, height: height)
-            y += height + noticeSpacing
-        }
         if let conflictView {
             conflictView.frame = NSRect(x: column.minX, y: y, width: column.width, height: conflictView.height(forWidth: column.width))
         } else {
@@ -265,8 +258,6 @@ package final class DayView: NSView, NSTextViewDelegate {
         container.exclusionPaths = paths
         heightMayHaveChanged()
     }
-
-    private var noticeSpacing: CGFloat { round(metrics.fontSize * 0.8) }
 
     // MARK: Focus
 
@@ -363,7 +354,6 @@ package final class DayView: NSView, NSTextViewDelegate {
     package func desiredHeight(width: CGFloat) -> CGFloat {
         let columnWidth = min(metrics.columnWidth, width - 48)
         var height = editorTop + bottomPadding + focusBarRoom
-        if let parkedNotice { height += parkedNotice.height(forWidth: columnWidth) + noticeSpacing }
         height += conflictView?.height(forWidth: columnWidth) ?? editorHeight(width: columnWidth)
         return max(minimumHeight, height)
     }
@@ -412,7 +402,6 @@ package final class DayView: NSView, NSTextViewDelegate {
     private func show(_ text: String) {
         savedText = text
         isDirty = false
-        dropParked()
         conflictView?.removeFromSuperview()
         conflictView = nil
         if ConflictMarkers.detect(text) {
@@ -444,54 +433,19 @@ package final class DayView: NSView, NSTextViewDelegate {
     }
 
     /// Takes in what another app, or a sync, wrote. With writing here not
-    /// yet saved, neither is written over: saving waits, and the choice is
-    /// offered, as Reflect does.
+    /// yet saved, it is saved now, merged with what came in: both kept, and
+    /// where both changed the same lines, both between markers to settle.
     package func reloadIfChanged() {
         let text = graph.read(path: ref.path) ?? ""
         guard text != savedText else { return }
         if isDirty {
-            park(text)
+            save()
             return
         }
         let focused = window?.firstResponder === editor
         let caret = editor.caretPosition
         show(text)
         if focused && !hasConflict { editor.restoreCaret(caret) }
-        heightMayHaveChanged()
-    }
-
-    private func park(_ text: String) {
-        saveTimer?.invalidate()
-        saveTimer = nil
-        parked = text
-        guard parkedNotice == nil else { return }
-        let notice = ChangedOnDiskNotice(keepMine: { [weak self] in self?.keepMine() },
-                                         loadTheirs: { [weak self] in self?.loadTheirs() },
-                                         fontSize: metrics.fontSize)
-        parkedNotice = notice
-        addSubview(notice)
-        needsLayout = true
-        heightMayHaveChanged()
-    }
-
-    private func dropParked() {
-        parked = nil
-        parkedNotice?.removeFromSuperview()
-        parkedNotice = nil
-    }
-
-    /// Keep Mine: this writing goes to disk, over theirs.
-    private func keepMine() {
-        dropParked()
-        isDirty = true
-        save(overwriting: true)
-        heightMayHaveChanged()
-    }
-
-    /// Load Theirs: what is on disk replaces this writing.
-    private func loadTheirs() {
-        guard let parked else { return }
-        show(parked)
         heightMayHaveChanged()
     }
 
@@ -514,13 +468,12 @@ package final class DayView: NSView, NSTextViewDelegate {
         }
     }
 
-    /// Writes the note, when there is anything new to write — and not
-    /// while another version waits on a choice, nor over one that arrived
-    /// unseen.
-    package func save(overwriting: Bool = false) {
+    /// Writes the note, when there is anything new to write — merged with
+    /// what is on disk when that changed since it was read, never over it.
+    package func save() {
         saveTimer?.invalidate()
         saveTimer = nil
-        guard isDirty, !isDiscarded, !isReadOnly, !hasConflict, parked == nil else { return }
+        guard isDirty, !isDiscarded, !isReadOnly, !hasConflict else { return }
         var outline = shell
         // In focus, the rows set aside too: the note is written whole.
         outline.rows = editor.fullRows
@@ -535,17 +488,24 @@ package final class DayView: NSView, NSTextViewDelegate {
             return
         }
         let disk = graph.read(path: ref.path) ?? ""
-        if !overwriting && disk != savedText && disk != text {
-            park(disk)
-            return
-        }
+        let merged = disk == savedText || disk == text ? TextMerge.Result(text: text, conflicted: false)
+            : TextMerge.merge(base: savedText, ours: text, theirs: disk)
         do {
-            try graph.write(text, path: ref.path)
-            savedText = text
+            try graph.write(merged.text, path: ref.path)
+            savedText = merged.text
             isDirty = false
             onSave?()
         } catch {
             presentError(error)
+            return
+        }
+        if merged.text != text {
+            // What came in shown too, the caret where it was.
+            let focused = window?.firstResponder === editor
+            let caret = editor.caretPosition
+            show(merged.text)
+            if focused && !hasConflict { editor.restoreCaret(caret) }
+            heightMayHaveChanged()
         }
     }
 

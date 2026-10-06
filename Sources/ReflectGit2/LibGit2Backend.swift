@@ -136,6 +136,133 @@ public final class LibGit2Backend: GitBackend, @unchecked Sendable {
         return (behind, ahead)
     }
 
+    // MARK: Putting things right
+
+    public func gitDirectory() throws -> URL {
+        URL(fileURLWithPath: String(cString: git_repository_path(repository)), isDirectory: true)
+    }
+
+    public func abandonOperation() throws {
+        let state = git_repository_state_t(UInt32(git_repository_state(repository)))
+        switch state {
+        case GIT_REPOSITORY_STATE_NONE:
+            return
+        case GIT_REPOSITORY_STATE_REBASE, GIT_REPOSITORY_STATE_REBASE_MERGE, GIT_REPOSITORY_STATE_REBASE_INTERACTIVE,
+             GIT_REPOSITORY_STATE_APPLY_MAILBOX, GIT_REPOSITORY_STATE_APPLY_MAILBOX_OR_REBASE:
+            var rebase: OpaquePointer?
+            if git_rebase_open(&rebase, repository, nil) == 0 {
+                defer { git_rebase_free(rebase) }
+                try check(git_rebase_abort(rebase), "Leaving the rebase")
+            } else {
+                git_repository_state_cleanup(repository)
+            }
+        default:
+            // A merge, a cherry-pick, a revert: left as a merge is.
+            abortMerge()
+        }
+    }
+
+    public func branches() -> [String: String] {
+        var found: [String: String] = [:]
+        var iterator: OpaquePointer?
+        guard git_branch_iterator_new(&iterator, repository, GIT_BRANCH_LOCAL) == 0 else { return [:] }
+        defer { git_branch_iterator_free(iterator) }
+        var reference: OpaquePointer?
+        var type = GIT_BRANCH_LOCAL
+        while git_branch_next(&reference, &type, iterator) == 0 {
+            defer { git_reference_free(reference) }
+            var name: UnsafePointer<CChar>?
+            guard git_branch_name(&name, reference) == 0, let name, let target = git_reference_target(reference) else { continue }
+            found[String(cString: name)] = Self.string(target)
+        }
+        return found
+    }
+
+    public func isAncestor(_ ancestor: String, of descendant: String) -> Bool {
+        guard var a = try? resolved(ancestor), var d = try? resolved(descendant) else { return false }
+        if git_oid_equal(&a, &d) != 0 { return true }
+        return git_graph_descendant_of(repository, &d, &a) == 1
+    }
+
+    public func attachHead(to branch: String, at commit: String) throws {
+        try setReference("refs/heads/\(branch)", to: commit)
+        try check(git_repository_set_head(repository, "refs/heads/\(branch)"), "Putting HEAD on \(branch)")
+    }
+
+    public func setReference(_ name: String, to commit: String) throws {
+        var id = try resolved(commit)
+        var made: OpaquePointer?
+        try check(git_reference_create(&made, repository, name, &id, 1, "sync"), "Writing \(name)")
+        git_reference_free(made)
+    }
+
+    public func references(withPrefix prefix: String) -> [String] {
+        var iterator: UnsafeMutablePointer<git_reference_iterator>?
+        guard git_reference_iterator_glob_new(&iterator, repository, prefix + "*") == 0 else { return [] }
+        defer { git_reference_iterator_free(iterator) }
+        var names: [String] = []
+        var name: UnsafePointer<CChar>?
+        while git_reference_next_name(&name, iterator) == 0, let name { names.append(String(cString: name)) }
+        return names
+    }
+
+    public func deleteReference(_ name: String) {
+        git_reference_remove(repository, name)
+    }
+
+    public func mergeBase(_ a: String, _ b: String) -> String? {
+        guard var one = try? resolved(a), var two = try? resolved(b) else { return nil }
+        var base = git_oid()
+        guard git_merge_base(&base, repository, &one, &two) == 0 else { return nil }
+        return Self.string(base)
+    }
+
+    public func isShallow() -> Bool { git_repository_is_shallow(repository) == 1 }
+
+    public func markMissingHistory() throws -> Int {
+        var odb: OpaquePointer?
+        try check(git_repository_odb(&odb, repository), "Opening the objects")
+        defer { git_odb_free(odb) }
+        // Every commit reachable from the branches and the remote's, each
+        // looked at once: those with a parent not here are where it stops.
+        var queue: [git_oid] = []
+        for name in references(withPrefix: "refs/heads/") + references(withPrefix: "refs/remotes/") {
+            if let id = id(of: name) { queue.append(id) }
+        }
+        var seen = Set<String>(), ends = Set<String>()
+        while var id = queue.popLast() {
+            guard seen.insert(Self.string(id)).inserted else { continue }
+            var commit: OpaquePointer?
+            guard git_commit_lookup(&commit, repository, &id) == 0 else { continue }
+            defer { git_commit_free(commit) }
+            for n in 0..<git_commit_parentcount(commit) {
+                guard let parent = git_commit_parent_id(commit, n) else { continue }
+                if git_odb_exists(odb, parent) == 1 { queue.append(parent.pointee) } else { ends.insert(Self.string(id)) }
+            }
+        }
+        guard !ends.isEmpty else { return 0 }
+        let note = URL(fileURLWithPath: String(cString: git_repository_path(repository))).appendingPathComponent("shallow")
+        let noted = Set(((try? String(contentsOf: note, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init))
+        let missing = ends.subtracting(noted)
+        guard !missing.isEmpty else { return 0 }
+        try (noted.union(ends).sorted().joined(separator: "\n") + "\n").write(to: note, atomically: true, encoding: .utf8)
+        Log.shared.info("git", "Noted \(missing.count) commits whose history is not here")
+        return missing.count
+    }
+
+    public func deepen(by commits: Int?) throws {
+        let remote = try origin()
+        defer { git_remote_free(remote) }
+        var options = git_fetch_options()
+        git_fetch_options_init(&options, UInt32(GIT_FETCH_OPTIONS_VERSION))
+        // A depth counts from the tips: the history now, and so many more.
+        options.depth = commits.map { Int32(clamping: commitCount() + $0) } ?? Int32(GIT_FETCH_DEPTH_UNSHALLOW.rawValue)
+        auth.install(&options.callbacks)
+        let code = withExtendedLifetime(auth) { git_remote_fetch(remote, nil, &options, nil) }
+        Log.shared.info("git", "libgit2 deepen origin by \(commits.map(String.init) ?? "all") — \(code == 0 ? "done" : Self.lastError())")
+        try check(code, "Fetching more history")
+    }
+
     // MARK: The index
 
     public func stageAll() throws {
@@ -224,6 +351,14 @@ public final class LibGit2Backend: GitBackend, @unchecked Sendable {
     // MARK: The remote
 
     public func fetch() throws {
+        // libgit2 rewrites a shallow clone's note of where its history stops
+        // when a fetch brings commits in — as empty — and the repository
+        // then claims history it lacks. Kept, and put back.
+        let note = URL(fileURLWithPath: String(cString: git_repository_path(repository))).appendingPathComponent("shallow")
+        let kept = try? Data(contentsOf: note)
+        defer {
+            if let kept, !kept.isEmpty, (try? Data(contentsOf: note)) != kept { try? kept.write(to: note, options: .atomic) }
+        }
         let remote = try origin()
         defer { git_remote_free(remote) }
         var options = git_fetch_options()
@@ -315,10 +450,39 @@ public final class LibGit2Backend: GitBackend, @unchecked Sendable {
         return .conflicted(conflicts)
     }
 
+    /// Leaves a merge as `git merge --abort` does: the index back to HEAD,
+    /// the files the merge left conflicted back as HEAD has them — and every
+    /// other file as it is, so nothing written since the cycle's commit is
+    /// lost. (A hard reset, which this was, threw such writing away.)
     public func abortMerge() {
+        var conflicted: [String] = []
+        if let index = try? openIndex() {
+            var iterator: OpaquePointer?
+            if git_index_conflict_iterator_new(&iterator, index) == 0 {
+                var ancestor: UnsafePointer<git_index_entry>?, ours: UnsafePointer<git_index_entry>?, theirs: UnsafePointer<git_index_entry>?
+                while git_index_conflict_next(&ancestor, &ours, &theirs, iterator) == 0 {
+                    if let any = ours ?? theirs ?? ancestor { conflicted.append(String(cString: any.pointee.path)) }
+                }
+                git_index_conflict_iterator_free(iterator)
+            }
+            git_index_free(index)
+        }
         if let head = headCommit() {
-            git_reset(repository, head, GIT_RESET_HARD, nil)
+            git_reset(repository, head, GIT_RESET_MIXED, nil)
             git_commit_free(head)
+        }
+        if !conflicted.isEmpty {
+            var checkout = git_checkout_options()
+            git_checkout_options_init(&checkout, UInt32(GIT_CHECKOUT_OPTIONS_VERSION))
+            checkout.checkout_strategy = GIT_CHECKOUT_FORCE.rawValue | GIT_CHECKOUT_DISABLE_PATHSPEC_MATCH.rawValue
+            _ = try? withStrings(conflicted) { paths in
+                checkout.paths = paths.pointee
+                return git_checkout_head(repository, &checkout)
+            }
+            // A file the merge brought in that HEAD lacks: taken out again.
+            for path in conflicted where !resolves("HEAD:\(path)") {
+                try? FileManager.default.removeItem(atPath: workdir + path)
+            }
         }
         git_repository_state_cleanup(repository)
     }

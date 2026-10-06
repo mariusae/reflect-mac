@@ -139,28 +139,6 @@ package class NoticeView: NSView {
     }
 }
 
-/// Reflect's notice for a note that changed on disk — by a sync, or another
-/// app — while there was writing here not yet saved. Saving waits until a
-/// side is chosen: writing over theirs would lose it.
-package final class ChangedOnDiskNotice: NoticeView {
-    private let keepMine: () -> Void
-    private let loadTheirs: () -> Void
-
-    package init(keepMine: @escaping () -> Void, loadTheirs: @escaping () -> Void, fontSize: CGFloat) {
-        self.keepMine = keepMine
-        self.loadTheirs = loadTheirs
-        let message = label("This note changed on disk while you had unsaved edits.", font: .systemFont(ofSize: fontSize * 0.87))
-        super.init(symbol: nil, messages: [message], warning: false)
-        buttons = [
-            NoticeView.button("Keep Mine", image: nil, target: self, action: #selector(mine(_:))),
-            NoticeView.button("Load Theirs", image: nil, target: self, action: #selector(theirs(_:))),
-        ]
-    }
-
-    @objc private func mine(_ sender: Any?) { keepMine() }
-    @objc private func theirs(_ sender: Any?) { loadTheirs() }
-}
-
 /// A note carrying a sync conflict: Reflect's notice, and then the note as
 /// it is on disk, each conflict shown as its two sides, labelled and
 /// coloured by device, instead of raw marker lines. It is read only;
