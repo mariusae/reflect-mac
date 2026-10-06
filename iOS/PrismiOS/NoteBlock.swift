@@ -165,6 +165,7 @@ final class NoteBlock: UIView {
 
     private func makeEditor() -> OutlineEditor {
         let editor = OutlineEditor(metrics: storedMetrics)
+        editor.day = ref.day
         addSubview(editor)
         editor.onChange = { [weak self] in self?.edited() }
         editor.onOpenLink = { [weak self] link in self?.onLink?(link) }

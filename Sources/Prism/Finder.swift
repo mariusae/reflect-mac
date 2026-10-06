@@ -16,7 +16,7 @@ final class Finder: NSView, NSTextFieldDelegate {
     private var rows: [FinderRow] = []
     private var places: [Place] = []
     private var selection = 0
-    private var face: Typeface = .alegreya
+    private var face: Typeface = .lato
     /// What the field asks for, empty.
     var placeholder = "Go to a note"
     private var rowHeight: CGFloat { places.contains { $0.trail != nil } ? 54 : 40 }

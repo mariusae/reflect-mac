@@ -9,12 +9,23 @@ import ReflectUI
 @MainActor
 protocol ColumnBlock: NSView {
     func desiredHeight(width: CGFloat) -> CGFloat
+    /// What its card is headed by, kept at the column's top once scrolled
+    /// past: its name, when, and whether it is today's. Nil: nothing to keep.
+    var stickyTitle: (title: String, when: String?, today: Bool)? { get }
     /// The block's marks, from its top: among other notes — in the
     /// timeline, the inbox — its own name too.
     func scrubMarks(listed: Bool) -> [ScrubMark]
 }
 
+extension ColumnBlock {
+    var stickyTitle: (title: String, when: String?, today: Bool)? { nil }
+}
+
 extension DayView: ColumnBlock {
+    var stickyTitle: (title: String, when: String?, today: Bool)? {
+        (Column.name(of: ref).title, Column.when(of: ref), ref.day == .today)
+    }
+
     func scrubMarks(listed: Bool) -> [ScrubMark] {
         let name = Column.name(of: ref)
         var marks: [ScrubMark] = []
@@ -413,6 +424,8 @@ final class BacklinkBlock: NSView, ColumnBlock {
             onOpen?(event.modifierFlags.contains(.command))
         }
     }
+
+    var stickyTitle: (title: String, when: String?, today: Bool)? { (name, linkCount, false) }
 
     func scrubMarks(listed: Bool) -> [ScrubMark] {
         [ScrubMark(y: 0, title: name, detail: places.count > 1 ? "\(places.count) \(unit + (unit.hasSuffix("ch") ? "es" : "s"))" : nil, rank: 3)]

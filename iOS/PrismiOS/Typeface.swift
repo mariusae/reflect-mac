@@ -26,7 +26,7 @@ enum Typeface: String, CaseIterable, Identifiable {
     private var scale: CGFloat {
         switch self {
         case .mona, .system, .plex: 1
-        case .lato: 1.02
+        case .lato: 1
         case .literata, .fraunces: 0.97
         case .source: 1.05
         case .alegreya: 1.12
@@ -67,7 +67,8 @@ enum Typeface: String, CaseIterable, Identifiable {
     private var monoFamily: String? {
         switch self {
         case .mona: "Monaspace Xenon"
-        case .literata, .fraunces, .alegreya, .lato: "JetBrains Mono"
+        case .literata, .fraunces, .alegreya: "JetBrains Mono"
+        case .lato: "Roboto Mono"
         case .source: "Source Code Pro"
         case .plex: "IBM Plex Mono"
         case .system: nil
@@ -117,9 +118,9 @@ enum Typeface: String, CaseIterable, Identifiable {
         return font
     }
 
-    /// The face chosen in Settings; else the system's own, as Threads has it.
+    /// The face chosen in Settings; else Lato, as on the Mac.
     static var current: Typeface {
-        get { UserDefaults.standard.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)) ?? .system }
+        get { UserDefaults.standard.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)) ?? .lato }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "Typeface") }
     }
 
@@ -185,7 +186,9 @@ struct PhoneSpacing: Codable, Equatable {
     var headingScale: Double
 
     static func defaults(_ face: Typeface) -> PhoneSpacing {
-        PhoneSpacing(lineHeight: Double(face.lineHeight), rowSpacing: 0.32, indent: 1.35, headingScale: 1.55)
+        // Lato as the Mac sets it.
+        if face == .lato { return PhoneSpacing(lineHeight: 1.39, rowSpacing: 0.34, indent: 1.6, headingScale: 1.5) }
+        return PhoneSpacing(lineHeight: Double(face.lineHeight), rowSpacing: 0.32, indent: 1.35, headingScale: 1.55)
     }
 
     private static func key(_ face: Typeface) -> String { "Spacing." + face.rawValue }

@@ -24,6 +24,11 @@ package final class ImageStore: @unchecked Sendable {
     /// Posts, by the source that links them; nil for one that is gone.
     private var tweets: [String: Tweet?] = [:]
     private var videos: [String: Video?] = [:]
+    /// Other links' cards — a page, a podcast, a paper, a repository, a
+    /// Google file — by link; nil for one with none.
+    private var richCards: [String: RichLink?] = [:]
+    /// What notes call each link, for a card that cannot read its file's name.
+    private var linkTexts: [String: String] = [:]
     /// The pills of files linked from notes, by source.
     package var pills: [String: FilePill] = [:]
     /// Each PDF's first page, its height to its width.
@@ -261,6 +266,50 @@ package final class ImageStore: @unchecked Sendable {
         return nil
     }
 
+    // MARK: Other links' cards
+
+    /// The card a link shows, once it is here; sent for when it is not.
+    /// `text`: what the note calls the link.
+    package func rich(_ source: String, text: String? = nil) -> RichLink? {
+        if let text, !text.isEmpty, text != source { linkTexts[source] = text }
+        if let known = richCards[source] { return known }
+        let folder = Self.cacheDirectory.appendingPathComponent("Links")
+        if let cached = RichLinks.cached(source, in: folder) {
+            richCards[source] = cached
+            if let cached { wantPictures(cached, for: source) }
+            return cached
+        }
+        guard RichLinkKind.of(source) != nil, !fetching.contains(source) else { return nil }
+        fetching.insert(source)
+        Task.detached(priority: .utility) {
+            let card = await RichLinks.load(source, in: folder)
+            await MainActor.run {
+                self.fetching.remove(source)
+                if card != nil { NotificationCenter.default.post(name: Self.didLoad, object: source) }
+            }
+        }
+        return nil
+    }
+
+    /// What a link's card shows.
+    package func richFace(_ source: String) -> RichCardFace? {
+        rich(source).map { RichCardFace($0, linkText: linkTexts[source]) }
+    }
+
+    private func wantPictures(_ card: RichLink, for source: String) {
+        let face = RichCardFace(card, linkText: nil)
+        var urls: [String] = []
+        switch face.picture {
+        case .thumbnail(let url), .artwork(let url): urls.append(url)
+        case .none: break
+        }
+        if let icon = face.icon { urls.append(icon) }
+        for url in urls {
+            dependents[url, default: []].insert(source)
+            _ = naturalSize(url)
+        }
+    }
+
     /// Sends for a card's avatar and picture, noting whose they are.
     private func want(_ tweet: Tweet, for source: String) {
         for url in [tweet.user.avatar, tweet.media?.url].compactMap({ $0 }) {
@@ -375,11 +424,14 @@ package final class ImageBox: NSObject {
     /// Pictures written side by side, shown one at a time: all of their
     /// sources, in order, this box's first. Nil for a picture on its own.
     package let carousel: [String]?
+    /// A link's card — a page's, a podcast's — not a picture.
+    package let isCard: Bool
 
-    package init(source: String, size: CGSize, carousel: [String]? = nil) {
+    package init(source: String, size: CGSize, carousel: [String]? = nil, isCard: Bool = false) {
         self.source = source
         self.size = size
         self.carousel = carousel
+        self.isCard = isCard
     }
 
     /// The size it is drawn at in a column so wide: never wider than the
@@ -403,7 +455,7 @@ package final class ImageBox: NSObject {
     /// carousel — not a card, whose size is its own, nor a PDF, which has
     /// its own grip.
     package var isResizable: Bool {
-        carousel != nil || (!isPDF && Tweet.key(from: source) == nil && Video.id(from: source) == nil)
+        carousel != nil || (!isPDF && !isCard && Tweet.key(from: source) == nil && Video.id(from: source) == nil)
     }
 
     /// Space above and below a picture.

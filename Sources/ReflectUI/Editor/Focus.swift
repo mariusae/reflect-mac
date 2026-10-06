@@ -141,11 +141,16 @@ package final class FocusBar: NSView {
             label.textColor = .tertiaryLabelColor
             return label
         }
-        stack.addArrangedSubview(step(note, symbol: "chevron.left", index: nil))
-        // The note's own title heading is the note, already first.
-        for ancestor in ancestors where !(ancestor.index == 0 && ancestor.text == note) && !ancestor.text.isEmpty {
+        // Each as it reads — a link by its words, not its brackets.
+        func plain(_ text: String) -> String { InlineMarkup.plainText(text).replacingOccurrences(of: "[[", with: "").replacingOccurrences(of: "]]", with: "") }
+        let name = plain(note)
+        stack.addArrangedSubview(step(name, symbol: "chevron.left", index: nil))
+        // The note's own title heading is the note, already first: not said again.
+        for (i, ancestor) in ancestors.enumerated() {
+            let text = plain(ancestor.text)
+            guard !text.isEmpty, !(i == 0 && text.caseInsensitiveCompare(name) == .orderedSame) else { continue }
             stack.addArrangedSubview(separator())
-            stack.addArrangedSubview(step(ancestor.text, symbol: nil, index: ancestor.index))
+            stack.addArrangedSubview(step(text, symbol: nil, index: ancestor.index))
         }
         needsLayout = true
     }

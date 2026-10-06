@@ -6,6 +6,8 @@ import ReflectCore
 enum PhoneCard {
     case post(Tweet)
     case video(Video)
+    /// Any other link's: a page, a podcast, a paper, a repository, a Google file.
+    case rich(RichCardFace)
 }
 
 /// The cards links show: sent for off the main thread, kept on disk and in
@@ -23,9 +25,60 @@ enum PhoneCards {
         Tweet.key(from: source) != nil || Video.id(from: source) != nil
     }
 
+    // MARK: Other links
+
+    nonisolated(unsafe) private static var richKnown: [String: RichLink?] = [:]
+    nonisolated(unsafe) private static var linkTexts: [String: String] = [:]
+    private static var linksFolder: URL { directory.appendingPathComponent("Links") }
+
+    /// The card a link alone in its row shows — a page's, a podcast's — when
+    /// it is in; else nil, and sent for. `text`: what the note calls it.
+    nonisolated static func rich(_ source: String, text: String?) -> PhoneCard? {
+        lock.lock()
+        if let text, !text.isEmpty, text != source { linkTexts[source] = text }
+        if let known = richKnown[source] {
+            let face = known.map { RichCardFace($0, linkText: linkTexts[source]) }
+            lock.unlock()
+            return face.map(PhoneCard.rich)
+        }
+        if let cached = RichLinks.cached(source, in: linksFolder) {
+            richKnown[source] = cached
+            let face = cached.map { RichCardFace($0, linkText: linkTexts[source]) }
+            lock.unlock()
+            if let face { wantPictures(.rich(face), for: source) }
+            return face.map(PhoneCard.rich)
+        }
+        guard RichLinkKind.of(source) != nil, !fetching.contains(source) else {
+            lock.unlock()
+            return nil
+        }
+        fetching.insert(source)
+        lock.unlock()
+        let folder = linksFolder
+        Task.detached(priority: .utility) {
+            let card = await RichLinks.load(source, in: folder)
+            lock.lock()
+            fetching.remove(source)
+            richKnown[source] = card
+            let face = card.map { RichCardFace($0, linkText: linkTexts[source]) }
+            lock.unlock()
+            if let face {
+                wantPictures(.rich(face), for: source)
+                await MainActor.run { NotificationCenter.default.post(name: .prismImageLoaded, object: source) }
+            }
+        }
+        return nil
+    }
+
     /// The card a link shows, when it is in; else nil, and sent for.
     nonisolated static func lookup(_ source: String) -> PhoneCard? {
-        guard isCardLink(source) else { return nil }
+        guard isCardLink(source) else {
+            // Another link's: only once asked for, as alone in its row.
+            lock.lock()
+            defer { lock.unlock() }
+            guard let known = richKnown[source], let card = known else { return nil }
+            return .rich(RichCardFace(card, linkText: linkTexts[source]))
+        }
         lock.lock()
         if let card = known[source] {
             lock.unlock()
@@ -124,6 +177,11 @@ enum PhoneCards {
         let urls: [String] = switch card {
         case .post(let post): [post.user.avatar, post.media?.url].compactMap { $0 }
         case .video(let video): [video.thumbnail].compactMap { $0 }
+        case .rich(let face):
+            switch face.picture {
+            case .thumbnail(let url), .artwork(let url): [url, face.icon].compactMap { $0 }
+            case .none: [face.icon].compactMap { $0 }
+            }
         }
         for url in urls { _ = picture(url, for: source) }
     }
@@ -208,6 +266,93 @@ enum PhoneCardView {
             return CGSize(width: width, height: height)
         case .video(let video):
             return CGSize(width: width, height: (width * 9 / 16).rounded() + padding + videoTitle(video, width: width) + 4 + 17 + padding)
+        case .rich(let face):
+            return CGSize(width: width, height: richLayout(face, width: width).total)
+        }
+    }
+
+    // MARK: Other links' cards
+
+    private static let thumbnail: CGFloat = 72
+
+    private static func richInsets(_ face: RichCardFace) -> (left: CGFloat, right: CGFloat) {
+        switch face.picture {
+        case .none: (padding, padding)
+        case .thumbnail: (padding, padding + thumbnail + 12)
+        case .artwork: (padding + thumbnail + 12, padding)
+        }
+    }
+
+    private static func lines(_ text: String, font: UIFont, width: CGFloat, most: Int) -> CGFloat {
+        let full = ceil((text as NSString).boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                                                        options: [.usesLineFragmentOrigin, .usesFontLeading],
+                                                        attributes: [.font: font], context: nil).height)
+        return min(full, ceil(font.lineHeight) * CGFloat(most) + 1)
+    }
+
+    private static var richTitleFont: UIFont { .systemFont(ofSize: 15, weight: .semibold) }
+    private static var richDetailFont: UIFont { .systemFont(ofSize: 13) }
+    private static var richFactsFont: UIFont { .systemFont(ofSize: 12) }
+    private static var richServiceFont: UIFont { .systemFont(ofSize: 12, weight: .semibold) }
+
+    private static func richLayout(_ face: RichCardFace, width: CGFloat) -> (title: CGFloat, detail: CGFloat, facts: CGFloat, total: CGFloat) {
+        let insets = richInsets(face)
+        let text = width - insets.left - insets.right
+        let title = lines(face.title, font: richTitleFont, width: text, most: 2)
+        let detail = face.detail.map { lines($0, font: richDetailFont, width: text, most: 2) } ?? 0
+        let facts = face.facts.map { lines($0, font: richFactsFont, width: text, most: 1) } ?? 0
+        var total = padding + 17 + 4 + title
+        if detail > 0 { total += 3 + detail }
+        if facts > 0 { total += 4 + facts }
+        total += padding
+        if face.picture != .none { total = max(total, thumbnail + 2 * padding) }
+        return (title, detail, facts, ceil(total))
+    }
+
+    private static func drawRich(_ face: RichCardFace, in rect: CGRect, source: String) {
+        let measures = richLayout(face, width: rect.width)
+        switch face.picture {
+        case .thumbnail(let url):
+            fill(PhoneCards.picture(url, for: source), in: CGRect(x: rect.maxX - padding - thumbnail, y: rect.minY + padding, width: thumbnail, height: thumbnail), corner: 8)
+        case .artwork(let url):
+            fill(PhoneCards.picture(url, for: source), in: CGRect(x: rect.minX + padding, y: rect.minY + padding, width: thumbnail, height: thumbnail), corner: 8)
+        case .none:
+            break
+        }
+        let insets = richInsets(face)
+        let textWidth = rect.width - insets.left - insets.right
+        var x = rect.minX + insets.left
+        var y = rect.minY + padding
+        let tint = face.tint.map { UIColor(red: $0.0, green: $0.1, blue: $0.2, alpha: 1) } ?? Ink.secondary
+        if let icon = face.icon.flatMap({ PhoneCards.picture($0, for: source) }) {
+            icon.draw(in: CGRect(x: x, y: y + 1, width: 15, height: 15))
+            x += 20
+        } else if let symbol = UIImage(systemName: face.symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold))?
+            .withTintColor(tint, renderingMode: .alwaysOriginal) {
+            symbol.draw(at: CGPoint(x: x, y: y + (17 - symbol.size.height) / 2))
+            x += symbol.size.width + 5
+        }
+        (face.service as NSString).draw(with: CGRect(x: x, y: y, width: rect.minX + insets.left + textWidth - x, height: 17),
+                                        options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                        attributes: [.font: richServiceFont, .foregroundColor: face.tint == nil ? Ink.secondary : tint], context: nil)
+        y += 17 + 4
+        x = rect.minX + insets.left
+        (face.title as NSString).draw(with: CGRect(x: x, y: y, width: textWidth, height: measures.title),
+                                      options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                      attributes: [.font: richTitleFont, .foregroundColor: Ink.text], context: nil)
+        y += measures.title
+        if let detail = face.detail, measures.detail > 0 {
+            y += 3
+            (detail as NSString).draw(with: CGRect(x: x, y: y, width: textWidth, height: measures.detail),
+                                      options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                      attributes: [.font: richDetailFont, .foregroundColor: Ink.secondary], context: nil)
+            y += measures.detail
+        }
+        if let facts = face.facts, measures.facts > 0 {
+            y += 4
+            (facts as NSString).draw(with: CGRect(x: x, y: y, width: textWidth, height: measures.facts),
+                                     options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                     attributes: [.font: richFactsFont, .foregroundColor: Ink.faint], context: nil)
         }
     }
 
@@ -221,6 +366,7 @@ enum PhoneCardView {
         switch card {
         case .post(let post): drawPost(post, in: rect, source: source)
         case .video(let video): drawVideo(video, in: rect, source: source)
+        case .rich(let face): drawRich(face, in: rect, source: source)
         }
     }
 

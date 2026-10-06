@@ -69,11 +69,19 @@ package final class OutlineLayoutManager: NSLayoutManager {
         // for the pass, from the rows' styles alone.
         let under = Checkboxes.underEach(paragraphs.map { OutlineText.style(storage, at: $0.location).row })
 
+        // Time blocks' cards, under their rows' handles and words.
+        if TimeBlockGeometry.any(in: storage) {
+            let shown = paragraphs.indices.filter { NSIntersectionRange(paragraphs[$0], covered).length > 0 || paragraphs[$0].location == covered.location }
+            if let first = shown.first, let last = shown.last {
+                drawTimeBlocks(timeBlocks(touching: first..<(last + 1), origin: origin))
+            }
+        }
+
         for (index, paragraph) in paragraphs.enumerated()
         where NSIntersectionRange(paragraph, covered).length > 0 || paragraph.location == covered.location {
             let row = OutlineText.style(storage, at: paragraph.location).row
             guard let frame = frame(of: paragraph, origin: origin) else { continue }
-            let indent = origin.x + metrics.textIndent(for: row)
+            let indent = origin.x + metrics.textIndent(for: row) + Self.timeGutter(storage, at: paragraph.location)
 
             switch row.kind {
             case .code:
@@ -143,6 +151,10 @@ package final class OutlineLayoutManager: NSLayoutManager {
                 }
                 if let video = store.video(box.source) {
                     VideoCard.draw(video, in: rect, images: store)
+                    continue
+                }
+                if box.isCard, let face = store.richFace(box.source) {
+                    RichCard.draw(face, in: rect, images: store)
                     continue
                 }
                 NSGraphicsContext.saveGraphicsState()
@@ -282,6 +294,11 @@ package final class OutlineLayoutManager: NSLayoutManager {
         return used.maxY - descent
     }
 
+    /// How far a time block's row is set in for the times at its left.
+    package static func timeGutter(_ storage: NSTextStorage, at location: Int) -> CGFloat {
+        (storage.attribute(.outlineTimeSlot, at: location, effectiveRange: nil) as? TimeSlot)?.measures.gutter ?? 0
+    }
+
     /// The picture at a point in the text view, if any.
     package func pictureHit(at point: NSPoint, origin: NSPoint) -> ImageBox? {
         pictureFrame(at: point, origin: origin)?.box
@@ -379,7 +396,7 @@ package final class OutlineLayoutManager: NSLayoutManager {
             let glyph = glyphIndexForCharacter(at: paragraph.location)
             guard glyph < numberOfGlyphs else { break }
             let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).offsetBy(dx: origin.x, dy: origin.y)
-            let indent = origin.x + view.metrics.textIndent(for: row)
+            let indent = origin.x + view.metrics.textIndent(for: row) + Self.timeGutter(storage, at: paragraph.location)
             let hit = NSRect(x: indent - view.metrics.indent, y: line.minY, width: view.metrics.indent, height: line.height)
             if hit.contains(point) { return index }
             if line.minY > point.y { break }

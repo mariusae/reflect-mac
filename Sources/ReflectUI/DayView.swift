@@ -79,6 +79,7 @@ package final class DayView: NSView, NSTextViewDelegate {
             needsLayout = true
             heightMayHaveChanged()
         }
+        editor.day = ref.day
         editor.setAccessibilityLabel(ref.day.map { "Note for \(Self.titleFormatter.string(from: $0.date ?? Date()))" } ?? "Note")
         title.isSelectable = false
         badge.isSelectable = false

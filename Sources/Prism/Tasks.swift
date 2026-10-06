@@ -236,6 +236,10 @@ final class TaskGroupBlock: NSView, ColumnBlock {
 
     func desiredHeight(width: CGFloat) -> CGFloat { place(width: width, laying: false) }
 
+    var stickyTitle: (title: String, when: String?, today: Bool)? {
+        (group.label, "\(group.tasks.count) \(group.tasks.count == 1 ? "task" : "tasks")", false)
+    }
+
     override func layout() {
         super.layout()
         place(width: bounds.width, laying: true)
@@ -261,6 +265,10 @@ final class SearchHeader: NSView, ColumnBlock, NSTextFieldDelegate {
     private let metrics: OutlineMetrics
     /// The words were changed: looked for again, a moment after typing stops.
     var onQuery: ((String) -> Void)?
+    /// Matches — the rows found, under each note's name — or the notes
+    /// found, whole, one after another: a timeline of one's own making.
+    private let shows = NSSegmentedControl(labels: ["Matches", "Notes"], trackingMode: .selectOne, target: nil, action: nil)
+    var onShowNotes: ((Bool) -> Void)?
     private var timer: Timer?
 
     override var isFlipped: Bool { true }
@@ -282,11 +290,23 @@ final class SearchHeader: NSView, ColumnBlock, NSTextFieldDelegate {
         field.lineBreakMode = .byTruncatingTail
         addSubview(kicker)
         addSubview(field)
+        shows.controlSize = .small
+        shows.selectedSegment = Column.searchShowsNotes ? 1 : 0
+        shows.target = self
+        shows.action = #selector(showsChanged)
+        shows.toolTip = "Show the rows that match, or each note found, whole"
+        addSubview(shows)
         show(count: nil)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func showsChanged() {
+        let notes = shows.selectedSegment == 1
+        Column.searchShowsNotes = notes
+        onShowNotes?(notes)
+    }
 
     /// How many notes were found: nil while looking.
     func show(count: Int?) {
@@ -328,7 +348,11 @@ final class SearchHeader: NSView, ColumnBlock, NSTextFieldDelegate {
         let kickerHeight = ceil(kicker.intrinsicContentSize.height)
         kicker.frame = NSRect(x: x, y: y, width: column.maxX - x, height: kickerHeight)
         y += kickerHeight + 4
-        field.frame = NSRect(x: x - 2, y: y, width: column.maxX - x, height: ceil(field.intrinsicContentSize.height))
+        let showsSize = shows.intrinsicContentSize
+        let fieldHeight = ceil(field.intrinsicContentSize.height)
+        shows.frame = NSRect(x: column.maxX - showsSize.width, y: (y + (fieldHeight - showsSize.height) / 2).rounded(),
+                             width: showsSize.width, height: showsSize.height)
+        field.frame = NSRect(x: x - 2, y: y, width: max(40, shows.frame.minX - 12 - x), height: fieldHeight)
     }
 
     func scrubMarks(listed: Bool) -> [ScrubMark] { [] }

@@ -190,6 +190,8 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         if environment["PRISM_SYNC"] == "1" { controller.syncNow(nil) }
         if let title = environment["PRISM_NEW"] { controller.newNoteForScript(title: title) }
         if environment["PRISM_BLANK"] == "1" { controller.blankNoteForScript() }
+        // `PRISM_SEARCH_NOTES=1`: the search showing the notes found, whole.
+        if let notes = environment["PRISM_SEARCH_NOTES"] { Column.searchShowsNotes = notes == "1" }
         if let query = environment["PRISM_SEARCH"] { controller.searchForScript(query) }
         if let words = environment["PRISM_SEARCH_TYPE"] {
             controller.typeSearchForScript(words, enter: environment["PRISM_ENTER"] == "1")
@@ -215,7 +217,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.asyncAfter(deadline: .now() + max(0.1, wait - 0.5)) { controller.hoverScrubberForScript(CGFloat(hover)) }
             }
         }
-        if environment["PRISM_SIDEBAR"] == "1" { controller.showSidebarForScript() }
+        if let shown = environment["PRISM_SIDEBAR"] { controller.sidebarPinned = shown == "1" }
         if let query = environment["PRISM_FIND"] {
             controller.showFinder(query: query)
             if environment["PRISM_FIND_COLUMN"] == "1" { controller.chooseInNewColumnForScript() }

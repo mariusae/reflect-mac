@@ -93,7 +93,8 @@ enum Typeface: String, CaseIterable {
     private var monoFamily: String? {
         switch self {
         case .mona: "Monaspace Xenon"
-        case .literata, .fraunces, .alegreya, .lato, .styrene: "JetBrains Mono"
+        case .literata, .fraunces, .alegreya, .styrene: "JetBrains Mono"
+        case .lato: "Roboto Mono"
         // Hoefler's own, when it is installed; else the bundled one.
         case .ideal: Self.isInstalled("Operator Mono SSm") ? "Operator Mono SSm" : "JetBrains Mono"
         case .source: "Source Code Pro"
@@ -161,7 +162,12 @@ enum Typeface: String, CaseIterable {
         // As it was: a multiple of the face's own line.
         default: (naturalLine(style: styles.text) * leading * 100).rounded() / 100
         }
-        // Alegreya Sans, the face Prism opens in, as it was settled on.
+        // Lato, the face Prism opens in, as it was settled on.
+        if self == .lato {
+            return Settings(size: 16, lineHeight: 1.39, rowSpacing: 0.34, indent: 1.6, lineLength: 660, headingScale: 1.5,
+                            textStyle: nil, headingStyle: nil, smoothing: true)
+        }
+        // Alegreya Sans, as it was settled on.
         if self == .alegreya {
             return Settings(size: 18, lineHeight: 1.4, rowSpacing: 0.16, indent: 1.6, lineLength: 660, headingScale: 1.37,
                             textStyle: nil, headingStyle: nil, smoothing: true)

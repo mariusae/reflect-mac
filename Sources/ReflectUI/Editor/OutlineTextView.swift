@@ -33,6 +33,24 @@ package final class OutlineTextView: NSTextView {
     /// looked up on the web.
     package var isPrivateNote = false
 
+    /// The day the note is, if it is one: on today's, time blocks show the
+    /// time now, kept up to the minute.
+    package var day: Day? {
+        didSet {
+            guard day != oldValue else { return }
+            clock?.invalidate()
+            clock = nil
+            guard day == .today else { return }
+            clock = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let storage = self.textStorage, TimeBlockGeometry.any(in: storage) else { return }
+                    self.needsDisplay = true
+                }
+            }
+        }
+    }
+    private var clock: Timer?
+
     /// A `[[link` being typed, and the list that finishes it.
     private var linkCompletion: LinkCompletion?
 
@@ -382,6 +400,20 @@ package final class OutlineTextView: NSTextView {
         }
     }
 
+    /// A time block's time is written out in the row the caret is in, to
+    /// be edited; elsewhere it is told at the block's left.
+    package func revealTime(inRow row: Int?) {
+        guard styler.caretRow != row else { return }
+        styler.caretRow = row
+        guard let storage = textStorage, TimeBlockGeometry.any(in: storage) else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let storage = textStorage else { return }
+            styler.restyleTimelines(storage)
+            updateCaret()
+            onRestyle?()
+        }
+    }
+
     /// Told when a link shown whole, or shortened again, may have changed
     /// how tall the text is.
     package var onRestyle: (() -> Void)?
@@ -416,6 +448,7 @@ package final class OutlineTextView: NSTextView {
         if selectedRows != nil && !adjusting { leaveRowSelection() }
         super.setSelectedRanges([NSValue(range: range)], affinity: affinity, stillSelecting: stillSelecting)
         revealLink(at: range.location)
+        revealTime(inRow: window?.firstResponder === self ? top : nil)
         typingAttributes = storage.attributes(at: min(paragraphRanges[top].location, storage.length - 1), effectiveRange: nil)
             .filter { $0.key != .link && $0.key != .outlineHidden }
         updateCaret()
@@ -645,7 +678,10 @@ package final class OutlineTextView: NSTextView {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             updateCaret()
-            if became { revealLink(at: selectedRange().location) }
+            if became {
+                revealLink(at: selectedRange().location)
+                revealTime(inRow: rowIndex(at: selectedRange().location))
+            }
         }
         return became
     }
@@ -660,6 +696,7 @@ package final class OutlineTextView: NSTextView {
             DispatchQueue.main.async { [weak self] in
                 guard let self, window?.firstResponder !== self else { return }
                 revealLink(at: selectedRange().location)
+                revealTime(inRow: nil)
             }
         }
         return resigned
@@ -691,6 +728,10 @@ package final class OutlineTextView: NSTextView {
             NSCursor.frameResize(position: .bottomRight, directions: .all).set()
             return
         }
+        if outlineLayout.handleHit(at: point, origin: textContainerOrigin) == nil, let cursor = timeBlockCursor(at: point) {
+            cursor.set()
+            return
+        }
         // Bullets, checkboxes and pictures are things to click, not text:
         // over them the pointer is the arrow.
         if outlineLayout.handleHit(at: point, origin: textContainerOrigin) != nil
@@ -703,6 +744,8 @@ package final class OutlineTextView: NSTextView {
         let point = convert(event.locationInWindow, from: nil)
         if onPictureGrip(point) {
             NSCursor.frameResize(position: .bottomRight, directions: .all).set()
+        } else if outlineLayout.handleHit(at: point, origin: textContainerOrigin) == nil, let cursor = timeBlockCursor(at: point) {
+            cursor.set()
         } else if outlineLayout.handleHit(at: point, origin: textContainerOrigin) != nil
             || outlineLayout.pictureHit(at: point, origin: textContainerOrigin) != nil {
             NSCursor.arrow.set()
@@ -829,6 +872,7 @@ package final class OutlineTextView: NSTextView {
             dragPictureGrip(event)
             return
         }
+        if event.modifierFlags.intersection([.command, .shift, .control]).isEmpty, dragTimeBlock(event) { return }
         if let (picture, frame) = outlineLayout.pictureFrame(at: point, origin: textContainerOrigin) {
             window?.makeFirstResponder(self)
             // A carousel's buttons and dots turn it.

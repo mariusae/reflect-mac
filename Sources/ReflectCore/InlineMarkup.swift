@@ -179,3 +179,35 @@ public enum InlineMarkup {
         spans(in: text, range: range).flatMap(\.markup).sorted { $0.location < $1.location }
     }
 }
+
+/// Arrows typed as two characters — `->`, `<-`, `<->` — shown as one; the
+/// text itself left as typed.
+public enum TypedArrows {
+    /// Each arrow in a range: where its characters are, and the arrow it shows.
+    /// Not in code, nor in what `skipping` covers.
+    public static func find(in text: NSString, range: NSRange, skipping: [NSRange] = []) -> [(range: NSRange, arrow: String)] {
+        var found: [(NSRange, String)] = []
+        var at = range.location
+        let end = NSMaxRange(range)
+        while at + 1 < end {
+            let a = text.character(at: at), b = text.character(at: at + 1)
+            var match: (Int, String)?
+            if a == 0x3C, b == 0x2D { // <-
+                match = at + 2 < end && text.character(at: at + 2) == 0x3E ? (3, "↔") : (2, "←")
+            } else if a == 0x2D, b == 0x3E { // ->
+                // Not the end of a longer run, `-->`, nor an HTML comment's.
+                if !(at > range.location && text.character(at: at - 1) == 0x2D) { match = (2, "→") }
+            }
+            if let (length, arrow) = match {
+                let candidate = NSRange(location: at, length: length)
+                if !skipping.contains(where: { NSIntersectionRange($0, candidate).length > 0 }) {
+                    found.append((candidate, arrow))
+                }
+                at += length
+            } else {
+                at += 1
+            }
+        }
+        return found
+    }
+}

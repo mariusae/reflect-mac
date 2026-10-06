@@ -80,7 +80,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         index = NoteIndex(root: graph.root)
         images = ImageStore(root: graph.root)
         let defaults = UserDefaults.standard
-        face = defaults.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)) ?? .alegreya
+        face = defaults.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)) ?? .lato
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -108,7 +108,6 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         page.addSubview(sidebar)
         sidebar.pinned = sidebarPinned
         page.onLayout = { [weak self] in self?.layoutPage() }
-        page.onMouseMoved = { [weak self] point in self?.mouseMoved(to: point) }
 
         sidebar.onOpen = { [weak self] place in self?.open(place.path) }
         finder.search = { [weak self] query in self?.find(query) ?? [] }
@@ -801,6 +800,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     private func layoutPage() {
         let bounds = page.bounds
+        placeWindowButtons()
+        // The toolbox on the column worked in — kept so as columns are made,
+        // closed, folded or put back, not only as the focus moves.
+        let focused = active.flatMap { active in columns.contains { $0 === active } ? active : nil } ?? columns.first { !$0.isCollapsed }
+        for column in columns where column.isFocused != (column === focused) { column.isFocused = column === focused }
         let left = sidebarPinned ? Sidebar.width + 16 : 0
         // Each column its share of the width; a folded one, a strip's.
         let open = columns.filter { !$0.isCollapsed }
@@ -820,10 +824,10 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             divider.frame = NSRect(x: columns[i + 1].frame.minX - ColumnDivider.reach, y: 0, width: 2 * ColumnDivider.reach,
                                    height: bounds.height)
         }
-        // In the title bar, after the window's buttons: the notes to review,
-        // then the sync — turning, then how it went.
-        let barMiddle = bounds.height - 26
-        var barX: CGFloat = 80
+        // At the foot of the first column, before its sheets: the notes to
+        // review, then the sync — turning, then how it went.
+        let barMiddle = Column.footMiddle
+        var barX: CGFloat = (columns.first?.frame.minX ?? 0) + 16
         if !reviewPill.isHidden {
             let width = reviewPill.fittingWidth
             reviewPill.frame = NSRect(x: barX, y: barMiddle - 12, width: width, height: 24)
@@ -834,12 +838,17 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         if syncStatus.alphaValue > 0 { barX = syncStatus.frame.maxX + 8 }
         // The first column's own controls kept clear of them.
         columns.first?.titleBarReserve = max(0, barX - (columns.first?.frame.minX ?? 0))
+        // The first column's title clear of the window's buttons.
+        for column in columns { column.titleBarLeft = column === columns.first ? max(0, 116 - column.frame.minX) : 0 }
         let height = ceil(heading.intrinsicContentSize.height)
         let first = columns.first?.frame ?? bounds
         let headingX = max(first.minX + 80, barX)
         heading.frame = NSRect(x: headingX, y: bounds.height - 26 - height / 2, width: max(0, first.maxX - 80 - headingX), height: height)
         let sidebarX = sidebarShown ? 8 : -Sidebar.width - 24
         sidebar.frame = NSRect(x: sidebarX, y: 8, width: Sidebar.width, height: bounds.height - 16)
+        // After the window's buttons, on their middle.
+        if sidebarButton.superview !== page { page.addSubview(sidebarButton) }
+        sidebarButton.frame = NSRect(x: 80, y: (bounds.height - StickyHeader.height / 2 - 12).rounded(), width: 26, height: 24)
         finder.frame = bounds
     }
 
@@ -862,12 +871,50 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         }
     }
 
-    private func mouseMoved(to point: NSPoint) {
-        guard !sidebarPinned, finder.superview == nil else { return }
-        if !sidebarShown, point.x < 4, point.y < page.bounds.height - 40 {
-            setSidebar(shown: true, animated: true)
-        } else if sidebarShown, point.x > Sidebar.width + 40 {
-            setSidebar(shown: false, animated: true)
+    /// Beside the window's buttons: the sidebar in and out.
+    private lazy var sidebarButton: NSButton = {
+        let button = NSButton(image: NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Show Sidebar")!,
+                              target: self, action: #selector(toggleSidebar(_:)))
+        button.isBordered = false
+        button.imageScaling = .scaleProportionallyDown
+        button.symbolConfiguration = .init(pointSize: 14, weight: .regular)
+        button.contentTintColor = Ink.secondary
+        button.toolTip = "Show or hide the sidebar (⌃⌘S)"
+        return button
+    }()
+
+    // MARK: The window's buttons
+
+    /// Close, minimise and zoom on the middle of the columns' title bars,
+    /// in line with the titles there — not at the top of the system's
+    /// shorter one. Their title bar made as tall as the columns'.
+    private func placeWindowButtons() {
+        guard let window, !window.styleMask.contains(.fullScreen) else { return }
+        let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].compactMap { window.standardWindowButton($0) }
+        guard let bar = buttons.first?.superview, let container = bar.superview else { return }
+        let height = StickyHeader.height
+        let frame = NSRect(x: container.frame.minX, y: window.frame.height - height, width: container.frame.width, height: height)
+        if container.frame != frame { container.frame = frame }
+        for button in buttons {
+            let y = ((height - button.frame.height) / 2).rounded()
+            if button.frame.minY != y { button.setFrameOrigin(NSPoint(x: button.frame.minX, y: y)) }
+        }
+    }
+
+    func windowDidResize(_ notification: Notification) { placeWindowButtons() }
+    func windowDidExitFullScreen(_ notification: Notification) { placeWindowButtons() }
+
+    /// Close, minimise, zoom: out of the notes' way, shown as the pointer
+    /// comes to the corner they are in.
+    private var windowButtonsShown = true
+
+    func showWindowButtons(_ shown: Bool) {
+        guard shown != windowButtonsShown, let window else { return }
+        windowButtonsShown = shown
+        let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].compactMap { window.standardWindowButton($0) }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            for button in buttons { button.animator().alphaValue = shown ? 1 : 0 }
         }
     }
 
@@ -967,10 +1014,8 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     private func showHeading() {
         var text = ""
-        // Not under the sheets fanned out over it.
-        if let column = columns.first, column.isTimeline, !column.isFanned, column.currentNameHidden, let current = column.current {
-            text = Column.name(of: current.ref).title
-        }
+        // The note scrolled into is named at its own card's top, in its
+        // column, now — not in the window's title bar.
         let centred = NSMutableParagraphStyle()
         centred.alignment = .center
         heading.attributedStringValue = NSAttributedString(string: text, attributes: [
@@ -2541,7 +2586,6 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         DispatchQueue.main.async { print("blank \(made) still there: \(self.graph.exists(path: made))") }
     }
 
-    func showSidebarForScript() { setSidebar(shown: true, animated: false); page.needsLayout = true }
 
     /// Hovers the first column's scrubber, at a place down it from 0 to 1.
     func hoverScrubberForScript(_ fraction: CGFloat) { (columns.first { $0.isWeb } ?? columns.first)?.hoverForScript(fraction) }
@@ -2628,10 +2672,9 @@ extension Notification.Name {
     static let prismTypographyChanged = Notification.Name("PrismTypographyChanged")
 }
 
-/// The window's content: tells of the pointer, for the sidebar.
+/// The window's content: tells when it is laid out.
 final class PageView: NSView {
     var onLayout: (() -> Void)?
-    var onMouseMoved: ((NSPoint) -> Void)?
 
     override func layout() {
         super.layout()
@@ -2641,16 +2684,6 @@ final class PageView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         Ink.paper.setFill()
         dirtyRect.fill()
-    }
-
-    override func updateTrackingAreas() {
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self))
-        super.updateTrackingAreas()
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        onMouseMoved?(convert(event.locationInWindow, from: nil))
     }
 }
 

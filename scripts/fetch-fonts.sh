@@ -81,6 +81,7 @@ google_fonts alegreyasans alegreya AlegreyaSans-Regular.ttf AlegreyaSans-Italic.
   AlegreyaSans-LightItalic.ttf AlegreyaSans-Medium.ttf AlegreyaSans-MediumItalic.ttf AlegreyaSans-Bold.ttf AlegreyaSans-BoldItalic.ttf
 google_fonts lato lato Lato-Regular.ttf Lato-Italic.ttf Lato-Light.ttf Lato-LightItalic.ttf Lato-Bold.ttf \
   Lato-BoldItalic.ttf Lato-Black.ttf Lato-BlackItalic.ttf
+google_fonts robotomono lato 'RobotoMono[wght].ttf' 'RobotoMono-Italic[wght].ttf'
 google_fonts ibmplexsans plex 'IBMPlexSans[wdth,wght].ttf' 'IBMPlexSans-Italic[wdth,wght].ttf'
 google_fonts ibmplexmono plex IBMPlexMono-Regular.ttf IBMPlexMono-Italic.ttf IBMPlexMono-Medium.ttf \
   IBMPlexMono-SemiBold.ttf IBMPlexMono-Bold.ttf IBMPlexMono-BoldItalic.ttf

@@ -7,6 +7,8 @@ import PrismCore
 extension NSAttributedString.Key {
     /// Markup not shown: a span's marks, while the caret is away from it.
     static let prismHidden = NSAttributedString.Key("PrismHidden")
+    /// A typed arrow's last character: drawn as the arrow it makes.
+    static let prismArrow = NSAttributedString.Key("PrismArrow")
     /// On the first character of a picture's Markdown: the picture, drawn in its place.
     static let prismImage = NSAttributedString.Key("PrismImage")
     /// On a link's last hidden opening character: the symbol drawn there —
@@ -88,6 +90,9 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
     var caret: Int?
     /// Rows folded inside a row an edit swallowed, with where they belong.
     var orphans: [(location: Int, rows: [Row])] = []
+    /// The time blocks' slots, by where their paragraphs start: worked out
+    /// before each styling.
+    private var slots: [Int: PhoneTimeSlot] = [:]
 
     init(metrics: PhoneMetrics) {
         self.metrics = metrics
@@ -106,10 +111,30 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             range = NSUnionRange(range, text.paragraphRange(for: NSRange(location: NSMaxRange(range), length: 0)))
         }
         if mask.contains(.editedCharacters) { unify(storage, in: range, inserted: edited) }
+        slots = PhoneTimeSlot.slots(storage, metrics: metrics, caret: caret)
         style(storage, in: range)
+        // A row edited can make or unmake its list a timeline, or move the
+        // blocks after it: those whose slots changed are styled again.
+        if mask.contains(.editedCharacters) { restyleChangedSlots(storage, besides: range) }
+    }
+
+    private func restyleChangedSlots(_ storage: NSTextStorage, besides done: NSRange) {
+        let text = storage.mutableString
+        var location = 0
+        while location < text.length {
+            let paragraph = text.paragraphRange(for: NSRange(location: location, length: 0))
+            location = NSMaxRange(paragraph)
+            if NSIntersectionRange(paragraph, done).length > 0 { continue }
+            let current = storage.attribute(.prismTimeSlot, at: paragraph.location, effectiveRange: nil) as? PhoneTimeSlot
+            let wanted = slots[paragraph.location]
+            if current == nil && wanted == nil { continue }
+            if let current, let wanted, current.isEqual(wanted) { continue }
+            style(storage, in: paragraph)
+        }
     }
 
     func styleAll(_ storage: NSTextStorage) {
+        slots = PhoneTimeSlot.slots(storage, metrics: metrics, caret: caret)
         storage.beginEditing()
         style(storage, in: NSRange(location: 0, length: storage.length))
         storage.endEditing()
@@ -119,6 +144,7 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
         guard storage.length > 0 else { return }
         let text = storage.mutableString
         let paragraph = text.paragraphRange(for: NSRange(location: min(location, text.length - 1), length: 0))
+        slots = PhoneTimeSlot.slots(storage, metrics: metrics, caret: caret)
         storage.beginEditing()
         style(storage, in: paragraph)
         storage.endEditing()
@@ -162,11 +188,25 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             let style = OutlineText.style(storage, at: paragraph.location)
             let row = style.row
             let previous = paragraph.location > 0 ? OutlineText.style(storage, at: paragraph.location - 1).row : nil
-            storage.setAttributes(attributes(for: row, after: previous), range: paragraph)
+            let slot = slots[paragraph.location]
+            var attributes = attributes(for: row, after: previous)
+            if let slot, let paragraphStyle = (attributes[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle {
+                // Clear of the times, at the left; room above a block's card.
+                paragraphStyle.firstLineHeadIndent += slot.measures.gutter
+                paragraphStyle.headIndent += slot.measures.gutter
+                attributes[.paragraphStyle] = paragraphStyle
+                if slot.spaceBefore > 0 { attributes[.prismSpaceBefore] = slot.spaceBefore }
+            }
+            storage.setAttributes(attributes, range: paragraph)
             storage.addAttribute(.outlineRow, value: style, range: paragraph)
+            if let slot { storage.addAttribute(.prismTimeSlot, value: slot, range: paragraph) }
             switch row.kind {
             case .code, .rule: break
             default: styleInline(storage, in: paragraph, row: row)
+            }
+            // A block's time is told at its left; written out only where the caret is.
+            if let slot, let stamp = slot.stamp, !slot.revealed, stamp.fullRange.length < paragraph.length {
+                storage.addAttribute(.prismHidden, value: true, range: NSRange(location: paragraph.location, length: stamp.fullRange.length))
             }
             if hidesTitle, paragraph.location == 0, case .heading(1) = row.kind, NSMaxRange(paragraph) < text.length {
                 collapse(storage, paragraph)
@@ -244,6 +284,11 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
                 if !inHeading { storage.addAttribute(.prismPill, value: true, range: span.range) }
                 // A post's or a video's: its card under the row, once it is in.
                 if !inHeading, PhoneCards.lookup(target) != nil {
+                    storage.addAttribute(.prismCard, value: target, range: NSRange(location: span.range.location, length: 1))
+                } else if !inHeading, !PhoneCards.isCardLink(target),
+                          // Any other link alone in its row: a page's, a podcast's card.
+                          text.substring(with: span.range) == text.substring(with: body).trimmingCharacters(in: .whitespaces),
+                          PhoneCards.rich(target, text: { if case .link = span.kind { text.substring(with: content) } else { nil } }()) != nil {
                     storage.addAttribute(.prismCard, value: target, range: NSRange(location: span.range.location, length: 1))
                 }
                 // A bare address, as the Mac shows it: its site and the ends of
@@ -323,6 +368,26 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
                 }
             }
         }
+        // `->` and `<-` shown as arrows — not in code or links, and typed as
+        // they are while the caret is at them; after the words' own styles,
+        // the arrow drawn in the face its word is in, or the system's.
+        do {
+            let literal = InlineMarkup.spans(in: text, range: body).filter {
+                switch $0.kind { case .code, .link, .url, .image, .comment: true; default: false }
+            }.map(\.range)
+            for (range, arrow) in TypedArrows.find(in: text, range: body, skipping: literal) {
+                if let caret, caret >= range.location, caret <= NSMaxRange(range) { continue }
+                storage.addAttribute(.prismHidden, value: true, range: NSRange(location: range.location, length: range.length - 1))
+                let last = NSRange(location: NSMaxRange(range) - 1, length: 1)
+                storage.addAttribute(.prismArrow, value: arrow, range: last)
+                let face = font(at: last.location)
+                var unichars = Array(arrow.utf16)
+                var glyph = [CGGlyph](repeating: 0, count: unichars.count)
+                if !CTFontGetGlyphsForCharacters(face, &unichars, &glyph, unichars.count) || glyph[0] == 0 {
+                    storage.addAttribute(.font, value: UIFont.systemFont(ofSize: face.pointSize), range: last)
+                }
+            }
+        }
     }
 
     private static func adding(_ trait: UIFontDescriptor.SymbolicTraits, to font: UIFont) -> UIFont {
@@ -342,6 +407,8 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
 /// pills behind links are drawn under the text.
 final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     var metrics = PhoneMetrics()
+    /// Whether the note is today's: its time blocks show the time now.
+    var today = false
     /// For each row with children, whether all of them are done; and
     /// whether the row has any, for its bullet.
 
@@ -397,9 +464,20 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                        font: UIFont, forGlyphRange range: NSRange) -> Int {
         guard let storage = textStorage else { return 0 }
         var changed: [NSLayoutManager.GlyphProperty]?
+        var arrowGlyphs: [CGGlyph]?
         for i in 0..<range.length {
             let index = characterIndexes[i]
             guard index < storage.length else { continue }
+            // A typed arrow's last character, as the arrow.
+            if let arrow = storage.attribute(.prismArrow, at: index, effectiveRange: nil) as? String {
+                var unichars = Array(arrow.utf16)
+                var glyph = [CGGlyph](repeating: 0, count: unichars.count)
+                if CTFontGetGlyphsForCharacters(font, &unichars, &glyph, unichars.count), glyph[0] != 0 {
+                    if arrowGlyphs == nil { arrowGlyphs = Array(UnsafeBufferPointer(start: glyphs, count: range.length)) }
+                    arrowGlyphs![i] = glyph[0]
+                    if changed == nil { changed = Array(UnsafeBufferPointer(start: properties, count: range.length)) }
+                }
+            }
             // A picture's first character is a space as big as the picture;
             // the rest of its Markdown, like other hidden marks, nothing.
             let property: NSLayoutManager.GlyphProperty
@@ -417,8 +495,11 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             changed![i] = property
         }
         guard let changed else { return 0 }
+        let glyphList = arrowGlyphs ?? Array(UnsafeBufferPointer(start: glyphs, count: range.length))
         changed.withUnsafeBufferPointer { buffer in
-            setGlyphs(glyphs, properties: buffer.baseAddress!, characterIndexes: characterIndexes, font: font, forGlyphRange: range)
+            glyphList.withUnsafeBufferPointer { glyphBuffer in
+                setGlyphs(glyphBuffer.baseAddress!, properties: buffer.baseAddress!, characterIndexes: characterIndexes, font: font, forGlyphRange: range)
+            }
         }
         return range.length
     }
@@ -498,7 +579,8 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
            let value = storage.attribute(.prismSpaceBefore, at: start, effectiveRange: nil) as? CGFloat {
             above = value
         }
-        guard height != nil || above > 0 || cardRoom > 0 else { return false }
+        let timeFoot = timeBlockFoot(characters: characters, fragment: lineFragmentRect.pointee, line: glyphRange)
+        guard height != nil || above > 0 || cardRoom > 0 || timeFoot != nil else { return false }
         if let height {
             lineFragmentRect.pointee.size.height = height
             lineFragmentUsedRect.pointee.size.height = height
@@ -508,6 +590,10 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         lineFragmentRect.pointee.size.height += above
         lineFragmentUsedRect.pointee.origin.y += above
         baselineOffset.pointee += above
+        // A time block's foot: down as far as it lasts, and its free time after.
+        if timeFoot != nil, let foot = timeBlockFoot(characters: characters, fragment: lineFragmentRect.pointee, line: glyphRange) {
+            lineFragmentRect.pointee.size.height += foot
+        }
         return true
     }
 
@@ -546,17 +632,28 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     private func cardsEnding(at characters: NSRange, in container: NSTextContainer) -> [(source: String, card: PhoneCard, size: CGSize)] {
         guard let storage = textStorage, storage.length > 0, characters.length > 0 else { return [] }
         let text = plainText
-        // Not the row's last line: none. Known from its last character —
-        // the row found only for its last line, not each: a row thousands
-        // of characters long, searched through for each of its lines, made
-        // laying a note out take seconds.
         let end = min(NSMaxRange(characters), text.length)
-        guard end == text.length || text.character(at: end - 1) == 0x0A else { return [] }
-        let paragraph = text.paragraphRange(for: NSRange(location: end - 1, length: 0))
+        // The rows that end in these characters — at a line break in them,
+        // or at the text's end: their cards go under this line. Each row
+        // found from its own line break, not searched through for each of
+        // its lines — a row thousands of characters long made laying a note
+        // out take seconds that way.
+        var ends: [Int] = []
+        var at = characters.location
+        while at < end {
+            let found = text.range(of: "\n", options: .literal, range: NSRange(location: at, length: end - at))
+            guard found.location != NSNotFound else { break }
+            ends.append(found.location)
+            at = NSMaxRange(found)
+        }
+        if end == text.length, ends.last != end - 1 { ends.append(end - 1) }
         var found: [(String, PhoneCard, CGSize)] = []
-        storage.enumerateAttribute(.prismCard, in: paragraph) { value, range, _ in
-            guard let source = value as? String, let card = PhoneCards.lookup(source) else { return }
-            found.append((source, card, PhoneCardView.size(card, room: lineWidth(at: range.location, in: container))))
+        for last in ends {
+            let paragraph = text.paragraphRange(for: NSRange(location: last, length: 0))
+            storage.enumerateAttribute(.prismCard, in: paragraph) { value, range, _ in
+                guard let source = value as? String, let card = PhoneCards.lookup(source) else { return }
+                found.append((source, card, PhoneCardView.size(card, room: lineWidth(at: range.location, in: container))))
+            }
         }
         return found
     }
@@ -566,6 +663,7 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         guard let storage = textStorage, let container = textContainers.first, storage.length > 0 else { return [] }
         let text = plainText
         var found: [(String, PhoneCard, CGRect)] = []
+        var seenLines = Set<Int>()
         var at = characters.location
         while at < min(NSMaxRange(characters), text.length) {
             let paragraph = text.paragraphRange(for: NSRange(location: at, length: 0))
@@ -574,6 +672,8 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             guard last < numberOfGlyphs else { continue }
             var lineGlyphs = NSRange()
             _ = lineFragmentRect(forGlyphAt: last, effectiveRange: &lineGlyphs)
+            // A line ending two rows — an empty one after — its cards once.
+            guard seenLines.insert(lineGlyphs.location).inserted else { continue }
             let lineCharacters = characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil)
             let cards = cardsEnding(at: lineCharacters, in: container)
             guard !cards.isEmpty else { continue }
@@ -693,6 +793,9 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             paragraphs.append(paragraph)
             at = NSMaxRange(paragraph)
         }
+        if PhoneTimeSlot.any(in: storage) {
+            drawTimeBlocks(timeBlocks(in: covered), at: origin, today: today)
+        }
         drawImages(in: covered, at: origin)
         for card in cards(in: covered) {
             PhoneCardView.draw(card.card, in: card.frame.offsetBy(dx: origin.x, dy: origin.y), source: card.source)
@@ -747,7 +850,8 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).offsetBy(dx: origin.x, dy: origin.y)
             let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil).offsetBy(dx: origin.x, dy: origin.y)
             let font = storage.attribute(.font, at: paragraph.location, effectiveRange: nil) as? UIFont ?? metrics.body
-            let markerX = metrics.indent * CGFloat(row.depth) + metrics.indent / 2 + origin.x
+            let shift = PhoneTimeSlot.gutter(storage, at: paragraph.location)
+            let markerX = metrics.indent * CGFloat(row.depth) + metrics.indent / 2 + origin.x + shift
             let glyphLocation = location(forGlyphAt: glyph)
             // A row that starts with a picture has its marker by the top of it.
             let startsWithImage = storage.attribute(.prismImage, at: first, effectiveRange: nil) != nil
@@ -798,7 +902,7 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                         .foregroundColor: Ink.secondary,
                     ])
                     let size = label.size()
-                    label.draw(at: CGPoint(x: metrics.textIndent(for: row) + origin.x - size.width - 6, y: baseline - size.height + 3))
+                    label.draw(at: CGPoint(x: metrics.textIndent(for: row) + shift + origin.x - size.width - 6, y: baseline - size.height + 3))
                 } else {
                     Ink.secondary.setFill()
                     let dot = max(4.5, round(font.pointSize * 0.3))
@@ -949,7 +1053,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         // typing, where holding the words moves the caret — is picked up.
         rowHold.minimumPressDuration = 0.4
         rowHold.isOnPicture = { [weak self] point in
-            guard let self, self.isEditable, self.rowUnder(point) != nil else { return false }
+            guard let self, self.isEditable, self.rowUnder(point) != nil, !self.blockHold.isOnPicture!(point) else { return false }
             switch self.target(at: point) {
             case .image: return false
             case .marker: return true
@@ -957,6 +1061,17 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             }
         }
         rowHold.addTarget(self, action: #selector(heldRow(_:)))
+        // A time block held by its times, its foot or its empty part: moved,
+        // or made longer — not its row picked up.
+        blockHold.minimumPressDuration = 0.25
+        blockHold.isOnPicture = { [weak self] point in
+            guard let self, self.isEditable else { return false }
+            return self.outlineLayout.timeBlockHit(at: CGPoint(x: point.x - self.textContainerInset.left,
+                                                               y: point.y - self.textContainerInset.top)) != nil
+        }
+        blockHold.addTarget(self, action: #selector(heldTimeBlock(_:)))
+        blockHold.delegate = self
+        addGestureRecognizer(blockHold)
         rowHold.delegate = self
         addGestureRecognizer(rowHold)
         pictureHold.delegate = self
@@ -1235,7 +1350,13 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         if text == "\n" {
             if range.length > 0 { textStorage.replaceCharacters(in: range, with: "") }
             let caret = OutlineKeys.Caret(row: rowIndex(at: range.location), offset: range.location - paragraphRanges[rowIndex(at: range.location)].location)
-            if let split = OutlineKeys.split(self.rows, at: caret) {
+            let all = self.rows
+            if caret.offset == paragraphRanges[caret.row].length - 1, let next = Timeline.nextBlock(after: caret.row, in: all) {
+                // At a time block's end: the next, starting as it ends.
+                var after = all
+                after.insert(next, at: caret.row + 1)
+                replace(after, caret: OutlineKeys.Caret(row: caret.row + 1, offset: (next.text as NSString).length), undoName: "New Row")
+            } else if let split = OutlineKeys.split(all, at: caret) {
                 replace(split.rows, caret: split.caret, undoName: "New Row")
             } else if rows[index].kind == .code {
                 // Within a code block, a line, not a row.
@@ -1634,7 +1755,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         if row.isFolded, let pill = outlineLayout.foldPill(for: paragraphRanges[index]), pill.insetBy(dx: -8, dy: -8).contains(inContainer) {
             return .fold(index)
         }
-        if inContainer.x < metrics.textIndent(for: row) - 2, inContainer.x > metrics.indent * CGFloat(row.depth) - 6 {
+        let shift = PhoneTimeSlot.gutter(textStorage, at: paragraphRanges[index].location)
+        if inContainer.x < metrics.textIndent(for: row) + shift - 2, inContainer.x > metrics.indent * CGFloat(row.depth) + shift - 6 {
             return .marker(index)
         }
         let glyphRect = outlineLayout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainer)
@@ -1654,8 +1776,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
-        (gesture === pictureHold || gesture === rowHold) && other.view === self && other !== markerTap
-            && other !== pictureHold && other !== rowHold
+        (gesture === pictureHold || gesture === rowHold || gesture === blockHold) && other.view === self && other !== markerTap
+            && other !== pictureHold && other !== rowHold && other !== blockHold
     }
 
     func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
@@ -1738,6 +1860,13 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     private let pictureHold = PictureHold()
     private let rowHold = PictureHold()
+    private let blockHold = PictureHold()
+    /// A time block being dragged.
+    var timeDrag: TimeDrag?
+    /// The day the note is, if one: on today's, time blocks show the time now.
+    var day: Day? {
+        didSet { outlineLayout.today = day == .today }
+    }
     var rowDrag: RowDragState?
     private lazy var pictureMenu = UIEditMenuInteraction(delegate: self)
 

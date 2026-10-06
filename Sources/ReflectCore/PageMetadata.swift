@@ -10,6 +10,16 @@ public struct PageMetadata: Equatable, Sendable, Codable {
     public var description: String?
     public var siteName: String?
     public var iconURL: URL?
+    /// The page's picture: `og:image`, else `twitter:image`.
+    public var imageURL: URL?
+
+    public init(title: String, description: String? = nil, siteName: String? = nil, iconURL: URL? = nil, imageURL: URL? = nil) {
+        self.title = title
+        self.description = description
+        self.siteName = siteName
+        self.iconURL = iconURL
+        self.imageURL = imageURL
+    }
 
     static let maxTitle = 200
     static let maxDescription = 300
@@ -28,8 +38,11 @@ public struct PageMetadata: Equatable, Sendable, Codable {
             .flatMap({ normalize($0, limit: maxTitle) }) else { return nil }
         let description = (meta("property", "og:description") ?? meta("name", "description"))
             .flatMap { normalize($0, limit: maxDescription) }
+        let image = (meta("property", "og:image") ?? meta("property", "og:image:url") ?? meta("name", "twitter:image"))
+            .flatMap { URL(string: decodeEntities($0), relativeTo: url)?.absoluteURL }
+            .flatMap { $0.scheme == "https" || $0.scheme == "http" ? $0 : nil }
         return PageMetadata(title: title, description: description, siteName: meta("property", "og:site_name"),
-                            iconURL: icon(in: head, pageURL: url))
+                            iconURL: icon(in: head, pageURL: url), imageURL: image)
     }
 
     private static func icon(in head: String, pageURL: URL) -> URL? {

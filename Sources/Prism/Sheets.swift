@@ -143,7 +143,7 @@ final class StackPill: NSView {
     var sheets: [Sheet] = [] { didSet { restyle() } }
     /// With none beneath, the nearest gone back from: forward, faintly.
     var forward: Sheet? { didSet { restyle() } }
-    var face: Typeface = .alegreya { didSet { restyle() } }
+    var face: Typeface = .lato { didSet { restyle() } }
     var onClick: (() -> Void)?
     var onHover: ((Bool) -> Void)?
     /// Picked up and moved: the column's own sheet, to put elsewhere.
@@ -153,7 +153,8 @@ final class StackPill: NSView {
     private let title = NSTextField(labelWithString: "")
     /// The edges of the sheets further down, up to so many.
     private static let most = 3
-    private static let height: CGFloat = 24
+    /// As tall as the toolbox it sits beside.
+    private static let height: CGFloat = 34
     private static let step: CGFloat = 6
 
     override var isFlipped: Bool { true }
@@ -178,7 +179,7 @@ final class StackPill: NSView {
             .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
         icon.contentTintColor = Ink.secondary
         let name = NSMutableAttributedString(string: top.title, attributes: [
-            .font: face.font(size: 12.5, weight: .medium),
+            .font: face.font(size: 13.5, weight: .medium),
             .foregroundColor: (isForward ? Ink.secondary : Ink.text).withAlphaComponent(Aging.ink(top.age)),
         ])
         if top.pinned, !isForward {
@@ -215,6 +216,11 @@ final class StackPill: NSView {
 
     static var fittingHeight: CGFloat { height }
 
+    /// Its smallest: the icon alone, on the edges of those beneath.
+    var compactWidth: CGFloat { 34 + CGFloat(behind) * Self.step }
+    /// Too narrow for any of its name: the icon alone, centred.
+    private var isCompact: Bool { front.width < 64 }
+
     /// Where the front one is: the others, level with it, peek out at its left.
     var front: NSRect {
         let inset = CGFloat(behind) * Self.step
@@ -224,7 +230,9 @@ final class StackPill: NSView {
     override func layout() {
         super.layout()
         let front = front
-        icon.frame = NSRect(x: front.minX + 9, y: front.midY - 7, width: 15, height: 14)
+        title.isHidden = isCompact
+        icon.frame = isCompact ? NSRect(x: (front.midX - 7.5).rounded(), y: front.midY - 7, width: 15, height: 14)
+            : NSRect(x: front.minX + 9, y: front.midY - 7, width: 15, height: 14)
         let titleHeight = ceil(title.intrinsicContentSize.height)
         title.frame = NSRect(x: front.minX + 27, y: (front.midY - titleHeight / 2).rounded(), width: front.width - 36, height: titleHeight)
     }
@@ -309,7 +317,7 @@ final class StackScrubber: NSView {
     private var top: Int { hovered ?? max(0, sheets.count - 1) }
     /// The bunch's front: they gather to it, the rightmost on top.
     private var own: Int { max(0, sheets.count - 1) }
-    private var face: Typeface = .alegreya
+    private var face: Typeface = .lato
     private(set) var hovered: Int?
     /// How far they are dealt out: 0 in their bunch, at the right; 1 across.
     private var dealt: CGFloat = 0
@@ -1030,7 +1038,7 @@ final class CollapsedStrip: NSView {
     var title = "" { didSet { needsDisplay = true } }
     var symbol = "doc.text" { didSet { needsDisplay = true } }
     var count = 1 { didSet { needsDisplay = true } }
-    var face: Typeface = .alegreya { didSet { needsDisplay = true } }
+    var face: Typeface = .lato { didSet { needsDisplay = true } }
     var onClick: (() -> Void)?
     var onHover: ((Bool) -> Void)?
     private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true; onHover?(hovering) } } }

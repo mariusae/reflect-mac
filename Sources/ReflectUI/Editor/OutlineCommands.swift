@@ -66,6 +66,7 @@ extension OutlineTextView {
         }
         let offset = location - paragraph.location
         let length = paragraph.length - 1
+        if offset == length, startNextTimeBlock(after: index, in: all) { return }
 
         var next = row
         next.text = ""
@@ -110,6 +111,18 @@ extension OutlineTextView {
             restoreCaret(CaretPosition(row: index + 1, offset: 0))
         }
         scrollRangeToVisible(selectedRange())
+    }
+
+    /// Return at the end of a time block with nothing under it: the next
+    /// block, starting as this one ends, half an hour long.
+    private func startNextTimeBlock(after index: Int, in all: [Row]) -> Bool {
+        guard let next = Timeline.nextBlock(after: index, in: all) else { return false }
+        var after = all
+        after.insert(next, at: index + 1)
+        replace(all, with: after, actionName: "New Row")
+        restoreCaret(CaretPosition(row: index + 1, offset: (next.text as NSString).length))
+        scrollRangeToVisible(selectedRange())
+        return true
     }
 
     /// A new row after a row, to write in.

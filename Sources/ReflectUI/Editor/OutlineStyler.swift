@@ -73,6 +73,11 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
     package var images: ImageStore?
     /// Where the caret is: a shortened web address it is in is shown whole.
     package var caret: Int?
+    /// The row the caret is in: a time block's time is written out there.
+    package var caretRow: Int?
+    /// The time blocks' slots, by where their paragraphs start: worked out
+    /// before each styling.
+    private var slots: [Int: TimeSlot] = [:]
 
     package init(metrics: OutlineMetrics) {
         self.metrics = metrics
@@ -92,12 +97,75 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
             range = NSUnionRange(range, text.paragraphRange(for: NSRange(location: NSMaxRange(range), length: 0)))
         }
         if mask.contains(.editedCharacters) { unify(storage, in: range, inserted: edited) }
+        slots = timeSlots(storage)
         style(storage, in: range)
+        // A row edited can make or unmake its list a timeline, or move
+        // the blocks after it: those whose slots changed are styled again.
+        restyleChangedSlots(storage, besides: range)
+    }
+
+    /// Styles again the rows of time blocks that changed — the caret moved
+    /// into or out of one, or the type changed.
+    package func restyleTimelines(_ storage: NSTextStorage) {
+        guard storage.length > 0 else { return }
+        slots = timeSlots(storage)
+        storage.beginEditing()
+        restyleChangedSlots(storage, besides: NSRange(location: 0, length: 0))
+        storage.endEditing()
+    }
+
+    private func restyleChangedSlots(_ storage: NSTextStorage, besides done: NSRange) {
+        let text = storage.string as NSString
+        var location = 0
+        while location < text.length {
+            let paragraph = text.paragraphRange(for: NSRange(location: location, length: 0))
+            location = NSMaxRange(paragraph)
+            if NSIntersectionRange(paragraph, done).length > 0 { continue }
+            let current = storage.attribute(.outlineTimeSlot, at: paragraph.location, effectiveRange: nil) as? TimeSlot
+            let wanted = slots[paragraph.location]
+            if current == nil && wanted == nil { continue }
+            if let current, let wanted, current.isEqual(wanted) { continue }
+            style(storage, in: paragraph)
+        }
+    }
+
+    /// The slot of each paragraph in a timeline, by where it starts.
+    private func timeSlots(_ storage: NSTextStorage) -> [Int: TimeSlot] {
+        let text = storage.string as NSString
+        let paragraphs = OutlineText.paragraphs(text)
+        guard paragraphs.count >= 2 else { return [:] }
+        var depths: [Int] = [], texts: [String] = [], items: [Bool] = [], tasks: [Row.Task?] = []
+        depths.reserveCapacity(paragraphs.count)
+        for paragraph in paragraphs {
+            let row = OutlineText.style(storage, at: paragraph.location).row
+            depths.append(row.depth)
+            items.append(row.kind.isListItem)
+            tasks.append(row.task)
+            texts.append(text.substring(with: NSRange(location: paragraph.location, length: min(paragraph.length, 48))))
+        }
+        let timelines = Timeline.find(depths: depths, texts: texts, isListItem: items)
+        guard !timelines.isEmpty else { return [:] }
+        let measures = TimeSlot.Measures(metrics)
+        var found: [Int: TimeSlot] = [:]
+        for timeline in timelines {
+            for (n, block) in timeline.blocks.enumerated() {
+                for row in block.rows {
+                    let head = row == block.row
+                    found[paragraphs[row].location] = TimeSlot(
+                        index: n, back: row - block.row, isLast: row == block.rows.upperBound - 1,
+                        stamp: head ? block.stamp : nil, revealed: head && caretRow == block.row,
+                        start: block.start, end: block.end, free: block.free, isLastBlock: n == timeline.blocks.count - 1,
+                        done: tasks[block.row]?.isDone == true, measures: measures)
+                }
+            }
+        }
+        return found
     }
 
     /// Styles the paragraph a character is in again.
     package func restyle(_ storage: NSTextStorage, paragraphAt location: Int) {
         guard storage.length > 0 else { return }
+        slots = timeSlots(storage)
         let text = storage.string as NSString
         let paragraph = text.paragraphRange(for: NSRange(location: min(location, text.length - 1), length: 0))
         storage.beginEditing()
@@ -106,6 +174,7 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
     }
 
     package func styleAll(_ storage: NSTextStorage) {
+        slots = timeSlots(storage)
         storage.beginEditing()
         style(storage, in: NSRange(location: 0, length: storage.length))
         storage.endEditing()
@@ -150,8 +219,19 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
             let row = OutlineText.style(storage, at: paragraph.location).row
             let previous = paragraph.location > 0 ? OutlineText.style(storage, at: paragraph.location - 1).row : nil
             let style = storage.attribute(.outlineRow, at: paragraph.location, effectiveRange: nil) as Any
-            storage.setAttributes(attributes(for: row, after: previous), range: paragraph)
+            let slot = slots[paragraph.location]
+            var attributes = attributes(for: row, after: previous)
+            if let slot, let paragraphStyle = (attributes[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle {
+                // Clear of the times, at the left.
+                paragraphStyle.firstLineHeadIndent += slot.measures.gutter
+                paragraphStyle.headIndent += slot.measures.gutter
+                // Room above the first block's card, and between blocks.
+                if slot.back == 0 { paragraphStyle.paragraphSpacingBefore = slot.index == 0 ? slot.measures.pad * 2 : slot.measures.pad }
+                attributes[.paragraphStyle] = paragraphStyle
+            }
+            storage.setAttributes(attributes, range: paragraph)
             storage.addAttribute(.outlineRow, value: style, range: paragraph)
+            if let slot { storage.addAttribute(.outlineTimeSlot, value: slot, range: paragraph) }
             if case .code = row.kind {
                 CodeBlock.dimFences(storage, in: paragraph, ink: metrics.typography.ink)
             } else if case .rule = row.kind {} else {
@@ -160,6 +240,11 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
                 if case .heading = row.kind { inHeading = true }
                 InlineMarkdown.style(storage, in: paragraph, base: metrics.font(for: row), done: row.task?.isDone == true,
                                      images: images, caret: caret, pills: !inHeading, typography: metrics.typography)
+            }
+            // A block's time is told at its left; written out only where the caret is.
+            if let slot, let stamp = slot.stamp, !slot.revealed, stamp.fullRange.length < paragraph.length {
+                storage.addAttribute(.outlineHidden, value: true,
+                                     range: NSRange(location: paragraph.location, length: stamp.fullRange.length))
             }
             // A character the font set here lacks still needs a font that has it.
             storage.fixAttributes(in: paragraph)
@@ -216,6 +301,89 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
 extension NSAttributedString.Key {
     /// Markup not shown: its characters are kept, but draw nothing.
     package static let outlineHidden = NSAttributedString.Key("ReflectOutlineHidden")
+    /// A typed arrow's last character: drawn as the arrow it makes.
+    package static let outlineArrow = NSAttributedString.Key("ReflectOutlineArrow")
+    /// A row of a time block, as a `TimeSlot`.
+    package static let outlineTimeSlot = NSAttributedString.Key("ReflectOutlineTimeSlot")
+}
+
+/// A row's place in a time block: how far it is set in, how tall its block
+/// stands, and the free time after it.
+package final class TimeSlot: NSObject {
+    /// Of the type: how far the times push the rows in, and how tall a
+    /// minute is.
+    package struct Measures: Equatable {
+        package var gutter: CGFloat
+        package var perMinute: CGFloat
+        package var row: CGFloat
+        package var pad: CGFloat
+        package var labelSize: CGFloat
+        package var twelveHour: Bool
+
+        package init(_ metrics: OutlineMetrics) {
+            let body = metrics.body
+            let line = ceil(NSLayoutManager().defaultLineHeight(for: body) * max(1, metrics.lineHeightMultiple))
+            row = line + metrics.rowSpacing
+            // An hour as tall as two and a half rows: a quarter of one, a row.
+            perMinute = row * 2.5 / 60
+            pad = round(metrics.fontSize * 0.3)
+            labelSize = round(metrics.fontSize * 0.74)
+            twelveHour = TimeStamp.localeIsTwelveHour
+            let label = NSAttributedString(string: twelveHour ? "12:30 PM" : "23:30",
+                                           attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: labelSize, weight: .medium)])
+            gutter = ceil(label.size().width) + round(metrics.fontSize * 0.9)
+        }
+    }
+
+    /// Which block of its timeline.
+    package let index: Int
+    /// How many rows back the block's first is: none for the first.
+    package let back: Int
+    /// Whether the block's last row: its foot reaches down to its end.
+    package let isLast: Bool
+    /// The first row's time, as written.
+    package let stamp: TimeStamp?
+    /// Whether the time is written out: the caret is in the row.
+    package let revealed: Bool
+    package let start: Int
+    package let end: Int
+    package let free: Int
+    package let isLastBlock: Bool
+    package let done: Bool
+    package let measures: Measures
+
+    init(index: Int, back: Int, isLast: Bool, stamp: TimeStamp?, revealed: Bool, start: Int, end: Int, free: Int,
+         isLastBlock: Bool, done: Bool, measures: Measures) {
+        self.index = index
+        self.back = back
+        self.isLast = isLast
+        self.stamp = stamp
+        self.revealed = revealed
+        self.start = start
+        self.end = end
+        self.free = free
+        self.isLastBlock = isLastBlock
+        self.done = done
+        self.measures = measures
+    }
+
+    /// How tall the block's card is, by how long it lasts.
+    package var cardHeight: CGFloat { (CGFloat(max(end - start, 5)) * measures.perMinute).rounded() }
+    /// How tall the free time after it is: as long as it is, up to an hour.
+    package var freeHeight: CGFloat {
+        // The last: clear of the row after.
+        if isLastBlock { return measures.pad * 2 }
+        return free == 0 ? 0 : (CGFloat(min(free, 60)) * measures.perMinute).rounded() + measures.pad
+    }
+
+    package override func isEqual(_ object: Any?) -> Bool {
+        guard let other = object as? TimeSlot else { return false }
+        return index == other.index && back == other.back && isLast == other.isLast && stamp == other.stamp
+            && revealed == other.revealed && start == other.start && end == other.end && free == other.free
+            && isLastBlock == other.isLastBlock && done == other.done && measures == other.measures
+    }
+
+    package override var hash: Int { var h = Hasher(); h.combine(index); h.combine(back); h.combine(start); h.combine(end); return h.finalize() }
 }
 
 /// A code block's fences: the lines that open and close it, there to be
@@ -257,6 +425,17 @@ package enum InlineMarkdown {
         let body = NSRange(location: range.location, length: max(0, range.length - 1))
         func font(at location: Int) -> NSFont {
             storage.attribute(.font, at: location, effectiveRange: nil) as? NSFont ?? base
+        }
+        // A link alone in its row — a page, a podcast, a paper, a repository,
+        // a Google file — shows its card below it; among words, its pill.
+        let rowText = text.substring(with: body).trimmingCharacters(in: .whitespaces)
+        func markRichCard(_ target: String, text linkText: String?) {
+            guard let images, let span = InlineMarkup.spans(in: text, range: body).first(where: {
+                switch $0.kind { case .link(let t), .url(let t): t == target; default: false }
+            }), text.substring(with: span.range) == rowText, let card = images.rich(target, text: linkText) else { return }
+            let face = RichCardFace(card, linkText: linkText)
+            storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: RichCard.size(of: face), isCard: true),
+                                 range: NSRange(location: span.range.location, length: 1))
         }
         let found = InlineMarkup.spans(in: text, range: body)
         let resolved = images?.resolve(found) ?? found.map(unshown)
@@ -300,6 +479,8 @@ package enum InlineMarkdown {
                 if Tweet.key(from: target) != nil || Video.id(from: target) != nil, let size = images?.naturalSize(target) {
                     storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: size),
                                          range: NSRange(location: span.range.location, length: 1))
+                } else {
+                    markRichCard(target, text: text.substring(with: content))
                 }
                 // A file in the graph: a pill, its icon and size in the room
                 // its hidden brackets are given.
@@ -324,6 +505,8 @@ package enum InlineMarkdown {
                 if Tweet.key(from: target) != nil || Video.id(from: target) != nil, let size = images?.naturalSize(target) {
                     storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: size),
                                          range: NSRange(location: span.range.location, length: 1))
+                } else {
+                    markRichCard(target, text: nil)
                 }
             case .wikiLink(let title):
                 if let url = URL.wiki(title) {
@@ -354,6 +537,25 @@ package enum InlineMarkdown {
                 storage.addAttribute(.outlineHidden, value: true, range: run)
             }
         }
+        // After the words' own styles: the arrow's face is the last word on it.
+        // `->` and `<-` shown as arrows — not in code or links, and typed
+        // as they are while the caret is at them.
+        let literal = resolved.filter {
+            switch $0.kind { case .code, .link, .url, .image, .comment: true; default: false }
+        }.map(\.range)
+        for (range, arrow) in TypedArrows.find(in: text, range: body, skipping: literal) {
+            if let caret, caret >= range.location, caret <= NSMaxRange(range) { continue }
+            storage.addAttribute(.outlineHidden, value: true, range: NSRange(location: range.location, length: range.length - 1))
+            let last = NSRange(location: NSMaxRange(range) - 1, length: 1)
+            storage.addAttribute(.outlineArrow, value: arrow, range: last)
+            // A face without the arrow: the system's, for it alone.
+            let face = font(at: last.location)
+            var unichars = Array(arrow.utf16)
+            var glyph = [CGGlyph](repeating: 0, count: unichars.count)
+            if !CTFontGetGlyphsForCharacters(face, &unichars, &glyph, unichars.count) || glyph[0] == 0 {
+                storage.addAttribute(.font, value: NSFont.systemFont(ofSize: face.pointSize), range: last)
+            }
+        }
         if done {
             storage.addAttribute(.foregroundColor, value: typography.ink.secondary, range: range)
         }
@@ -377,20 +579,41 @@ package final class HiddenMarkupGlyphs: NSObject, NSLayoutManagerDelegate {
                        forGlyphRange range: NSRange) -> Int {
         guard let storage = layoutManager.textStorage else { return 0 }
         var hidden = false
-        for index in 0..<range.length where storage.attribute(.outlineHidden, at: characterIndexes[index], effectiveRange: nil) != nil {
-            hidden = true
-            break
+        var arrows = false
+        for index in 0..<range.length {
+            if storage.attribute(.outlineHidden, at: characterIndexes[index], effectiveRange: nil) != nil { hidden = true }
+            if storage.attribute(.outlineArrow, at: characterIndexes[index], effectiveRange: nil) != nil { arrows = true }
+            if hidden && arrows { break }
         }
-        guard hidden else { return 0 }
+        guard hidden || arrows else { return 0 }
+        // A typed arrow's last character as the arrow, in its own font.
+        var glyphList = [CGGlyph](UnsafeBufferPointer(start: glyphs, count: range.length))
+        /// Arrows the face cannot draw: their characters left as typed.
+        var unmade = Set<Int>()
+        if arrows {
+            for index in 0..<range.length {
+                guard let arrow = storage.attribute(.outlineArrow, at: characterIndexes[index], effectiveRange: nil) as? String else { continue }
+                var unichars = Array(arrow.utf16)
+                var glyph = [CGGlyph](repeating: 0, count: unichars.count)
+                if CTFontGetGlyphsForCharacters(font, &unichars, &glyph, unichars.count), glyph[0] != 0 {
+                    glyphList[index] = glyph[0]
+                } else {
+                    for back in 1...2 where index - back >= 0 { unmade.insert(characterIndexes[index - back]) }
+                }
+            }
+        }
         var changed = [NSLayoutManager.GlyphProperty](UnsafeBufferPointer(start: properties, count: range.length))
         // A control character laid out with no width, rather than a null
         // glyph: a line that starts with null glyphs is measured from the
         // line before it.
+        let text = storage.string as NSString
         for index in 0..<range.length
         where storage.attribute(.outlineHidden, at: characterIndexes[index], effectiveRange: nil) != nil {
+            // An arrow's first characters, the arrow not drawable: as typed.
+            if unmade.contains(characterIndexes[index]), [0x2D, 0x3C].contains(text.character(at: characterIndexes[index])) { continue }
             changed[index] = .controlCharacter
         }
-        layoutManager.setGlyphs(glyphs, properties: changed, characterIndexes: characterIndexes, font: font, forGlyphRange: range)
+        layoutManager.setGlyphs(glyphList, properties: changed, characterIndexes: characterIndexes, font: font, forGlyphRange: range)
         return range.length
     }
 
@@ -404,13 +627,28 @@ package final class HiddenMarkupGlyphs: NSObject, NSLayoutManagerDelegate {
         guard let storage = layoutManager.textStorage else { return false }
         let characters = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
         let pictures = ImageLine.pictures(in: storage, characters: characters, container: textContainer)
-        guard !pictures.isEmpty else { return false }
-        let picturesHeight = pictures.reduce(0) { $0 + $1.size.height + 2 * ImageBox.margin }
-        let lineHeight = lineFragmentRect.pointee.height
-        let height = ImageLine.hasText(storage, characters) ? lineHeight + picturesHeight : max(lineHeight, picturesHeight)
-        lineFragmentRect.pointee.size.height = height
-        lineFragmentUsedRect.pointee.size.height = height
-        return true
+        var changed = false
+        if !pictures.isEmpty {
+            let picturesHeight = pictures.reduce(0) { $0 + $1.size.height + 2 * ImageBox.margin }
+            let lineHeight = lineFragmentRect.pointee.height
+            let height = ImageLine.hasText(storage, characters) ? lineHeight + picturesHeight : max(lineHeight, picturesHeight)
+            lineFragmentRect.pointee.size.height = height
+            lineFragmentUsedRect.pointee.size.height = height
+            changed = true
+        }
+        // A time block's last line reaches down as far as the block lasts,
+        // and the free time after it further.
+        if characters.length > 0, let slot = storage.attribute(.outlineTimeSlot, at: NSMaxRange(characters) - 1, effectiveRange: nil) as? TimeSlot,
+           slot.isLast, (storage.string as NSString).character(at: NSMaxRange(characters) - 1) == 0x0a {
+            let top = TimeBlockGeometry.top(of: slot, endingAt: NSMaxRange(characters) - 1, in: layoutManager,
+                                            line: glyphRange, fragment: lineFragmentRect.pointee)
+            let rect = lineFragmentRect.pointee
+            let cardBottom = max(rect.maxY, top + slot.cardHeight)
+            lineFragmentRect.pointee.size.height = cardBottom + slot.freeHeight - rect.minY
+            lineFragmentUsedRect.pointee.size.height = cardBottom - lineFragmentUsedRect.pointee.minY
+            changed = true
+        }
+        return changed
     }
 
     /// Laid out: the PDFs' views go where their room now is.

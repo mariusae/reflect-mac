@@ -50,6 +50,10 @@ final class Column: NSView, OutlineTextViewNavigator {
     /// Where it was among the columns before it was folded: gone back to, opened.
     var unfoldedIndex: Int?
     private let fade = TopFade()
+    /// Under the fold and ×, at the foot: their own small ground, over the notes.
+    private let controlsGround = FootGround()
+    /// The current note's header, kept at its card's top once scrolled away.
+    private let sticky = StickyHeader()
     /// While the pointer is over the column: a sheet of each kind to add.
     private let sheetBar = SheetBar()
     /// A sheet of a kind asked for, from the bar, on this column.
@@ -106,7 +110,7 @@ final class Column: NSView, OutlineTextViewNavigator {
     }
     let strip = CollapsedStrip()
     /// What a folded column hides.
-    private var unfolded: [NSView] { [scroll, fade, scrubber, close, foldButton, grip, stackPill] }
+    private var unfolded: [NSView] { [scroll, sticky, scrubber, close, foldButton, grip, stackPill, controlsGround] }
     /// Its folded strip was clicked, or hovered.
     var onUnfold: ((Column) -> Void)?
     var onStripHover: ((Column, Bool) -> Void)?
@@ -167,7 +171,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             relayout()
         }
     }
-    var face: Typeface = .alegreya
+    var face: Typeface = .lato
     /// Its share of the window's width, among the columns'.
     var share: CGFloat = 1
 
@@ -187,6 +191,7 @@ final class Column: NSView, OutlineTextViewNavigator {
         didSet {
             close.isHidden = !closable || isCollapsed
             foldButton.isHidden = !closable || isCollapsed
+            needsLayout = true
         }
     }
 
@@ -212,7 +217,9 @@ final class Column: NSView, OutlineTextViewNavigator {
         document.addGestureRecognizer(ground)
         scroll.wantsLayer = true
         addSubview(scroll)
-        addSubview(fade)
+        addSubview(sticky)
+        addSubview(controlsGround)
+        // No band over the top: the notes run up to the window's edge.
         addSubview(scrubber)
         // Out of sight till pointed at.
         scrubber.alphaValue = 0
@@ -293,8 +300,13 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     /// The bar shown on the focused column, always — but not over its stack
     /// dealt out, nor over ⌘E's cards.
+    /// Whether the toolbox shows: on the focused column, when nothing is over it.
+    private var sheetBarWanted: Bool { isFocused && stackScrubber == nil && switcher == nil && !isCollapsed && livePeek == nil && !isWeb }
+
     func updateSheetBar() {
-        let shown = isFocused && stackScrubber == nil && switcher == nil && !isCollapsed && livePeek == nil && !isWeb
+        let shown = sheetBarWanted
+        // The row centred on what shows: the stack moves beside it, or alone to the middle.
+        needsLayout = true
         if shown { sheetBar.backlinksEnabled = current != nil || { if case .backlinks = kind { true } else { false } }() }
         guard shown != (!sheetBar.isHidden && sheetBar.alphaValue > 0) else { return }
         if shown {
@@ -314,7 +326,18 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     var isTimeline: Bool { kind == .timeline }
     /// Whether it shows many notes, one after another: the timeline, the inbox.
-    var listsNotes: Bool { isTimeline || kind == .inbox }
+    var listsNotes: Bool { isTimeline || kind == .inbox || isSearch && Self.searchShowsNotes }
+    private var isSearch: Bool { if case .search = kind { true } else { false } }
+
+    /// Whether a search shows the notes it found whole, not the rows that match.
+    static var searchShowsNotes: Bool {
+        get { UserDefaults.standard.bool(forKey: "SearchShowsNotes") }
+        set { UserDefaults.standard.set(newValue, forKey: "SearchShowsNotes") }
+    }
+
+    /// The search last shown: shown again as asked otherwise.
+    private var lastSearch: (query: String, found: [(path: String, slices: [TaskSlice], editable: Bool)]?,
+                             names: (String) -> (title: String, detail: String?))?
 
     // MARK: Sheets
 
@@ -393,9 +416,12 @@ final class Column: NSView, OutlineTextViewNavigator {
             let corner = convert(buttons.convert(zoom.frame, to: nil), from: nil)
             if corner.maxX > 0, corner.minY < bounds.maxY { left = max(left, corner.maxX + 14) }
         }
-        // Each a peek's width at most: a few sheets stay by the bunch.
-        let width = min(front.maxX - left, StackScrubber.width(for: fanned.count))
-        let across = NSRect(x: front.maxX - width, y: (front.midY - barHeight / 2).rounded(), width: width, height: barHeight)
+        // Dealt out leftward from the bunch, over the toolbox's place, as far
+        // as the cards' left edge; each a peek's width at most.
+        let end = pill.maxX
+        let start = max(left, cardSpan.minX)
+        let width = max(0, min(end - start, StackScrubber.width(for: fanned.count)))
+        let across = NSRect(x: end - width, y: (front.midY - barHeight / 2).rounded(), width: width, height: barHeight)
         scrubber.frame = across
         // The bunch, in the scrubber's own (flipped) coordinates.
         scrubber.bunch = NSRect(x: front.minX - across.minX, y: across.maxY - front.maxY, width: front.width, height: front.height)
@@ -558,12 +584,20 @@ final class Column: NSView, OutlineTextViewNavigator {
     /// each with where the words are, editable. The head is kept as it is
     /// typed in.
     func showSearch(_ query: String, found: [(path: String, slices: [TaskSlice], editable: Bool)]?,
-                    names: (String) -> (title: String, detail: String?)) {
+                    names: @escaping (String) -> (title: String, detail: String?)) {
         let head = (kind == .search(query) || { if case .search = kind { true } else { false } }())
             ? blocks.first as? SearchHeader : nil
         let top = scroll.contentView.bounds.minY
         let same = head != nil
-        if !same { removeBlocks() } else { blocks.dropFirst().forEach { $0.removeFromSuperview() } }
+        lastSearch = (query, found, names)
+        var existing: [NoteRef: ColumnBlock] = [:]
+        if !same {
+            removeBlocks()
+        } else {
+            // Notes shown whole kept, to show again; the rest let go.
+            existing = notesShown()
+            for block in blocks.dropFirst() where !(block is DayView || block is NoteCardBlock) { block.removeFromSuperview() }
+        }
         kind = .search(query)
         let header = head ?? {
             let header = SearchHeader(query: query, metrics: metrics)
@@ -571,12 +605,27 @@ final class Column: NSView, OutlineTextViewNavigator {
                 guard let self else { return }
                 onSearch?(words, self)
             }
+            header.onShowNotes = { [weak self] _ in self?.showLastSearchAgain() }
             document.addSubview(header)
             return header
         }()
         header.show(count: found?.count)
         let words = Self.words(query)
         let root = graph.root
+        // Each note found whole, as the timeline shows notes: written in there.
+        if Self.searchShowsNotes {
+            let results = (found ?? []).map { reuse(NoteRef(path: $0.path), from: &existing) }
+            existing.values.forEach(letGo)
+            blocks = [header] + results
+            relayout()
+            if !same {
+                scroll(toY: 0, animated: false)
+                window?.makeFirstResponder(header.field)
+            }
+            settled = true
+            return
+        }
+        existing.values.forEach(letGo)
         let results: [ColumnBlock] = (found ?? []).map { note in
             let name = names(note.path)
             let block = BacklinkBlock(path: note.path, slices: note.slices, editable: note.editable, name: name.title,
@@ -617,6 +666,12 @@ final class Column: NSView, OutlineTextViewNavigator {
             window?.makeFirstResponder(header.field)
         }
         settled = true
+    }
+
+    /// The last search shown again: as notes, or as matches.
+    private func showLastSearchAgain() {
+        guard let lastSearch, isSearch else { return }
+        showSearch(lastSearch.query, found: lastSearch.found, names: lastSearch.names)
     }
 
     /// A query's words, as looked for.
@@ -1114,6 +1169,8 @@ final class Column: NSView, OutlineTextViewNavigator {
             setBlocks(entries[shown])
         } else if kind == .inbox {
             showInbox(blocks.compactMap { ($0 as? DayView)?.ref ?? ($0 as? NoteCardBlock)?.ref })
+        } else if isSearch {
+            showLastSearchAgain()
         }
     }
 
@@ -1305,40 +1362,99 @@ final class Column: NSView, OutlineTextViewNavigator {
         strip.frame = bounds
         if strip.superview == nil { addSubview(strip) }
         guard !isCollapsed else { return }
-        // The top sheet: the column's notes, under the sheets beneath.
+        // The top sheet: the column's notes, under the sheets beneath — and
+        // under its title bar, not behind it.
         let card = bounds
-        scroll.frame = card
-        // A page on the web, under the title bar's controls.
-        webPage?.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - 44))
+        scroll.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - (isWeb ? 0 : StickyHeader.height)))
+        // A page on the web, over the foot's row of controls.
+        webPage?.frame = NSRect(x: 0, y: Self.footHeight, width: bounds.width, height: max(0, bounds.height - Self.footHeight))
         if webTitle.superview == nil { addSubview(webTitle) }
-        webTitle.frame = NSRect(x: 60, y: bounds.height - 30, width: max(0, bounds.width - 120), height: 18)
-        fade.frame = NSRect(x: 0, y: card.maxY - 64, width: card.width, height: 64)
+        webTitle.frame = NSRect(x: 60, y: Self.footMiddle - 9, width: max(0, bounds.width - 120), height: 18)
         scrubber.frame = NSRect(x: 4, y: 56, width: 40, height: max(0, card.height - 112))
         // It wakes only from left of the cards, not over their text.
-        let column = min(metrics.columnWidth, scroll.contentSize.width - 48)
-        let cardLeft = ((scroll.contentSize.width - column) / 2).rounded() - CardSurface.outset
-        scrubber.wakeWidth = min(40, max(12, cardLeft - 4))
-        close.frame = NSRect(x: bounds.width - 34, y: bounds.height - 34, width: 22, height: 22)
+        let cards = cardSpan
+        scrubber.wakeWidth = min(40, max(12, cards.minX - 4))
+        // In the title bar, at its right, on the cards' right edge: the
+        // sheets beneath, then fold and ×. At the foot, alone, centred: the
+        // toolbox.
+        let topMiddle = bounds.height - StickyHeader.height / 2
+        close.frame = NSRect(x: min(bounds.width - 30, cards.maxX - 22), y: (topMiddle - 11).rounded(), width: 22, height: 22)
         foldButton.frame = close.frame.offsetBy(dx: -24, dy: 0)
         // What sits left of the ×: left of the fold button too, when it shows.
         let controlsLeft = foldButton.isHidden ? close.frame.minX : foldButton.frame.minX
-        let bar = sheetBar.fittingSize
-        // At the foot, centred: the title bar left to the sheets.
-        let barX = ((bounds.width - bar.width) / 2).rounded()
-        sheetBar.frame = NSRect(x: max(8, barX), y: card.minY + 14, width: bar.width, height: bar.height)
-        grip.frame = NSRect(x: 56, y: bounds.height - 12, width: max(0, bounds.width - 112), height: 12)
-        // The sheets beneath, bunched left of the ×, on its middle.
+        controlsGround.isHidden = close.isHidden || isCollapsed
+        controlsGround.frame = NSRect(x: controlsLeft - 7, y: close.frame.minY - 6, width: close.frame.maxX + 7 - (controlsLeft - 7),
+                                      height: close.frame.height + 12)
+        let groundLeft = controlsGround.isHidden ? close.frame.maxX + 4 : controlsGround.frame.minX
         let pillHeight = StackPill.fittingHeight
-        // Clear of what the window shows at the title bar's start.
-        let room = titleBarReserve > 0 ? controlsLeft - 6 - titleBarReserve - 8 : .greatestFiniteMagnitude
-        let pillWidth = stackPill.fittingWidth(within: max(0, min(260, bounds.width * 0.45, room)))
-        // No room for even a word of it beside them: left out, till there is.
-        stackPill.alphaValue = room < 70 ? 0 : 1
-        stackPill.frame = NSRect(x: controlsLeft - 6 - pillWidth, y: (close.frame.midY - pillHeight / 2).rounded(),
-                                 width: pillWidth, height: pillHeight)
+        let pillLeft = max(8, cards.minX, titleBarLeft)
+        // The title first: the stack gives way to it, down to its icon alone.
+        let titleLeft = max(cards.minX + CardSurface.outset + metrics.indent - 2, titleBarLeft)
+        let titleNeeds = sticky.shown == nil ? 0 : sticky.naturalWidth + 16
+        let room = groundLeft - 8 - max(pillLeft, titleLeft + titleNeeds)
+        let pillWidth = hasStack && !isWeb
+            ? max(stackPill.compactWidth, stackPill.fittingWidth(within: max(0, min(240, room)))) : 0
+        // No room even for its icon: left out, till there is.
+        stackPill.alphaValue = groundLeft - 8 - pillLeft < stackPill.compactWidth ? 0 : 1
+        stackPill.frame = NSRect(x: groundLeft - 8 - pillWidth, y: (topMiddle - pillHeight / 2).rounded(), width: pillWidth, height: pillHeight)
+        let bar = sheetBar.fittingSize
+        sheetBar.frame = NSRect(x: max(8, ((bounds.width - bar.width) / 2).rounded()), y: (Self.footMiddle - bar.height / 2).rounded(),
+                                width: bar.width, height: bar.height)
+        grip.frame = NSRect(x: 56, y: bounds.height - 12, width: max(0, bounds.width - 112), height: 12)
+        // The title bar across the column, the notes under it; its words
+        // short of the controls at its right.
+        sticky.frame = NSRect(x: 0, y: bounds.height - StickyHeader.height, width: bounds.width, height: StickyHeader.height)
+        sticky.titleLeft = max(cards.minX + CardSurface.outset + metrics.indent - 2, titleBarLeft)
+        let controlsStart = stackPill.alphaValue > 0 && pillWidth > 0 ? stackPill.frame.minX : groundLeft
+        sticky.whenRight = max(16, bounds.width - controlsStart + 12)
+        sticky.isHidden = isWeb
+        updateSticky()
         switcher?.frame = bounds
         relayout()
     }
+
+    /// Where the cards are, across the column: the text column, and the
+    /// card's reach past it either side.
+    private var cardSpan: NSRect {
+        let width = scroll.contentSize.width > 0 ? scroll.contentSize.width : bounds.width
+        let column = min(metrics.columnWidth, width - 48)
+        let left = ((width - column) / 2).rounded() - CardSurface.outset
+        return NSRect(x: left, y: 0, width: column + 2 * CardSurface.outset, height: bounds.height)
+    }
+
+    /// The current note's header at its card's top, while its own has
+    /// scrolled away under the title bar — among many notes; one alone is
+    /// its own title.
+    private func updateSticky() {
+        // Where the bar's foot is, in the notes.
+        let top = scroll.contentView.bounds.minY
+        let typography = metrics.typography
+        let titleFont = typography.headingFont(size: round(metrics.fontSize * 1.05), weight: .bold)
+        let whenFont = NSFont.systemFont(ofSize: round(metrics.fontSize * 0.82))
+        sticky.setScrolledUnder(scroll.contentView.bounds.minY > 2)
+        // The block under the bar — a note, a group of tasks, a note linking
+        // here — its own heading gone up under it, its card still there.
+        guard !isWeb, let block = blocks.last(where: { $0.frame.minY <= top + 4 }), let head = block.stickyTitle,
+              block.frame.minY + 44 < top, block.frame.maxY - top > 40 else {
+            if sticky.shown != nil { needsLayout = true }
+            sticky.show(name: nil, when: nil, titleFont: titleFont, whenFont: whenFont, today: false)
+            return
+        }
+        let before = sticky.shown
+        sticky.show(name: head.title, when: head.when, titleFont: titleFont, whenFont: whenFont, today: head.today)
+        if sticky.shown != before { needsLayout = true }
+        sticky.onClick = { [weak self, weak block] in
+            guard let self, let block else { return }
+            scroll(toY: block.frame.minY, animated: true)
+        }
+    }
+
+    /// Where the title bar's words may start: past the window's buttons, in the first column.
+    var titleBarLeft: CGFloat = 0 { didSet { if titleBarLeft != oldValue { needsLayout = true } } }
+
+    /// The row of controls at the column's foot: how tall, and its middle.
+    static let footHeight: CGFloat = 56
+    static let footMiddle: CGFloat = 30
 
     private var relayoutPending = false
 
@@ -1365,7 +1481,7 @@ final class Column: NSView, OutlineTextViewNavigator {
         // Only blocks this has placed: a new one's frame says nothing yet.
         let laidOut = blocks.filter { placed.contains(ObjectIdentifier($0)) && $0.frame.height > 0 }
         let anchor = (laidOut.last { $0.frame.minY <= top } ?? laidOut.first).map { ($0, top - $0.frame.minY) }
-        var y: CGFloat = isTimeline ? 24 : 40
+        var y: CGFloat = isTimeline ? 10 : 22
         // The notes across the whole column: the scrubber lies over them,
         // when it is wanted.
         let inset: CGFloat = 0
@@ -1388,6 +1504,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             }
         }
         refreshMarks()
+        updateSticky()
     }
 
     private func refreshMarks() {
@@ -1449,6 +1566,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             sliding = false
         }
         onCurrent?(self)
+        updateSticky()
         // The note at the top keeps how far into it it was read — on its
         // own or among the days — to open there again, wherever it is opened.
         if settled, let view = current {
@@ -1888,14 +2006,228 @@ final class ScrubTip: NSView {
     }
 }
 
-/// The top of a column, where the text goes under the title bar: the paper
-/// fading in over it, so what is pinned there stays legible.
+/// The top of a column, where the text goes under the title bar: what
+/// passes under it blurred, and the page laid over that — a band, not a
+/// fade — its foot soft for a few points.
 final class TopFade: NSView {
+    private let blur = NSVisualEffectView()
+    private let tint = TintView()
+    static let band: CGFloat = 46
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        blur.blendingMode = .withinWindow
+        blur.material = .headerView
+        blur.state = .active
+        addSubview(blur)
+        addSubview(tint)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    override func draw(_ dirtyRect: NSRect) {
-        NSGradient(colors: [Ink.page, Ink.page, Ink.page.withAlphaComponent(0)],
-                   atLocations: [0, 0.55, 1], colorSpace: .sRGB)?.draw(in: bounds, angle: -90)
+    override func layout() {
+        super.layout()
+        blur.frame = bounds
+        tint.frame = bounds
+    }
+
+    /// The page's colour over the blur: strong at the top, eased off at the foot.
+    private final class TintView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func draw(_ dirtyRect: NSRect) {
+            let foot = min(10, bounds.height) / max(bounds.height, 1)
+            NSGradient(colors: [Ink.page.withAlphaComponent(0.93), Ink.page.withAlphaComponent(0.93), Ink.page.withAlphaComponent(0.7)],
+                       atLocations: [0, 1 - foot, 1], colorSpace: .sRGB)?.draw(in: bounds, angle: -90)
+        }
+    }
+}
+
+/// A note's own header, kept at the top of its card once its name has
+/// scrolled away under the title bar: which note this is, and when — the
+/// card's top edge, while it is read.
+
+/// Over the controls that float on the notes, the pointer is a pointer —
+/// not the text's caret from under them, which the text view sets as the
+/// mouse moves.
+private func pointerTracking(_ view: NSView) {
+    view.trackingAreas.forEach(view.removeTrackingArea)
+    view.addTrackingArea(NSTrackingArea(rect: .zero, options: [.cursorUpdate, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
+                                        owner: view))
+}
+
+/// A small ground under controls that float over the notes: as the
+/// toolbox's, a capsule a shade off the page.
+final class FootGround: NSView {
+    override func updateTrackingAreas() {
+        pointerTracking(self)
+        super.updateTrackingAreas()
+    }
+    override func cursorUpdate(with event: NSEvent) { NSCursor.arrow.set() }
+    override func mouseMoved(with event: NSEvent) { NSCursor.arrow.set() }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() {
+        layer?.cornerRadius = bounds.height / 2
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            // As the stack beside it is drawn: the paper, a faint ink rim.
+            layer?.backgroundColor = Ink.paper.cgColor
+            layer?.borderColor = Ink.text.withAlphaComponent(0.14).cgColor
+            layer?.borderWidth = 1
+        }
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        needsDisplay = true
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        needsDisplay = true
+    }
+
+    /// Clicks between its buttons are not the text's under it.
+    override func mouseDown(with event: NSEvent) {}
+}
+
+/// The column's title bar: the page's colour, a hairline under it once
+/// anything has gone under it, and — once a card's own heading has
+/// scrolled up under it — that card's name and when, slid up into it, as
+/// a sticky header would be; the name gone again, slid away, as the card
+/// leaves.
+final class StickyHeader: NSView {
+    private let title = NSTextField(labelWithString: "")
+    private let when = NSTextField(labelWithString: "")
+    private let rule = NSView()
+    override var isFlipped: Bool { true }
+    static let height: CGFloat = 46
+
+    /// Where the title starts: the cards' text, or past the window's buttons.
+    var titleLeft: CGFloat = 20 { didSet { needsLayout = true } }
+    /// Where the when ends: the cards' right edge.
+    var whenRight: CGFloat = 20 { didSet { needsLayout = true } }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        title.lineBreakMode = .byTruncatingTail
+        when.alignment = .right
+        for label in [title, when] {
+            label.wantsLayer = true
+            label.alphaValue = 0
+            addSubview(label)
+        }
+        rule.wantsLayer = true
+        rule.alphaValue = 0
+        addSubview(rule)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = Ink.page.cgColor
+            rule.layer?.backgroundColor = Ink.rule.cgColor
+        }
+    }
+
+    /// In the title bar: dragging it moves the window, as a title bar does.
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    /// Clicked: the card it names, at its top.
+    var onClick: (() -> Void)?
+    override func mouseUp(with event: NSEvent) {
+        if event.clickCount == 2 { window?.performZoom(nil); return }
+        if shown != nil { onClick?() }
+    }
+
+    /// What it shows, and in what: nil, no name.
+    private(set) var shown: String?
+    private var shownWhen: String?
+
+    /// Something under it: its hairline.
+    func setScrolledUnder(_ under: Bool) {
+        let alpha: CGFloat = under ? 1 : 0
+        guard rule.alphaValue != alpha else { return }
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.15; rule.animator().alphaValue = alpha }
+    }
+
+    /// Shows a card's name — slid up into place from under the bar's foot, as
+    /// if the card's own header had come to rest here — or, nil, slides it away.
+    func show(name: String?, when text: String?, titleFont: NSFont, whenFont: NSFont, today: Bool) {
+        guard name != shown || text != shownWhen else { return }
+        let rising = shown == nil || name != shown
+        shown = name
+        shownWhen = text
+        if let name {
+            title.attributedStringValue = NSAttributedString(string: name, attributes: [
+                .font: titleFont, .foregroundColor: today ? NSColor.controlAccentColor : Ink.text,
+            ])
+            when.attributedStringValue = NSAttributedString(string: text ?? "", attributes: [.font: whenFont, .foregroundColor: Ink.secondary])
+        }
+        layoutSubtreeIfNeeded()
+        let rest = restFrames()
+        if name != nil, rising {
+            // From below, where the card's header was, up into the bar.
+            title.frame = rest.title.offsetBy(dx: 0, dy: 14)
+            when.frame = rest.when.offsetBy(dx: 0, dy: 14)
+            title.alphaValue = 0
+            when.alphaValue = 0
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.22
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            if name != nil {
+                title.animator().frame = rest.title
+                when.animator().frame = rest.when
+                title.animator().alphaValue = 1
+                when.animator().alphaValue = 1
+            } else {
+                // Back down under the bar, after the card.
+                title.animator().frame = rest.title.offsetBy(dx: 0, dy: 14)
+                when.animator().frame = rest.when.offsetBy(dx: 0, dy: 14)
+                title.animator().alphaValue = 0
+                when.animator().alphaValue = 0
+            }
+        }
+    }
+
+    /// How wide its words want to be, whole.
+    var naturalWidth: CGFloat { ceil(title.intrinsicContentSize.width) + ceil(when.intrinsicContentSize.width) + 16 }
+
+    private func restFrames() -> (title: NSRect, when: NSRect) {
+        let whenSize = when.intrinsicContentSize
+        let whenWidth = ceil(whenSize.width) + 4
+        let whenFrame = NSRect(x: bounds.width - whenRight - whenWidth, y: ((bounds.height - whenSize.height) / 2).rounded(),
+                               width: whenWidth, height: ceil(whenSize.height))
+        let titleHeight = ceil(title.intrinsicContentSize.height)
+        let titleFrame = NSRect(x: titleLeft, y: ((bounds.height - titleHeight) / 2).rounded(),
+                                width: max(0, whenFrame.minX - 12 - titleLeft), height: titleHeight)
+        return (titleFrame, whenFrame)
+    }
+
+    override func layout() {
+        super.layout()
+        rule.frame = NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1)
+        let rest = restFrames()
+        if shown != nil {
+            title.frame = rest.title
+            when.frame = rest.when
+        }
     }
 }
 
@@ -1955,6 +2287,14 @@ final class NoteHeaderLink: NSView {
 /// Over a column while the pointer is in it, as Mail shows its message's
 /// actions: a button for each kind of sheet that can be put on it.
 final class SheetBar: NSView {
+    override func updateTrackingAreas() {
+        pointerTracking(self)
+        super.updateTrackingAreas()
+    }
+    override func cursorUpdate(with event: NSEvent) { NSCursor.arrow.set() }
+    override func mouseMoved(with event: NSEvent) { NSCursor.arrow.set() }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+
     /// In the title bar: a click here is its own, not the start of moving the window.
     override var mouseDownCanMoveWindow: Bool { false }
 
@@ -2034,8 +2374,9 @@ final class SheetBar: NSView {
 
     override func updateLayer() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-            layer?.borderColor = Ink.rule.cgColor
+            // As the stack and the column's buttons are: the paper, a faint ink rim.
+            layer?.backgroundColor = Ink.paper.cgColor
+            layer?.borderColor = Ink.text.withAlphaComponent(0.14).cgColor
             layer?.borderWidth = 1
         }
     }
