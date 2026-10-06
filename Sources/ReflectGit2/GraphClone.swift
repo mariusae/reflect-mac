@@ -3,11 +3,12 @@ import ReflectCore
 
 /// Brings a graph down from GitHub, for the apps that show one.
 public enum GraphClone {
-    /// Clones a repository into a graph's place — on the phone only its
-    /// latest commit, `depth` 1; on the Mac all of it. Nothing is left
-    /// behind when it fails.
+    /// Clones a repository into a graph's place, all of its history: a
+    /// graph is mostly its pictures, which a shallow clone has all the same,
+    /// and libgit2 cannot merge or push in one. Nothing is left behind when
+    /// it fails.
     @MainActor
-    public static func clone(_ repository: GitHubRepository, account: GitHubAccount, into root: URL, depth: Int32 = 1) async throws {
+    public static func clone(_ repository: GitHubRepository, account: GitHubAccount, into root: URL, depth: Int32 = 0) async throws {
         _ = try await account.validAccessToken()
         let token = account.currentToken
         let partial = root.deletingLastPathComponent().appendingPathComponent(root.lastPathComponent + ".partial")

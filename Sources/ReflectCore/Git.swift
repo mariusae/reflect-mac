@@ -9,9 +9,27 @@ public struct SyncReport: Sendable, CustomStringConvertible {
     public var conflicted: [String] = []
     /// Files whose changes were too large to commit, with their sizes.
     public var skippedLargeFiles: [(path: String, size: Int)] = []
+    /// How long each step took, in seconds, in order — to see where a slow
+    /// sync spent its time.
+    public var timings: [(step: String, seconds: Double)] = []
+    public var duration: Double { timings.reduce(0) { $0 + $1.seconds } }
+    /// "1.8 s, most of it fetching (1.2 s)".
+    public var timingSummary: String {
+        let total = String(format: "%.1f s", duration)
+        guard let slowest = timings.max(by: { $0.seconds < $1.seconds }), slowest.seconds > duration * 0.4, duration > 0.5 else { return total }
+        return total + String(format: ", most of it %@ (%.1f s)", slowest.step, slowest.seconds)
+    }
     public var pulled: Bool { !changed.isEmpty }
     public var quiet: Bool { parts.isEmpty }
     public var description: String { parts.joined(separator: ", ") }
+}
+
+/// A cycle stopped at a safe point because it was asked to — the system
+/// taking the app's time back — not because anything went wrong: what it
+/// committed stays, and the next cycle goes on. Not a failure to show.
+public struct SyncStopped: Error, LocalizedError, Sendable {
+    public init() {}
+    public var errorDescription: String? { "The sync stopped, to go on next time." }
 }
 
 public struct GitError: Error, LocalizedError, Sendable {
@@ -73,7 +91,7 @@ public final class Git: @unchecked Sendable {
     /// Where a cycle may stop: between steps, everything committed so far
     /// kept, nothing left half done.
     private func checkpoint() throws {
-        if lock.withLock({ stopRequested }) { throw GitError(message: "The sync stopped, to go on next time.") }
+        if lock.withLock({ stopRequested }) { throw SyncStopped() }
     }
 
     /// How many backups of the branch, from before merges, are kept.
@@ -96,8 +114,19 @@ public final class Git: @unchecked Sendable {
     func cycle(_ mode: Mode) throws -> SyncReport {
         lock.withLock { stopRequested = false }
         var report = SyncReport()
-        report.parts += try repair()
-        let commit = try commitAll(fallback: "Update notes")
+        defer {
+            if report.duration > 0.5 {
+                Log.shared.info("git", "Sync took \(report.timingSummary)",
+                                detail: report.timings.map { String(format: "%@ %.2f s", $0.step, $0.seconds) }.joined(separator: "\n"))
+            }
+        }
+        func timed<T>(_ step: String, _ work: () throws -> T) rethrows -> T {
+            let start = Date()
+            defer { report.timings.append((step, Date().timeIntervalSince(start))) }
+            return try work()
+        }
+        report.parts += try timed("checking the repository") { try repair() }
+        let commit = try timed("committing") { try commitAll(fallback: "Update notes") }
         report.skippedLargeFiles = commit.skipped
         if let message = commit.message { report.parts.append("committed “\(message)”") }
         guard backend.hasRemote("origin") else { return report }  // the commit is the whole cycle
@@ -107,16 +136,21 @@ public final class Git: @unchecked Sendable {
             if !commit.committed && commit.ahead == 0 { return report }
         } else {
             try checkpoint()
-            try fetch()
+            try timed("fetching") { try fetch() }
+            try timed("fetching the rest of the history") { try completeHistory() }
             try checkpoint()
             let ahead = (try? divergence().ahead) ?? 0
-            let merged = try mergeRemote(into: &report)
+            var merging = report
+            let merged = try timed("merging") { try mergeRemote(into: &merging) }
+            merging.timings = report.timings
+            report = merging
             let local = commit.committed || ahead > 0
             if !local && (merged == .upToDate || merged == .fastForward) { return report }
         }
         for _ in 0..<Self.maxPushAttempts {
             try checkpoint()
-            switch try backend.push(branch: try branch()) {
+            let branch = try branch()
+            switch try timed("pushing", { try backend.push(branch: branch) }) {
             case .pushed:
                 report.parts.append("pushed")
                 return report
@@ -124,8 +158,11 @@ public final class Git: @unchecked Sendable {
                 throw GitError(message: "The remote rejected the backup: \(message)")
             case .behind:
                 // Another device pushed first: take its changes, and try again.
-                try fetch()
-                _ = try mergeRemote(into: &report)
+                try timed("fetching") { try fetch() }
+                var merging = report
+                _ = try timed("merging") { try mergeRemote(into: &merging) }
+                merging.timings = report.timings
+                report = merging
             }
         }
         throw GitError(message: "The backup repository kept changing while syncing; it will be tried again on the next edit.")
@@ -218,7 +255,6 @@ public final class Git: @unchecked Sendable {
         let remote = try remoteRef()
         // A new, empty remote has nothing to merge until the first push.
         guard backend.resolves(remote) else { return .upToDate }
-        try findCommonHistory(with: remote)
         let (behind, ahead) = try divergence()
         guard behind > 0 else { return .upToDate }
         let before = backend.head()
@@ -356,8 +392,14 @@ public final class Git: @unchecked Sendable {
         // — libgit2 lost it on fetches — noted again, or no merge can count back.
         if !checkedHistory {
             checkedHistory = true
-            if let noted = try? backend.markMissingHistory(), noted > 0 {
-                done.append("noted where the history stops")
+            // Found complete once, it stays so: not walked again each launch.
+            let checked = (try? backend.gitDirectory())?.appendingPathComponent("sync-history-checked")
+            if let checked, !FileManager.default.fileExists(atPath: checked.path) {
+                if let noted = try? backend.markMissingHistory(), noted > 0 {
+                    done.append("noted where the history stops")
+                } else if !backend.isShallow() {
+                    FileManager.default.createFile(atPath: checked.path, contents: Data())
+                }
             }
         }
         if let what = try backend.operationInProgress() {
@@ -433,21 +475,24 @@ public final class Git: @unchecked Sendable {
         }
     }
 
-    /// A shallow clone — the phone's, of the latest commit alone — is
-    /// fine till the remote moves on; then counting and merging walk back
-    /// through history it lacks, and libgit2 stops at the first commit it
-    /// cannot find. So the rest is fetched, once, the first time it does.
-    private func findCommonHistory(with remote: String) throws {
-        guard backend.isShallow(), backend.head() != nil, !backend.isAncestor(remote, of: "HEAD") else { return }
+    /// A shallow clone — the phone's, as it once cloned — lacks history past
+    /// where it was cut. git minds the cut; libgit2 does not, and stops at
+    /// the first commit it lacks — finding where two devices parted,
+    /// counting how far, packing what to push. And a clone of a graph is
+    /// mostly its pictures, which a shallow one has all the same. So the
+    /// rest of the history is fetched once, the first time it can be.
+    private func completeHistory() throws {
+        guard backend.isShallow() else { return }
         try checkpoint()
         // libgit2 forgets the clone is shallow before it has the history,
-        // and a fetch that fails then leaves a repository that thinks it has
-        // commits it lacks — which no git can read after. The note of where
-        // the history stops is kept, and put back if the fetch fails.
+        // and a fetch that fails then leaves a repository that thinks it
+        // has commits it lacks. The note of where the history stops is
+        // kept, and put back if the fetch fails.
         let note = (try? backend.gitDirectory())?.appendingPathComponent("shallow")
         let kept = note.flatMap { try? Data(contentsOf: $0) }
         do {
-            try backend.deepen(by: nil)
+            try backend.deepen(to: nil)
+            Log.shared.info("git", "Fetched the rest of the history")
         } catch {
             if let note, let kept { try? kept.write(to: note, options: .atomic) }
             throw GitError(message: "Fetching the rest of the history failed: \(error.localizedDescription)")

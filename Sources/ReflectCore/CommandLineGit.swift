@@ -274,8 +274,8 @@ public final class CommandLineGit: GitBackend, @unchecked Sendable {
         (try? run(["rev-parse", "--is-shallow-repository"]))?.trimmingCharacters(in: .whitespacesAndNewlines) == "true"
     }
 
-    public func deepen(by commits: Int?) throws {
-        try run(["fetch", "--quiet", commits.map { "--deepen=\($0)" } ?? "--unshallow", "origin"], timeout: 120)
+    public func deepen(to depth: Int?) throws {
+        try run(["fetch", "--quiet", depth.map { "--depth=\($0)" } ?? "--unshallow", "origin"], timeout: 120)
     }
 
     /// git keeps its note of a shallow clone's end itself.

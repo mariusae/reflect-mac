@@ -377,7 +377,8 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         if let error = store.syncError {
             sync.append(UIAction(title: "Last sync failed", subtitle: error, attributes: .disabled) { _ in })
         } else if let synced = store.lastSynced {
-            sync.append(UIAction(title: "Synced " + synced.formatted(.relative(presentation: .named)), attributes: .disabled) { _ in })
+            sync.append(UIAction(title: "Synced " + synced.formatted(.relative(presentation: .named)),
+                                 subtitle: store.lastSyncTook.map { "Took \($0)" }, attributes: .disabled) { _ in })
         }
         sections.insert(UIMenu(options: .displayInline, children: [
             UIAction(title: "New Note", image: UIImage(systemName: "square.and.pencil")) { [weak self, weak sheet] _ in

@@ -28,6 +28,8 @@ final class PrismStore {
     private(set) var git: Git?
     private(set) var isSyncing = false
     private(set) var lastSynced: Date?
+    /// How long the last sync took, and where: "1.8 s, most of it fetching (1.2 s)".
+    private(set) var lastSyncTook: String?
     private(set) var syncError: String?
     /// The notes holding sync conflicts, to be settled.
     private(set) var conflicted: [String] = []
@@ -321,6 +323,7 @@ final class PrismStore {
             let report = try await git.sync(mode)
             StallWatch.mark("sync done, pulled \(report.pulled)")
             lastSynced = Date()
+            lastSyncTook = report.timingSummary
             syncError = nil
             if report.pulled {
                 // What came in read into the index off the main thread.
@@ -334,6 +337,10 @@ final class PrismStore {
             if report.pulled, let index {
                 conflicted = await Task.detached(priority: .utility) { index.conflicted() }.value
             }
+        } catch is SyncStopped {
+            // Asked to stop — the system wanted its time back — not a failure:
+            // the next sync goes on from here.
+            Log.shared.info("sync", "Stopped at a safe point, to go on next time")
         } catch {
             syncError = describe(error)
         }

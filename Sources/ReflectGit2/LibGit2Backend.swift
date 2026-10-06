@@ -258,16 +258,16 @@ public final class LibGit2Backend: GitBackend, @unchecked Sendable {
         return missing.count
     }
 
-    public func deepen(by commits: Int?) throws {
+    public func deepen(to depth: Int?) throws {
         let remote = try origin()
         defer { git_remote_free(remote) }
         var options = git_fetch_options()
         git_fetch_options_init(&options, UInt32(GIT_FETCH_OPTIONS_VERSION))
-        // A depth counts from the tips: the history now, and so many more.
-        options.depth = commits.map { Int32(clamping: commitCount() + $0) } ?? Int32(GIT_FETCH_DEPTH_UNSHALLOW.rawValue)
+        // A depth counts from the tips.
+        options.depth = depth.map { Int32(clamping: $0) } ?? Int32(GIT_FETCH_DEPTH_UNSHALLOW.rawValue)
         auth.install(&options.callbacks)
         let code = withExtendedLifetime(auth) { git_remote_fetch(remote, nil, &options, nil) }
-        Log.shared.info("git", "libgit2 deepen origin by \(commits.map(String.init) ?? "all") — \(code == 0 ? "done" : Self.lastError())")
+        Log.shared.info("git", "libgit2 deepen origin to \(depth.map(String.init) ?? "all") — \(code == 0 ? "done" : Self.lastError())")
         try check(code, "Fetching more history")
     }
 

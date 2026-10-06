@@ -60,7 +60,7 @@ enum GitHubGraph {
     /// Brings a repository down — all of it: the Mac has the room — into
     /// Prism's folder.
     static func clone(_ repository: GitHubRepository) async throws {
-        try await GraphClone.clone(repository, account: account, into: root, depth: 0)
+        try await GraphClone.clone(repository, account: account, into: root)
         repositoryName = repository.fullName
     }
 }

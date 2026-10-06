@@ -111,6 +111,9 @@ package final class SyncController {
                 if !report.conflicted.isEmpty { onConflicts?(report.conflicted) }
                 if !report.skippedLargeFiles.isEmpty { onLargeFiles?(report.skippedLargeFiles) }
                 status = .synced(Date())
+            } catch is SyncStopped {
+                Log.shared.info("sync", "\(name) stopped at a safe point, to go on next time")
+                status = .idle
             } catch {
                 Log.shared.error("sync", "\(name) failed", detail: error.localizedDescription)
                 status = .failed(error.localizedDescription)

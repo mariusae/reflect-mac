@@ -517,6 +517,7 @@ enum SyncBackend: String, CaseIterable, CustomStringConvertible {
             return
         }
         _ = try phone.cycle(.full)
+        #expect(!CommandLineGit(root: phoneRoot).isShallow())
         _ = try mac.cycle(.full)
         #expect(try read(phoneRoot, "notes/mac.md") == "# Mac\n")
         #expect(try read(fixture.deviceA, "notes/phone.md") == "# Phone\n")

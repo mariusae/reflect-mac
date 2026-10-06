@@ -95,8 +95,9 @@ public protocol GitBackend: AnyObject, Sendable {
     func mergeBase(_ a: String, _ b: String) -> String?
     /// Whether the repository has only the latest part of its history.
     func isShallow() -> Bool
-    /// Fetches more of the history: so many commits more, or nil for all.
-    func deepen(by commits: Int?) throws
+    /// Fetches more of the history: as far back as so many commits from the
+    /// tips, or nil for all of it.
+    func deepen(to depth: Int?) throws
     /// Finds commits whose parents are missing and notes them as where the
     /// history stops — as a shallow clone notes it — when the note was lost.
     /// Says how many it noted.
