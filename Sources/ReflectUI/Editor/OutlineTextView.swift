@@ -708,6 +708,11 @@ package final class OutlineTextView: NSTextView {
     package private(set) var hoveredRow: Int?
     /// The picture under the pointer, whose grip shows.
     package var hoveredPictureFrame: NSRect?
+    /// The time block under the pointer — its time, or its line's end —
+    /// whose end shows a grip.
+    package var hoveredTimeBlock: Int? {
+        didSet { if hoveredTimeBlock != oldValue { needsDisplay = true } }
+    }
 
     package override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -1526,13 +1531,7 @@ package final class OutlineTextView: NSTextView {
     }
 
     /// Text that is a web or mail address and nothing else, trimmed.
-    package static func address(in text: String) -> String? {
-        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !text.contains(where: \.isWhitespace),
-              let url = URL(string: text), let scheme = url.scheme?.lowercased(),
-              ["http", "https", "mailto"].contains(scheme), scheme == "mailto" || url.host != nil else { return nil }
-        return text
-    }
+    package static func address(in text: String) -> String? { LinkPaste.address(in: text) }
 
     /// Makes the words selected a link to an address: `[words](address)` —
     /// or, when they are a link's words already, points that link there.
@@ -1541,36 +1540,18 @@ package final class OutlineTextView: NSTextView {
     package func linkSelection(to address: String) -> Bool {
         let selection = selectedRange()
         guard selectedRows == nil, selection.length > 0, let storage = textStorage, NSMaxRange(selection) <= storage.length else { return false }
-        let text = storage.string as NSString
-        let words = text.substring(with: selection)
-        guard !words.contains("\n"), !words.contains("\u{2028}"), Self.address(in: words) == nil else { return false }
-        // Brackets and spaces in an address would end its Markdown early.
-        let target = address.replacingOccurrences(of: " ", with: "%20").replacingOccurrences(of: "(", with: "%28")
-            .replacingOccurrences(of: ")", with: "%29")
         // As a change to the row's text, as a whole: the address goes in
         // among hidden Markdown, which typing is kept out of.
         let index = rowIndex(at: selection.location)
         let start = paragraphRanges[index].location
         let before = rows
+        guard NSMaxRange(selection) <= start + (before[index].text as NSString).length,
+              let linked = LinkPaste.link(before[index].text, selection: NSRange(location: selection.location - start, length: selection.length),
+                                          to: address) else { return false }
         var after = before
-        let row = after[index].text as NSString
-        let caret: Int
-        if let span = spans(atRowOf: selection.location).first(where: { span in
-            guard case .link = span.kind else { return false }
-            return NSLocationInRange(selection.location, span.content) && NSMaxRange(selection) <= NSMaxRange(span.content)
-        }), let close = span.markup.last {
-            // Already a link's words: only where it goes changes.
-            let old = NSRange(location: close.location + 2 - start, length: max(0, close.length - 3))
-            after[index].text = row.replacingCharacters(in: old, with: target)
-            caret = NSMaxRange(span.range) - start - old.length + (target as NSString).length
-        } else {
-            let escaped = words.replacingOccurrences(of: "[", with: "\\[").replacingOccurrences(of: "]", with: "\\]")
-            let markdown = "[\(escaped)](\(target))"
-            after[index].text = row.replacingCharacters(in: NSRange(location: selection.location - start, length: selection.length), with: markdown)
-            caret = selection.location - start + (markdown as NSString).length
-        }
+        after[index].text = linked.text
         replace(before, with: after, actionName: "Link")
-        restoreCaret(CaretPosition(row: index, offset: caret))
+        restoreCaret(CaretPosition(row: index, offset: linked.caret))
         return true
     }
 

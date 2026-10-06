@@ -199,6 +199,14 @@ public struct TimeStamp: Equatable, Sendable {
         return "\(hour):\(String(format: "%02d", minute))"
     }
 
+    /// Two times, as the clock shows them: "9:30 – 10:15", or, in twelve
+    /// hours, "9:30 – 10:15 AM", the half of the day once when they share it.
+    public static func span(_ start: Int, _ end: Int, twelveHour: Bool) -> String {
+        let from = shown(start, twelveHour: twelveHour), to = shown(end, twelveHour: twelveHour)
+        guard twelveHour, from.suffix(3) == to.suffix(3) else { return from + " – " + to }
+        return String(from.dropLast(3)) + " – " + to
+    }
+
     /// Whether this Mac or phone shows the time in twelve hours.
     public static var localeIsTwelveHour: Bool {
         (DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: .current) ?? "").contains("a")
@@ -360,5 +368,126 @@ public struct Timeline: Equatable, Sendable {
             changed[block.row] = rewritten + text.substring(from: stamp.range.length)
         }
         return changed
+    }
+
+    /// Blocks moved — that one alone unless `following` — by so many
+    /// minutes, its start or, resizing, its end; the texts of the rows to
+    /// change.
+    public func moved(_ index: Int, by minutes: Int, resizing: Bool, following: Bool, texts: [String]) -> [Int: String] {
+        moved(index, by: minutes, resizing: resizing, alone: !following, texts: texts)
+    }
+}
+
+/// How a timeline is drawn over its rows — D2: each block's bullet a node
+/// on a line running down to the next block's, its time and length in a
+/// small line over its words, free time a dashed stretch, and lengths and
+/// gaps given a little more room the longer they are — but only a little,
+/// so a long day stays short. What each row is to that drawing, worked out
+/// here, the same for the Mac and the phone; each turns it into points.
+public struct TimeMark: Equatable, Sendable {
+    /// The row a block starts at.
+    public struct Head: Equatable, Sendable {
+        /// Which timeline, and which of its blocks.
+        public var timeline: Int
+        public var index: Int
+        /// How deep the timeline is within others: nested blocks, inside a
+        /// block of their own.
+        public var level: Int
+        public var stamp: TimeStamp
+        /// Minutes from midnight: its end as written, or as the next begins.
+        public var start: Int
+        public var end: Int
+        /// "9:00 – 10:30 · 1h 30m".
+        public var label: String
+        /// "overlaps Offsite 30m", when it starts before one ends; and,
+        /// where that is too long, "30m overlap".
+        public var overlap: String?
+        public var overlapShort: String?
+        /// The block's last row, and the next block's first, in rows.
+        public var lastRow: Int
+        public var nextRow: Int?
+        public var done: Bool
+    }
+
+    /// A block ending at the row: the room after it.
+    public struct Foot: Equatable, Sendable {
+        public var timeline: Int
+        public var index: Int
+        public var level: Int
+        /// Room for its length, in rows: none up to half an hour, then a
+        /// little more each time it doubles.
+        public var length: Double
+        /// Free time after it, before the next: its minutes, its room in
+        /// rows, and what it says.
+        public var free: Int
+        public var freeLength: Double
+        public var freeLabel: String?
+        /// Whether its timeline's last: room after it, where the line ends.
+        public var isLast: Bool
+    }
+
+    public var head: Head?
+    /// Innermost first: a nested timeline's last block ends where its
+    /// block in the timeline around it does.
+    public var feet: [Foot] = []
+
+    /// Room for a length, in rows.
+    public static func length(_ minutes: Int) -> Double {
+        max(0, log2(Double(max(minutes, 1)) / 30)) * 0.25
+    }
+
+    /// Room for free time, in rows: a line to say it, and a little more for a long one.
+    public static func freeLength(_ minutes: Int) -> Double {
+        minutes <= 0 ? 0 : 0.8 + max(0, log2(Double(minutes) / 30)) * 0.3
+    }
+
+    /// The marks of an outline's rows, by row: the rows of its timelines.
+    public static func marks(depths: [Int], texts: [String], isListItem: [Bool], done: [Bool],
+                             twelveHour: Bool) -> [Int: TimeMark] {
+        let timelines = Timeline.find(depths: depths, texts: texts, isListItem: isListItem)
+        guard !timelines.isEmpty else { return [:] }
+        // How deep each timeline is: one inside a block of another, deeper.
+        var levels = [Int](repeating: 0, count: timelines.count)
+        let order = timelines.indices.sorted { (timelines[$0].parent ?? -1) < (timelines[$1].parent ?? -1) }
+        for t in order {
+            guard let parent = timelines[t].parent else { continue }
+            if let outer = order.first(where: { o in o != t && timelines[o].blocks.contains { $0.rows.contains(parent) } }) {
+                levels[t] = levels[outer] + 1
+            }
+        }
+        var marks: [Int: TimeMark] = [:]
+        func title(_ block: Timeline.Block) -> String {
+            let text = (texts[block.row] as NSString).substring(from: min(block.stamp.fullRange.length, (texts[block.row] as NSString).length))
+            // Its first line, without the break that ends it.
+            let words = (text.components(separatedBy: CharacterSet(charactersIn: "\n\u{2028}")).first ?? "").trimmingCharacters(in: .whitespaces)
+            return words.count > 24 ? String(words.prefix(23)) + "…" : words
+        }
+        for (t, timeline) in timelines.enumerated() {
+            let blocks = timeline.blocks
+            for (n, block) in blocks.enumerated() {
+                // Starting before an earlier one ends: overlapping it.
+                var overlap: String?, overlapShort: String?
+                if let earlier = blocks[..<n].max(by: { $0.end < $1.end }), earlier.end > block.start {
+                    let minutes = min(earlier.end, block.end) - block.start
+                    let name = title(earlier)
+                    overlap = "overlaps " + (name.isEmpty ? "" : name + " ") + TimeStamp.length(minutes)
+                    overlapShort = TimeStamp.length(minutes) + " overlap"
+                }
+                let label = TimeStamp.span(block.start, block.end, twelveHour: twelveHour) + " · " + TimeStamp.length(block.duration)
+                let last = block.rows.upperBound - 1
+                let next = n + 1 < blocks.count ? blocks[n + 1].row : nil
+                marks[block.row, default: TimeMark()].head = Head(
+                    timeline: t, index: n, level: levels[t], stamp: block.stamp, start: block.start, end: block.end,
+                    label: label, overlap: overlap, overlapShort: overlapShort,
+                    lastRow: last, nextRow: next, done: done[block.row])
+                let free = block.free
+                marks[last, default: TimeMark()].feet.append(Foot(
+                    timeline: t, index: n, level: levels[t], length: length(block.duration),
+                    free: free, freeLength: freeLength(free), freeLabel: free > 0 ? "\(TimeStamp.length(free)) free" : nil,
+                    isLast: next == nil))
+            }
+        }
+        for key in marks.keys { marks[key]?.feet.sort { $0.level > $1.level } }
+        return marks
     }
 }

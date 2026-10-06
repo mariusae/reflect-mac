@@ -129,35 +129,26 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
         }
     }
 
-    /// The slot of each paragraph in a timeline, by where it starts.
+    /// The slot of each paragraph a timeline draws something at — a block
+    /// starting, or ending — by where it starts.
     private func timeSlots(_ storage: NSTextStorage) -> [Int: TimeSlot] {
         let text = storage.string as NSString
         let paragraphs = OutlineText.paragraphs(text)
-        guard paragraphs.count >= 2 else { return [:] }
-        var depths: [Int] = [], texts: [String] = [], items: [Bool] = [], tasks: [Row.Task?] = []
+        guard paragraphs.count >= 1 else { return [:] }
+        var depths: [Int] = [], texts: [String] = [], items: [Bool] = [], done: [Bool] = []
         depths.reserveCapacity(paragraphs.count)
         for paragraph in paragraphs {
             let row = OutlineText.style(storage, at: paragraph.location).row
             depths.append(row.depth)
             items.append(row.kind.isListItem)
-            tasks.append(row.task)
-            texts.append(text.substring(with: NSRange(location: paragraph.location, length: min(paragraph.length, 48))))
+            done.append(row.task?.isDone == true)
+            texts.append(text.substring(with: NSRange(location: paragraph.location, length: min(paragraph.length, 80))))
         }
-        let timelines = Timeline.find(depths: depths, texts: texts, isListItem: items)
-        guard !timelines.isEmpty else { return [:] }
         let measures = TimeSlot.Measures(metrics)
+        let marks = TimeMark.marks(depths: depths, texts: texts, isListItem: items, done: done, twelveHour: measures.twelveHour)
         var found: [Int: TimeSlot] = [:]
-        for timeline in timelines {
-            for (n, block) in timeline.blocks.enumerated() {
-                for row in block.rows {
-                    let head = row == block.row
-                    found[paragraphs[row].location] = TimeSlot(
-                        index: n, back: row - block.row, isLast: row == block.rows.upperBound - 1,
-                        stamp: head ? block.stamp : nil, revealed: head && caretRow == block.row,
-                        start: block.start, end: block.end, free: block.free, isLastBlock: n == timeline.blocks.count - 1,
-                        done: tasks[block.row]?.isDone == true, measures: measures)
-                }
-            }
+        for (row, mark) in marks where row < paragraphs.count {
+            found[paragraphs[row].location] = TimeSlot(mark: mark, revealed: mark.head != nil && caretRow == row, measures: measures)
         }
         return found
     }
@@ -221,12 +212,10 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
             let style = storage.attribute(.outlineRow, at: paragraph.location, effectiveRange: nil) as Any
             let slot = slots[paragraph.location]
             var attributes = attributes(for: row, after: previous)
-            if let slot, let paragraphStyle = (attributes[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle {
-                // Clear of the times, at the left.
-                paragraphStyle.firstLineHeadIndent += slot.measures.gutter
-                paragraphStyle.headIndent += slot.measures.gutter
-                // Room above the first block's card, and between blocks.
-                if slot.back == 0 { paragraphStyle.paragraphSpacingBefore = slot.index == 0 ? slot.measures.pad * 2 : slot.measures.pad }
+            if let slot, slot.mark.head != nil,
+               let paragraphStyle = (attributes[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle {
+                // Room over a block's words for its time and length.
+                paragraphStyle.paragraphSpacingBefore += slot.measures.header
                 attributes[.paragraphStyle] = paragraphStyle
             }
             storage.setAttributes(attributes, range: paragraph)
@@ -242,7 +231,7 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
                                      images: images, caret: caret, pills: !inHeading, typography: metrics.typography)
             }
             // A block's time is told at its left; written out only where the caret is.
-            if let slot, let stamp = slot.stamp, !slot.revealed, stamp.fullRange.length < paragraph.length {
+            if let slot, let stamp = slot.mark.head?.stamp, !slot.revealed, stamp.fullRange.length < paragraph.length {
                 storage.addAttribute(.outlineHidden, value: true,
                                      range: NSRange(location: paragraph.location, length: stamp.fullRange.length))
             }
@@ -303,87 +292,62 @@ extension NSAttributedString.Key {
     package static let outlineHidden = NSAttributedString.Key("ReflectOutlineHidden")
     /// A typed arrow's last character: drawn as the arrow it makes.
     package static let outlineArrow = NSAttributedString.Key("ReflectOutlineArrow")
-    /// A row of a time block, as a `TimeSlot`.
+    /// A row a timeline draws something at, as a `TimeSlot`.
     package static let outlineTimeSlot = NSAttributedString.Key("ReflectOutlineTimeSlot")
 }
 
-/// A row's place in a time block: how far it is set in, how tall its block
-/// stands, and the free time after it.
+/// What a timeline draws at a row: a block starting there — its time and
+/// length over its words, its bullet a node on the line — or blocks ending
+/// there, and the room after them. (`TimeMark`, in points.)
 package final class TimeSlot: NSObject {
-    /// Of the type: how far the times push the rows in, and how tall a
-    /// minute is.
+    /// Of the type: a row's height, the room for a time over a row, and
+    /// how far a drag goes for a minute.
     package struct Measures: Equatable {
-        package var gutter: CGFloat
-        package var perMinute: CGFloat
         package var row: CGFloat
-        package var pad: CGFloat
+        package var header: CGFloat
         package var labelSize: CGFloat
+        package var pad: CGFloat
+        package var perMinute: CGFloat
         package var twelveHour: Bool
 
         package init(_ metrics: OutlineMetrics) {
-            let body = metrics.body
-            let line = ceil(NSLayoutManager().defaultLineHeight(for: body) * max(1, metrics.lineHeightMultiple))
+            let line = ceil(NSLayoutManager().defaultLineHeight(for: metrics.body) * max(1, metrics.lineHeightMultiple))
             row = line + metrics.rowSpacing
-            // An hour as tall as two and a half rows: a quarter of one, a row.
-            perMinute = row * 2.5 / 60
-            pad = round(metrics.fontSize * 0.3)
-            labelSize = round(metrics.fontSize * 0.74)
+            labelSize = round(metrics.fontSize * 0.72)
+            header = ceil(labelSize * 1.25)
+            pad = round(metrics.fontSize * 0.4)
+            // Five minutes a drag of a third of a row, or so.
+            perMinute = row / 15
             twelveHour = TimeStamp.localeIsTwelveHour
-            let label = NSAttributedString(string: twelveHour ? "12:30 PM" : "23:30",
-                                           attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: labelSize, weight: .medium)])
-            gutter = ceil(label.size().width) + round(metrics.fontSize * 0.9)
         }
     }
 
-    /// Which block of its timeline.
-    package let index: Int
-    /// How many rows back the block's first is: none for the first.
-    package let back: Int
-    /// Whether the block's last row: its foot reaches down to its end.
-    package let isLast: Bool
-    /// The first row's time, as written.
-    package let stamp: TimeStamp?
-    /// Whether the time is written out: the caret is in the row.
+    package let mark: TimeMark
+    /// Whether the block's time is written out in its row: the caret is there.
     package let revealed: Bool
-    package let start: Int
-    package let end: Int
-    package let free: Int
-    package let isLastBlock: Bool
-    package let done: Bool
     package let measures: Measures
 
-    init(index: Int, back: Int, isLast: Bool, stamp: TimeStamp?, revealed: Bool, start: Int, end: Int, free: Int,
-         isLastBlock: Bool, done: Bool, measures: Measures) {
-        self.index = index
-        self.back = back
-        self.isLast = isLast
-        self.stamp = stamp
+    init(mark: TimeMark, revealed: Bool, measures: Measures) {
+        self.mark = mark
         self.revealed = revealed
-        self.start = start
-        self.end = end
-        self.free = free
-        self.isLastBlock = isLastBlock
-        self.done = done
         self.measures = measures
     }
 
-    /// How tall the block's card is, by how long it lasts.
-    package var cardHeight: CGFloat { (CGFloat(max(end - start, 5)) * measures.perMinute).rounded() }
-    /// How tall the free time after it is: as long as it is, up to an hour.
-    package var freeHeight: CGFloat {
-        // The last: clear of the row after.
-        if isLastBlock { return measures.pad * 2 }
-        return free == 0 ? 0 : (CGFloat(min(free, 60)) * measures.perMinute).rounded() + measures.pad
+    /// The room a block ending here takes after the row: a little for its
+    /// length, its free time, and, its timeline's last, a gap after.
+    package func extent(_ foot: TimeMark.Foot) -> CGFloat {
+        ((foot.length + foot.freeLength) * measures.row).rounded() + (foot.isLast ? measures.pad : 0)
     }
+
+    /// All the room after the row's last line.
+    package var footHeight: CGFloat { mark.feet.reduce(0) { $0 + extent($1) } }
 
     package override func isEqual(_ object: Any?) -> Bool {
         guard let other = object as? TimeSlot else { return false }
-        return index == other.index && back == other.back && isLast == other.isLast && stamp == other.stamp
-            && revealed == other.revealed && start == other.start && end == other.end && free == other.free
-            && isLastBlock == other.isLastBlock && done == other.done && measures == other.measures
+        return mark == other.mark && revealed == other.revealed && measures == other.measures
     }
 
-    package override var hash: Int { var h = Hasher(); h.combine(index); h.combine(back); h.combine(start); h.combine(end); return h.finalize() }
+    package override var hash: Int { var h = Hasher(); h.combine(mark.head?.index); h.combine(mark.feet.count); return h.finalize() }
 }
 
 /// A code block's fences: the lines that open and close it, there to be
@@ -636,16 +600,12 @@ package final class HiddenMarkupGlyphs: NSObject, NSLayoutManagerDelegate {
             lineFragmentUsedRect.pointee.size.height = height
             changed = true
         }
-        // A time block's last line reaches down as far as the block lasts,
-        // and the free time after it further.
+        // A row time blocks end at: room after it for their lengths, and
+        // the free time after them.
         if characters.length > 0, let slot = storage.attribute(.outlineTimeSlot, at: NSMaxRange(characters) - 1, effectiveRange: nil) as? TimeSlot,
-           slot.isLast, (storage.string as NSString).character(at: NSMaxRange(characters) - 1) == 0x0a {
-            let top = TimeBlockGeometry.top(of: slot, endingAt: NSMaxRange(characters) - 1, in: layoutManager,
-                                            line: glyphRange, fragment: lineFragmentRect.pointee)
-            let rect = lineFragmentRect.pointee
-            let cardBottom = max(rect.maxY, top + slot.cardHeight)
-            lineFragmentRect.pointee.size.height = cardBottom + slot.freeHeight - rect.minY
-            lineFragmentUsedRect.pointee.size.height = cardBottom - lineFragmentUsedRect.pointee.minY
+           slot.footHeight > 0, (storage.string as NSString).character(at: NSMaxRange(characters) - 1) == 0x0a {
+            lineFragmentRect.pointee.size.height += slot.footHeight
+            lineFragmentUsedRect.pointee.size.height = lineFragmentRect.pointee.maxY - lineFragmentUsedRect.pointee.minY
             changed = true
         }
         return changed

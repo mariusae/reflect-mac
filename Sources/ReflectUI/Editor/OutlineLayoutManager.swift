@@ -81,7 +81,7 @@ package final class OutlineLayoutManager: NSLayoutManager {
         where NSIntersectionRange(paragraph, covered).length > 0 || paragraph.location == covered.location {
             let row = OutlineText.style(storage, at: paragraph.location).row
             guard let frame = frame(of: paragraph, origin: origin) else { continue }
-            let indent = origin.x + metrics.textIndent(for: row) + Self.timeGutter(storage, at: paragraph.location)
+            let indent = origin.x + metrics.textIndent(for: row)
 
             switch row.kind {
             case .code:
@@ -224,6 +224,9 @@ package final class OutlineLayoutManager: NSLayoutManager {
         case .bullet(let folded):
             // Folded: told by the pill after its words, as every row is.
             _ = folded
+            // A time block's bullet is its node on the timeline's line.
+            if let storage = textStorage, paragraph.length > 0,
+               (storage.attribute(.outlineTimeSlot, at: paragraph.location, effectiveRange: nil) as? TimeSlot)?.mark.head != nil { return }
             view.metrics.typography.ink.secondary.setFill()
             let dot = max(4, (font.pointSize * 0.34).rounded())
             NSBezierPath(ovalIn: NSRect(x: center.x - dot / 2, y: center.y - dot / 2, width: dot, height: dot)).fill()
@@ -292,11 +295,6 @@ package final class OutlineLayoutManager: NSLayoutManager {
             return used.minY + defaultLineHeight(for: font) * max(multiple, 1) - descent
         }
         return used.maxY - descent
-    }
-
-    /// How far a time block's row is set in for the times at its left.
-    package static func timeGutter(_ storage: NSTextStorage, at location: Int) -> CGFloat {
-        (storage.attribute(.outlineTimeSlot, at: location, effectiveRange: nil) as? TimeSlot)?.measures.gutter ?? 0
     }
 
     /// The picture at a point in the text view, if any.
@@ -396,7 +394,7 @@ package final class OutlineLayoutManager: NSLayoutManager {
             let glyph = glyphIndexForCharacter(at: paragraph.location)
             guard glyph < numberOfGlyphs else { break }
             let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).offsetBy(dx: origin.x, dy: origin.y)
-            let indent = origin.x + view.metrics.textIndent(for: row) + Self.timeGutter(storage, at: paragraph.location)
+            let indent = origin.x + view.metrics.textIndent(for: row)
             let hit = NSRect(x: indent - view.metrics.indent, y: line.minY, width: view.metrics.indent, height: line.height)
             if hit.contains(point) { return index }
             if line.minY > point.y { break }

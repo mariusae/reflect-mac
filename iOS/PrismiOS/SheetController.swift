@@ -399,7 +399,12 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         editor.replace(rows, caret: nil, undoName: "Dictation")
         block.save()
         relayout()
-        DispatchQueue.main.async { self.reveal(block) }
+        let row = min(at, rows.count - 1)
+        DispatchQueue.main.async {
+            self.reveal(block)
+            // Once in sight: what came in, marked a moment.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { editor.flashRow(row) }
+        }
     }
 
     func reload() {

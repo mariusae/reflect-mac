@@ -185,17 +185,14 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
         let text = storage.mutableString
         for paragraph in OutlineText.paragraphs(text.substring(with: range) as NSString) {
             let paragraph = NSRange(location: paragraph.location + range.location, length: paragraph.length)
-            let style = OutlineText.style(storage, at: paragraph.location)
+            let style = Self.rowStyle(storage, paragraph)
             let row = style.row
             let previous = paragraph.location > 0 ? OutlineText.style(storage, at: paragraph.location - 1).row : nil
             let slot = slots[paragraph.location]
             var attributes = attributes(for: row, after: previous)
-            if let slot, let paragraphStyle = (attributes[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle {
-                // Clear of the times, at the left; room above a block's card.
-                paragraphStyle.firstLineHeadIndent += slot.measures.gutter
-                paragraphStyle.headIndent += slot.measures.gutter
-                attributes[.paragraphStyle] = paragraphStyle
-                if slot.spaceBefore > 0 { attributes[.prismSpaceBefore] = slot.spaceBefore }
+            if let slot, slot.mark.head != nil {
+                // Room over a block's words for its time and length.
+                attributes[.prismSpaceBefore] = (attributes[.prismSpaceBefore] as? CGFloat ?? 0) + slot.measures.header
             }
             storage.setAttributes(attributes, range: paragraph)
             storage.addAttribute(.outlineRow, value: style, range: paragraph)
@@ -205,7 +202,7 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             default: styleInline(storage, in: paragraph, row: row)
             }
             // A block's time is told at its left; written out only where the caret is.
-            if let slot, let stamp = slot.stamp, !slot.revealed, stamp.fullRange.length < paragraph.length {
+            if let slot, let stamp = slot.mark.head?.stamp, !slot.revealed, stamp.fullRange.length < paragraph.length {
                 let hidden = NSRange(location: paragraph.location, length: stamp.fullRange.length)
                 storage.addAttribute(.prismHidden, value: true, range: hidden)
                 // A done block's line through its words only: hidden, the time
@@ -222,6 +219,22 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             }
             storage.fixAttributes(in: paragraph)
         }
+    }
+
+    /// A paragraph's row, from whichever of its characters still says it.
+    /// Autocorrect styles the word it puts in afresh, the row's style
+    /// dropped from it: read from the row's first character alone, that
+    /// row became a plain one at the top — the first word corrected, the
+    /// row outdented.
+    static func rowStyle(_ storage: NSTextStorage, _ paragraph: NSRange) -> RowStyle {
+        var found: RowStyle?
+        storage.enumerateAttribute(.outlineRow, in: paragraph) { value, _, stop in
+            if let style = value as? RowStyle {
+                found = style
+                stop.pointee = true
+            }
+        }
+        return found ?? RowStyle(.blank)
     }
 
     /// A row not shown: its characters nothing, its line no height.
@@ -859,8 +872,9 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).offsetBy(dx: origin.x, dy: origin.y)
             let used = lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil).offsetBy(dx: origin.x, dy: origin.y)
             let font = storage.attribute(.font, at: paragraph.location, effectiveRange: nil) as? UIFont ?? metrics.body
-            let shift = PhoneTimeSlot.gutter(storage, at: paragraph.location)
-            let markerX = metrics.indent * CGFloat(row.depth) + metrics.indent / 2 + origin.x + shift
+            let markerX = metrics.indent * CGFloat(row.depth) + metrics.indent / 2 + origin.x
+            // A time block's bullet is its node on the timeline's line.
+            let isTimeBlock = PhoneTimeSlot.head(storage, at: paragraph.location) != nil
             let glyphLocation = location(forGlyphAt: glyph)
             // A row that starts with a picture has its marker by the top of it.
             let startsWithImage = storage.attribute(.prismImage, at: first, effectiveRange: nil) != nil
@@ -911,8 +925,8 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                         .foregroundColor: Ink.secondary,
                     ])
                     let size = label.size()
-                    label.draw(at: CGPoint(x: metrics.textIndent(for: row) + shift + origin.x - size.width - 6, y: baseline - size.height + 3))
-                } else {
+                    label.draw(at: CGPoint(x: metrics.textIndent(for: row) + origin.x - size.width - 6, y: baseline - size.height + 3))
+                } else if !isTimeBlock {
                     Ink.secondary.setFill()
                     let dot = max(4.5, round(font.pointSize * 0.3))
                     UIBezierPath(ovalIn: CGRect(x: markerX - dot / 2, y: middle - dot / 2, width: dot, height: dot)).fill()
@@ -1258,6 +1272,31 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         return ranges
     }
     private var cachedRanges: [NSRange]?
+
+    /// A row just added, not typed — dictated — marked a moment: its words
+    /// under the accent's tint, fading, so the eye finds what came in.
+    func flashRow(_ index: Int) {
+        let ranges = paragraphRanges
+        guard ranges.indices.contains(index), ranges[index].length > 1 else { return }
+        layoutIfNeeded()
+        let words = NSRange(location: ranges[index].location, length: ranges[index].length - 1)
+        let glyphs = outlineLayout.glyphRange(forCharacterRange: words, actualCharacterRange: nil)
+        var rect = CGRect.null
+        outlineLayout.enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
+                                              in: textContainer) { line, _ in rect = rect.union(line) }
+        guard !rect.isNull else { return }
+        let mark = UIView(frame: rect.offsetBy(dx: textContainerInset.left, dy: textContainerInset.top).insetBy(dx: -4, dy: -2))
+        mark.backgroundColor = Ink.accent.withAlphaComponent(0.22)
+        mark.layer.cornerRadius = 6
+        mark.isUserInteractionEnabled = false
+        mark.alpha = 0
+        insertSubview(mark, at: 0)
+        UIView.animate(withDuration: 0.2) { mark.alpha = 1 } completion: { _ in
+            UIView.animate(withDuration: 1.0, delay: 0.6, options: [.curveEaseOut]) { mark.alpha = 0 } completion: { _ in
+                mark.removeFromSuperview()
+            }
+        }
+    }
 
     /// The caret as tall as its type: a time block's last line stands as
     /// tall as the block lasts, and the caret would reach down through it.
@@ -1798,8 +1837,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         if row.isFolded, let pill = outlineLayout.foldPill(for: paragraphRanges[index]), pill.insetBy(dx: -8, dy: -8).contains(inContainer) {
             return .fold(index)
         }
-        let shift = PhoneTimeSlot.gutter(textStorage, at: paragraphRanges[index].location)
-        if inContainer.x < metrics.textIndent(for: row) + shift - 2, inContainer.x > metrics.indent * CGFloat(row.depth) + shift - 6 {
+        if inContainer.x < metrics.textIndent(for: row) - 2, inContainer.x > metrics.indent * CGFloat(row.depth) - 6 {
             return .marker(index)
         }
         let glyphRect = outlineLayout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainer)
@@ -1866,6 +1904,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// graph's `assets/`, as the Mac keeps them, and put where the caret is.
     override func paste(_ sender: Any?) {
         let board = UIPasteboard.general
+        // A link pasted on words: the words link to it, as on the Mac.
+        if selectedRange.length > 0, let address = board.string.flatMap(LinkPaste.address(in:)), linkSelection(to: address) { return }
         guard board.hasImages, !board.hasStrings, let root = PhoneImages.root else { return super.paste(sender) }
         var markdown: [String] = []
         for picture in Self.pictures(on: board) {
@@ -1878,6 +1918,28 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         }
         guard !markdown.isEmpty else { return super.paste(sender) }
         insertText(markdown.joined(separator: " "))
+    }
+
+    /// The words chosen made a link to an address — or, a link's words
+    /// already, that link pointed there. Says whether it did.
+    private func linkSelection(to address: String) -> Bool {
+        let selection = selectedRange
+        let index = rowIndex(at: selection.location)
+        let ranges = paragraphRanges
+        guard ranges.indices.contains(index) else { return false }
+        let start = ranges[index].location
+        var all = rows
+        guard NSMaxRange(selection) <= start + (all[index].text as NSString).length,
+              let linked = LinkPaste.link(all[index].text, selection: NSRange(location: selection.location - start, length: selection.length),
+                                          to: address) else { return false }
+        all[index].text = linked.text
+        // The keyboard told: what it suggests, and where it types, follow.
+        inputDelegate?.selectionWillChange(self)
+        inputDelegate?.textWillChange(self)
+        replace(all, caret: OutlineKeys.Caret(row: index, offset: linked.caret), undoName: "Link")
+        inputDelegate?.textDidChange(self)
+        inputDelegate?.selectionDidChange(self)
+        return true
     }
 
     /// Each picture on the pasteboard, as its own bytes when they are a
@@ -2210,9 +2272,12 @@ extension OutlineEditor: UIEditMenuInteractionDelegate {
 /// the finger comes down, and what waits on it goes on as if it were not there.
 final class PictureHold: UILongPressGestureRecognizer {
     var isOnPicture: ((CGPoint) -> Bool)?
+    /// Where the finger went down, in the view.
+    private(set) var downPoint: CGPoint?
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesBegan(touches, with: event)
+        downPoint = touches.first?.location(in: view)
         if let touch = touches.first, isOnPicture?(touch.location(in: view)) != true { state = .failed }
     }
 }

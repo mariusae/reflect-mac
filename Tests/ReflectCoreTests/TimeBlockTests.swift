@@ -84,4 +84,39 @@ import Testing
         made = Timeline.newBlock(in: blocks, at: 1, now: 16 * 60)
         #expect(made.row == 4 && made.rows[4].text == "4pm–4:15pm ")
     }
+
+    /// The mockups' day: nesting, overlap, free time, a long block.
+    @Test func marksForADay() throws {
+        let rows: [Row] = [
+            Row(kind: .bullet, text: "Plan"),
+            Row(kind: .bullet, depth: 1, text: "8:30-9:00 Email"),
+            Row(kind: .bullet, depth: 1, text: "9:00-15:00 Offsite"),
+            Row(kind: .bullet, depth: 2, text: "9:00-9:30 Intro"),
+            Row(kind: .bullet, depth: 2, text: "9:30-11:30 Planning"),
+            Row(kind: .bullet, depth: 2, text: "12:00-13:00 Lunch with Ana"),
+            Row(kind: .bullet, depth: 1, text: "14:30-15:30 Review PRs"),
+            Row(kind: .bullet, depth: 1, text: "16:00-16:15 Call Mom", task: .done("x")),
+            Row(kind: .bullet, depth: 1, text: "18:00-19:00 Run"),
+        ]
+        let marks = TimeMark.marks(depths: rows.map(\.depth), texts: rows.map(\.text), isListItem: rows.map(\.kind.isListItem),
+                                   done: rows.map { $0.task?.isDone == true }, twelveHour: false)
+        let offsite = try #require(marks[2]?.head)
+        #expect(offsite.label == "9:00 – 15:00 · 6h" && offsite.level == 0 && offsite.lastRow == 5 && offsite.nextRow == 6)
+        let intro = try #require(marks[3]?.head)
+        #expect(intro.level == 1 && intro.nextRow == 4)
+        // Lunch ends the inner timeline and the Offsite: inner first.
+        #expect(marks[5]?.feet.map(\.level) == [1, 0])
+        #expect(marks[4]?.feet.first?.freeLabel == "30m free")
+        #expect(marks[6]?.head?.overlap == "overlaps Offsite 30m")
+        // As the editor reads its rows: each with its line break.
+        let editorMarks = TimeMark.marks(depths: rows.map(\.depth), texts: rows.map { $0.text + "\n" }, isListItem: rows.map(\.kind.isListItem),
+                                         done: rows.map { $0.task?.isDone == true }, twelveHour: false)
+        #expect(editorMarks[6]?.head?.overlap == "overlaps Offsite 30m")
+        #expect(marks[7]?.head?.done == true)
+        #expect(marks[7]?.feet.first?.freeLabel == "1h 45m free")
+        #expect(marks[8]?.feet.first?.free == 0)
+        #expect(TimeMark.length(30) == 0 && TimeMark.length(120) > TimeMark.length(60))
+        #expect(TimeStamp.span(510, 540, twelveHour: true) == "8:30 – 9 AM")
+        #expect(TimeStamp.span(690, 780, twelveHour: true) == "11:30 AM – 1 PM")
+    }
 }

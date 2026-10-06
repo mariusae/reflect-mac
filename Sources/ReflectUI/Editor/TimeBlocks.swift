@@ -1,26 +1,30 @@
 import AppKit
 import ReflectCore
 
-/// Where a time block is: its card, the times at its left, the free time
-/// after it.
+/// Where a time block is drawn, in the text view: its node on the line —
+/// its bullet's place — its time and length over its words, the line down
+/// to where it ends, and the free time after.
 package struct TimeBlockGeometry {
     /// The block's first paragraph, by index.
     package var head: Int
-    /// The paragraphs it holds.
-    package var paragraphs: Range<Int>
-    package var slot: TimeSlot
-    /// Its card, in the text view.
-    package var card: NSRect
-    /// The free time after it.
-    package var free: NSRect
-    /// Where the times are, at its left.
-    package var gutter: NSRect
-    /// The foot of its words: below, the card is empty.
-    package var contentBottom: CGFloat
-    /// The baseline of its first line.
-    package var baseline: CGFloat
+    package var mark: TimeMark.Head
+    package var measures: TimeSlot.Measures
+    /// The node: its middle, and whether it is drawn (a checkbox is its own).
+    package var node: NSPoint
+    package var drawsNode: Bool
+    /// Where the line leaves the node, and where its solid part ends: the
+    /// block's end.
+    package var lineTop: CGFloat
+    package var end: CGFloat
+    /// The free time after it — dashed — down to the next block's node.
+    package var free: ClosedRange<CGFloat>?
+    /// The room the free time is given after the block: where it is told.
+    package var freeRoom: ClosedRange<CGFloat>?
+    /// Where the time and length are written, over the words.
+    package var label: NSRect
+    package var freeLabel: String?
 
-    /// Whether any row of a text is in a time block.
+    /// Whether any row of a text is in a timeline.
     static func any(in storage: NSTextStorage) -> Bool {
         var found = false
         storage.enumerateAttribute(.outlineTimeSlot, in: NSRange(location: 0, length: storage.length)) { value, _, stop in
@@ -28,155 +32,181 @@ package struct TimeBlockGeometry {
         }
         return found
     }
-
-    /// The top of a block, in the text container: its first line's.
-    static func top(of slot: TimeSlot, endingAt character: Int, in layoutManager: NSLayoutManager,
-                    line: NSRange, fragment: NSRect) -> CGFloat {
-        guard let storage = layoutManager.textStorage else { return fragment.minY }
-        let text = storage.string as NSString
-        var start = text.paragraphRange(for: NSRange(location: character, length: 0)).location
-        for _ in 0..<slot.back where start > 0 {
-            start = text.paragraphRange(for: NSRange(location: start - 1, length: 0)).location
-        }
-        let glyph = layoutManager.glyphIndexForCharacter(at: start)
-        let style = storage.attribute(.paragraphStyle, at: start, effectiveRange: nil) as? NSParagraphStyle
-        let before = style?.paragraphSpacingBefore ?? 0
-        if glyph >= line.location { return fragment.minY + before }
-        return layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil, withoutAdditionalLayout: true).minY + before
-    }
 }
 
 extension OutlineLayoutManager {
-    /// The time blocks among some paragraphs — those whose rows any of them
-    /// is — with where they are.
+    private func slot(_ storage: NSTextStorage, _ paragraph: NSRange) -> TimeSlot? {
+        paragraph.length > 0 ? storage.attribute(.outlineTimeSlot, at: paragraph.location, effectiveRange: nil) as? TimeSlot : nil
+    }
+
+    private func lastSlot(_ storage: NSTextStorage, _ paragraph: NSRange) -> TimeSlot? {
+        paragraph.length > 0 ? storage.attribute(.outlineTimeSlot, at: NSMaxRange(paragraph) - 1, effectiveRange: nil) as? TimeSlot : nil
+    }
+
+    /// The node's middle for a row: where its bullet would be.
+    private func nodeCenter(_ storage: NSTextStorage, _ paragraphs: [NSRange], _ index: Int, origin: NSPoint) -> (NSPoint, NSFont, CGFloat)? {
+        guard let view = outlineView, index < paragraphs.count else { return nil }
+        let row = OutlineText.style(storage, at: paragraphs[index].location).row
+        let glyph = glyphIndexForCharacter(at: paragraphs[index].location)
+        guard glyph < numberOfGlyphs else { return nil }
+        let font = view.metrics.font(for: row)
+        let baseline = origin.y + self.baseline(ofLineAt: glyph, font: font)
+        let x = origin.x + view.metrics.textIndent(for: row) - view.metrics.indent / 2
+        let y = row.task != nil ? baseline - font.capHeight / 2 : baseline - font.xHeight / 2
+        return (NSPoint(x: x, y: y), font, baseline)
+    }
+
+    /// The time blocks starting among some paragraphs — and those before
+    /// them whose lines reach into them — with where they are.
     package func timeBlocks(touching range: Range<Int>? = nil, origin: NSPoint) -> [TimeBlockGeometry] {
         guard let storage = textStorage, let view = outlineView, storage.length > 0 else { return [] }
         let paragraphs = view.paragraphRanges
         let range = range ?? 0..<paragraphs.count
         guard !range.isEmpty else { return [] }
         var found: [TimeBlockGeometry] = []
-        var index = range.lowerBound
-        // From the head of the block the first is in.
-        if index < paragraphs.count, let slot = storage.attribute(.outlineTimeSlot, at: paragraphs[index].location, effectiveRange: nil) as? TimeSlot {
-            index = max(0, index - slot.back)
-        }
-        let width = view.textContainer?.size.width ?? view.bounds.width
-        while index < min(range.upperBound, paragraphs.count) {
-            guard let slot = storage.attribute(.outlineTimeSlot, at: paragraphs[index].location, effectiveRange: nil) as? TimeSlot,
-                  slot.back == 0 else {
-                index += 1
-                continue
-            }
-            var last = index
-            while last + 1 < paragraphs.count, !((storage.attribute(.outlineTimeSlot, at: paragraphs[last].location, effectiveRange: nil) as? TimeSlot)?.isLast ?? true) {
-                last += 1
-            }
-            let headGlyph = glyphIndexForCharacter(at: paragraphs[index].location)
-            let lastGlyph = glyphIndexForCharacter(at: NSMaxRange(paragraphs[last]) - 1)
-            guard headGlyph < numberOfGlyphs, lastGlyph < numberOfGlyphs else { break }
-            let headFragment = lineFragmentRect(forGlyphAt: headGlyph, effectiveRange: nil)
-            let footFragment = lineFragmentRect(forGlyphAt: lastGlyph, effectiveRange: nil)
-            let footUsed = lineFragmentUsedRect(forGlyphAt: lastGlyph, effectiveRange: nil)
-            let style = storage.attribute(.paragraphStyle, at: paragraphs[index].location, effectiveRange: nil) as? NSParagraphStyle
-            let top = headFragment.minY + (style?.paragraphSpacingBefore ?? 0)
-            let cardBottom = footFragment.maxY - slot.freeHeight
+        // Back a way: a block above can run its line down into these rows.
+        for index in max(0, range.lowerBound - 300)..<min(range.upperBound, paragraphs.count) {
+            guard let slot = slot(storage, paragraphs[index]), let head = slot.mark.head else { continue }
+            let reach = head.nextRow ?? head.lastRow
+            guard index >= range.lowerBound || reach >= range.lowerBound else { continue }
+            guard let (node, font, baseline) = nodeCenter(storage, paragraphs, index, origin: origin), head.lastRow < paragraphs.count else { continue }
+            let measures = slot.measures
             let row = OutlineText.style(storage, at: paragraphs[index].location).row
-            let left = view.metrics.textIndent(for: row) + slot.measures.gutter - view.metrics.indent
-            let card = NSRect(x: left - 4, y: top - slot.measures.pad, width: width - left + 4, height: cardBottom - top + slot.measures.pad)
-                .offsetBy(dx: origin.x, dy: origin.y)
-            let free = NSRect(x: card.minX, y: card.maxY, width: card.width, height: slot.freeHeight)
-            let gutter = NSRect(x: card.minX - slot.measures.gutter, y: card.minY, width: slot.measures.gutter, height: card.height)
-            let font = view.metrics.font(for: row)
-            // The content's foot: its own lines', not the room the card is given.
-            let contentFoot = footUsed.minY + min(footUsed.height, ceil(defaultLineHeight(for: font) * max(1, view.metrics.lineHeightMultiple)))
-            found.append(TimeBlockGeometry(head: index, paragraphs: index..<(last + 1), slot: slot, card: card, free: free, gutter: gutter,
-                                           contentBottom: contentFoot + origin.y,
-                                           baseline: origin.y + baseline(ofLineAt: headGlyph, font: font)))
-            index = last + 1
+            // Where the block ends: its last row's foot, after those of
+            // blocks nested in it that end there too.
+            let lastParagraph = paragraphs[head.lastRow]
+            let lastGlyph = glyphIndexForCharacter(at: NSMaxRange(lastParagraph) - 1)
+            guard lastGlyph < numberOfGlyphs else { continue }
+            let foot = lastSlot(storage, lastParagraph)
+            var cursor = lineFragmentRect(forGlyphAt: lastGlyph, effectiveRange: nil).maxY + origin.y - (foot?.footHeight ?? 0)
+            var end = cursor, free: ClosedRange<CGFloat>?
+            var freeLabel: String?
+            var freeRoom: ClosedRange<CGFloat>?
+            for each in foot?.mark.feet ?? [] {
+                let length = (each.length * measures.row).rounded()
+                let rest = foot.map { $0.extent(each) } ?? 0
+                if each.timeline == head.timeline && each.index == head.index {
+                    end = cursor + length
+                    if each.free > 0 {
+                        // Down to the next block's node, dashed; its label
+                        // in the room given to it.
+                        let next = head.nextRow.flatMap { nodeCenter(storage, paragraphs, $0, origin: origin)?.0.y }
+                        free = end...max(end, (next ?? cursor + rest) - 6)
+                        freeRoom = end...(cursor + rest)
+                        freeLabel = each.freeLabel
+                    }
+                    break
+                }
+                cursor += rest
+            }
+            // No free time: the line runs on to the next block's node.
+            if free == nil, let next = head.nextRow.flatMap({ nodeCenter(storage, paragraphs, $0, origin: origin)?.0.y }) {
+                end = max(end, next - 6)
+            }
+            let radius = row.task == nil ? 3.5 : font.pointSize * 0.48
+            let labelX = origin.x + view.metrics.textIndent(for: row)
+            let label = NSRect(x: labelX, y: baseline - font.ascender - measures.header,
+                               width: max(40, view.bounds.width - labelX - 8), height: measures.header)
+            found.append(TimeBlockGeometry(head: index, mark: head, measures: measures, node: node, drawsNode: row.task == nil,
+                                           lineTop: node.y + radius + 2, end: end, free: free, freeRoom: freeRoom, label: label, freeLabel: freeLabel))
         }
         return found
     }
 
-    /// Draws time blocks' cards, the times at their left, the free time
-    /// between them and, on today's page, the time now.
+    /// Draws the timelines: lines, nodes, times over the words, free time,
+    /// and, on today's page, the time now on the line it falls on.
     func drawTimeBlocks(_ blocks: [TimeBlockGeometry]) {
         guard let view = outlineView else { return }
         let ink = view.metrics.typography.ink
+        let accent = NSColor.controlAccentColor
         let now = view.day == .today ? Calendar.current.dateComponents([.hour, .minute], from: Date()) : nil
         let nowMinutes = now.map { ($0.hour ?? 0) * 60 + ($0.minute ?? 0) }
         for block in blocks {
-            let slot = block.slot
-            let measures = slot.measures
-            let isNow = nowMinutes.map { $0 >= slot.start && $0 < slot.end } ?? false
-            let card = block.card.insetBy(dx: 0, dy: 1)
-            let path = NSBezierPath(roundedRect: card, xRadius: 7, yRadius: 7)
-            let accent = NSColor.controlAccentColor
-            (slot.done ? ink.text.withAlphaComponent(0.035) : accent.withAlphaComponent(isNow ? 0.17 : 0.09)).setFill()
-            path.fill()
-            // A bar down its left, as a calendar's events have.
-            NSGraphicsContext.saveGraphicsState()
-            path.addClip()
-            (slot.done ? ink.tertiary : accent.withAlphaComponent(isNow ? 0.95 : 0.6)).setFill()
-            NSRect(x: card.minX, y: card.minY, width: 3, height: card.height).fill()
-            NSGraphicsContext.restoreGraphicsState()
-
-            // The times: the start by the first line, the end at the foot
-            // when free time, or nothing, follows.
-            let font = NSFont.monospacedDigitSystemFont(ofSize: measures.labelSize, weight: .medium)
-            func label(_ minutes: Int, at y: CGFloat, color: NSColor, baseline: Bool) {
-                let text = NSAttributedString(string: TimeStamp.shown(minutes, twelveHour: measures.twelveHour),
-                                              attributes: [.font: font, .foregroundColor: color])
-                let size = text.size()
-                let x = card.minX - 8 - size.width
-                text.draw(at: NSPoint(x: x, y: baseline ? y - font.ascender : y - size.height / 2))
+            let mark = block.mark
+            let color = mark.done ? ink.tertiary : accent
+            let x = block.node.x
+            // The line: solid while the block lasts, dashed while free.
+            let solid = NSBezierPath()
+            solid.move(to: NSPoint(x: x, y: block.lineTop))
+            solid.line(to: NSPoint(x: x, y: max(block.lineTop, block.end)))
+            solid.lineWidth = 1.5
+            color.withAlphaComponent(mark.level > 0 ? 0.45 : 0.6).setStroke()
+            if block.end > block.lineTop { solid.stroke() }
+            // Its end, marked: where to take it to make it longer.
+            if view.hoveredTimeBlock == block.head {
+                let tick = NSBezierPath()
+                tick.move(to: NSPoint(x: x - 4, y: block.end))
+                tick.line(to: NSPoint(x: x + 4, y: block.end))
+                tick.lineWidth = 1.5
+                tick.stroke()
             }
-            label(slot.start, at: block.baseline, color: slot.done ? ink.tertiary : ink.secondary, baseline: true)
-            // Only where it clears the start's.
-            if slot.free > 0 || slot.isLastBlock, card.maxY - block.baseline > font.pointSize * 2.6 {
-                label(slot.end, at: min(card.maxY - font.capHeight / 2 - 3, card.maxY), color: ink.tertiary, baseline: false)
-            }
-            // How long, at the right of its first line — but for the block
-            // whose time is written out, which its words might run into.
-            if !slot.revealed {
-                let length = NSAttributedString(string: TimeStamp.length(slot.end - slot.start),
-                                                attributes: [.font: font, .foregroundColor: ink.tertiary])
-                let lengthSize = length.size()
-                length.draw(at: NSPoint(x: card.maxX - 10 - lengthSize.width, y: block.baseline - font.ascender))
-            }
-            // The free time, told in it when there is room.
-            if slot.free > 0, block.free.height >= font.pointSize + 6 {
-                let free = NSAttributedString(string: "\(TimeStamp.length(slot.free)) free",
-                                              attributes: [.font: NSFont.systemFont(ofSize: measures.labelSize), .foregroundColor: ink.tertiary])
-                let size = free.size()
-                free.draw(at: NSPoint(x: card.minX + 12, y: block.free.midY - size.height / 2))
-            }
-            // The time now: a line across, where it falls.
-            if let nowMinutes {
-                var y: CGFloat?
-                if isNow {
-                    y = card.minY + card.height * CGFloat(nowMinutes - slot.start) / CGFloat(max(1, slot.end - slot.start))
-                } else if slot.free > 0, nowMinutes >= slot.end, nowMinutes < slot.end + slot.free {
-                    y = block.free.minY + block.free.height * CGFloat(nowMinutes - slot.end) / CGFloat(slot.free)
+            if let free = block.free, free.upperBound > free.lowerBound {
+                let dashed = NSBezierPath()
+                dashed.move(to: NSPoint(x: x, y: free.lowerBound + 2))
+                dashed.line(to: NSPoint(x: x, y: free.upperBound))
+                dashed.lineWidth = 1
+                dashed.setLineDash([2, 3], count: 2, phase: 0)
+                ink.tertiary.setStroke()
+                dashed.stroke()
+                if let text = block.freeLabel, let room = block.freeRoom {
+                    let label = NSAttributedString(string: text, attributes: [
+                        .font: NSFont.systemFont(ofSize: block.measures.labelSize), .foregroundColor: ink.tertiary])
+                    let size = label.size()
+                    if room.upperBound - room.lowerBound >= size.height {
+                        label.draw(at: NSPoint(x: block.label.minX, y: (room.lowerBound + room.upperBound) / 2 - size.height / 2))
+                    }
                 }
-                if let y {
-                    let red = NSColor.systemRed
-                    red.setFill()
-                    NSRect(x: card.minX - 6, y: y.rounded() - 0.75, width: card.maxX - card.minX + 6, height: 1.5).fill()
-                    NSBezierPath(ovalIn: NSRect(x: card.minX - 10, y: y - 4, width: 8, height: 8)).fill()
+            }
+            // The node: filled; hollow for a block nested in another's.
+            if block.drawsNode {
+                let dot = NSRect(x: x - 3.5, y: block.node.y - 3.5, width: 7, height: 7)
+                if mark.level > 0 {
+                    let ring = NSBezierPath(ovalIn: dot.insetBy(dx: 0.75, dy: 0.75))
+                    ring.lineWidth = 1.5
+                    color.setStroke()
+                    ring.stroke()
+                } else {
+                    color.setFill()
+                    NSBezierPath(ovalIn: dot).fill()
                 }
+            }
+            // The time and length over the words — but for the row whose
+            // time is written out, where it would say it twice.
+            let revealed = (textStorage?.attribute(.outlineTimeSlot, at: view.paragraphRanges[block.head].location, effectiveRange: nil) as? TimeSlot)?.revealed ?? false
+            if !revealed {
+                let font = NSFont.monospacedDigitSystemFont(ofSize: block.measures.labelSize, weight: .regular)
+                let text = NSMutableAttributedString(string: mark.label, attributes: [.font: font, .foregroundColor: ink.secondary])
+                if let overlap = mark.overlap {
+                    // Named, when there is room for it.
+                    let room = (view.visibleRect.maxX - 8) - block.label.minX
+                    let full = NSAttributedString(string: mark.label + " · " + overlap, attributes: [.font: font]).size().width
+                    text.append(NSAttributedString(string: " · " + (full <= room ? overlap : mark.overlapShort ?? overlap),
+                                                   attributes: [.font: font, .foregroundColor: NSColor.systemOrange]))
+                }
+                // One line, as long as it is: a time is not to be wrapped.
+                text.draw(with: NSRect(x: block.label.minX, y: block.label.minY, width: 4000, height: block.label.height),
+                          options: [.usesLineFragmentOrigin])
+            }
+            // The time now, on the line, where it falls.
+            if let nowMinutes, mark.start <= nowMinutes, nowMinutes < mark.end {
+                let share = CGFloat(nowMinutes - mark.start) / CGFloat(max(1, mark.end - mark.start))
+                let y = block.lineTop + (max(block.lineTop, block.end) - block.lineTop) * share
+                NSColor.systemRed.setFill()
+                NSBezierPath(ovalIn: NSRect(x: x - 3.5, y: y - 3.5, width: 7, height: 7)).fill()
             }
         }
     }
 
-    /// The time block at a point, and whether the point is on its foot —
-    /// to make it longer or shorter — or on it, away from its words — to
-    /// move it.
+    /// The time block at a point, and whether the point is at its line's
+    /// end — to make it longer or shorter — or on its time — to move it.
     package func timeBlockHit(at point: NSPoint, origin: NSPoint) -> (block: TimeBlockGeometry, resizing: Bool)? {
+        guard let storage = textStorage, TimeBlockGeometry.any(in: storage) else { return nil }
         for block in timeBlocks(origin: origin) {
-            let foot = NSRect(x: block.card.minX, y: block.card.maxY - 4, width: block.card.width, height: 8)
-            if foot.contains(point) { return (block, true) }
-            if block.gutter.contains(point) { return (block, false) }
-            if block.card.contains(point), point.y > block.contentBottom + 2 { return (block, false) }
+            let grip = NSRect(x: block.node.x - 7, y: block.end - 5, width: 14, height: 10)
+            if grip.contains(point) { return (block, true) }
+            let font = NSFont.monospacedDigitSystemFont(ofSize: block.measures.labelSize, weight: .regular)
+            let width = NSAttributedString(string: block.mark.label, attributes: [.font: font]).size().width
+            if NSRect(x: block.label.minX - 2, y: block.label.minY, width: width + 4, height: block.label.height).contains(point) { return (block, false) }
         }
         return nil
     }
@@ -185,27 +215,28 @@ extension OutlineLayoutManager {
 extension OutlineTextView {
     /// The cursor over a time block: to move it, or to make it longer.
     func timeBlockCursor(at point: NSPoint) -> NSCursor? {
-        guard isEditable, let storage = textStorage, TimeBlockGeometry.any(in: storage),
-              let hit = outlineLayout.timeBlockHit(at: point, origin: textContainerOrigin) else { return nil }
+        guard isEditable, let hit = outlineLayout.timeBlockHit(at: point, origin: textContainerOrigin) else {
+            if hoveredTimeBlock != nil { hoveredTimeBlock = nil }
+            return nil
+        }
+        if hoveredTimeBlock != hit.block.head { hoveredTimeBlock = hit.block.head }
         return hit.resizing ? .resizeUpDown : .openHand
     }
 
-    /// A time block taken by its times, its empty part or its foot, and
-    /// dragged: moved, or made longer or shorter, by five minutes at a
-    /// time — and the blocks after it with it, unless ⌥ is held. Clicked,
-    /// it takes the caret at the end of its words. True when it was one.
+    /// A time block taken by its time, or its line's end, and dragged:
+    /// moved, or made longer or shorter, five minutes at a time — and, with
+    /// ⌥ held, the blocks after it with it. True when it was one.
     func dragTimeBlock(_ event: NSEvent) -> Bool {
         let point = convert(event.locationInWindow, from: nil)
-        guard isEditable, let storage = textStorage, TimeBlockGeometry.any(in: storage),
-              let hit = outlineLayout.timeBlockHit(at: point, origin: textContainerOrigin) else { return false }
+        guard isEditable, let hit = outlineLayout.timeBlockHit(at: point, origin: textContainerOrigin) else { return false }
         window?.makeFirstResponder(self)
         let original = rows
         guard let timeline = Timeline.find(original).first(where: { $0.blocks.contains { $0.row == hit.block.head } }),
               let index = timeline.blocks.firstIndex(where: { $0.row == hit.block.head }) else { return false }
-        let perMinute = hit.block.slot.measures.perMinute
+        let perMinute = hit.block.measures.perMinute
         let texts = original.map(\.text)
         let start = event.locationInWindow
-        var applied = 0
+        var applied: (minutes: Int, following: Bool) = (0, false)
         var moved = false
         (hit.resizing ? NSCursor.resizeUpDown : NSCursor.closedHand).push()
         defer { NSCursor.pop() }
@@ -217,29 +248,25 @@ extension OutlineTextView {
             if !moved, abs(dy) < 3 { continue }
             moved = true
             let minutes = Int((dy / perMinute / 5).rounded()) * 5
-            let alone = next.modifierFlags.contains(.option)
-            guard minutes != applied || next.type == .flagsChanged else { continue }
-            let changed = timeline.moved(index, by: minutes, resizing: hit.resizing, alone: alone, texts: texts)
+            let following = next.modifierFlags.contains(.option)
+            guard minutes != applied.minutes || following != applied.following else { continue }
+            let changed = timeline.moved(index, by: minutes, resizing: hit.resizing, following: following, texts: texts)
             let before = rows
             var after = before
+            // Each block as it was, then as this drag has it.
+            for block in timeline.blocks where block.row < after.count { after[block.row].text = original[block.row].text }
             for (row, text) in changed where row < after.count { after[row].text = text }
-            for row in after.indices where changed[row] == nil && row < original.count && after[row].text != original[row].text
-            && timeline.blocks.contains(where: { $0.row == row }) {
-                // Let go of with ⌥: back where they were.
-                after[row].text = original[row].text
-            }
             let caret = caretPosition
             replace(before, with: after, actionName: hit.resizing ? "Change Block's Length" : "Move Block")
             restoreCaret(caret)
-            applied = minutes
+            applied = (minutes, following)
         }
         if !moved {
             // A click: the caret at the end of the block's words.
             let paragraphs = paragraphRanges
-            let last = hit.block.paragraphs.upperBound - 1
-            if last < paragraphs.count {
-                if selectedRows != nil { leaveRowSelection() }
-                setSelectedRange(NSRange(location: NSMaxRange(paragraphs[last]) - 1, length: 0))
+            if hit.block.head < paragraphs.count {
+                if isSelectingRows { leaveRowSelection() }
+                setSelectedRange(NSRange(location: NSMaxRange(paragraphs[hit.block.head]) - 1, length: 0))
             }
         }
         return true

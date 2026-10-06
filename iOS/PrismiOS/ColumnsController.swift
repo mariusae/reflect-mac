@@ -94,8 +94,8 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     }
 
     /// `-PrismOpen <kind>` — `search:<query>`, `backlinks:<path>`,
-    /// `note:<path>`, `inbox`, `tasks`, `find` — at launch, for scripted
-    /// checks.
+    /// `note:<path>`, `inbox`, `tasks`, `find`, `dictated:<text>` (added to
+    /// today as dictation adds it) — at launch, for scripted checks.
     private func openForScript() {
         guard let spec = UserDefaults.standard.string(forKey: "PrismOpen"), let column = columns.first else { return }
         let (head, rest) = spec.firstIndex(of: ":").map { (String(spec[..<$0]), String(spec[spec.index(after: $0)...])) } ?? (spec, "")
@@ -106,6 +106,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         case "search": column.pushViewController(makeSheet(.search(rest)), animated: false)
         case "backlinks": column.pushViewController(makeSheet(.backlinks(rest)), animated: false)
         case "note": column.pushViewController(makeSheet(.note(rest)), animated: false)
+        case "dictated": DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.addToToday(rest) }
         default: break
         }
     }
