@@ -125,6 +125,19 @@ extension OutlineTextView {
         return true
     }
 
+    /// Outline ▸ New Time Block: a block from now, a quarter of an hour
+    /// long, to name — and drag where it goes, or make longer.
+    @objc package func newTimeBlock(_ sender: Any?) {
+        let index = isSelectingRows ? targetRows.upperBound - 1 : rowIndex(at: selectedRange().location)
+        let time = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        let before = rows
+        let made = Timeline.newBlock(in: before, at: index, now: (time.hour ?? 0) * 60 + (time.minute ?? 0))
+        if selectedRows != nil { leaveRowSelection() }
+        replace(before, with: made.rows, actionName: "New Time Block")
+        restoreCaret(CaretPosition(row: made.row, offset: made.offset))
+        scrollRangeToVisible(selectedRange())
+    }
+
     /// A new row after a row, to write in.
     package func insertRow(after index: Int) {
         editText(inRow: index)
@@ -596,7 +609,7 @@ extension OutlineTextView {
              #selector(moveRowsDown(_:)), #selector(deleteRows(_:)), #selector(duplicateRows(_:)),
              #selector(toggleDone(_:)), #selector(newRow(_:)), #selector(setRowType(_:)), #selector(toggleBullet(_:)),
              #selector(insertHorizontalRule(_:)), #selector(toggleCodeBlock(_:)),
-             #selector(cycleChecklist(_:)), #selector(cycleTask(_:)):
+             #selector(cycleChecklist(_:)), #selector(cycleTask(_:)), #selector(newTimeBlock(_:)):
             return isEditable
         default:
             return super.validateUserInterfaceItem(item)

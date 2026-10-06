@@ -313,7 +313,9 @@ extension OutlineEditor {
             let changed = drag.timeline.moved(drag.index, by: minutes, resizing: drag.resizing, alone: false, texts: drag.original.map(\.text))
             var after = rows
             for (row, text) in changed where row < after.count { after[row].text = text }
+            inputDelegate?.textWillChange(self)
             replace(after, caret: isFirstResponder ? caret : nil, undoName: drag.resizing ? "Change Block's Length" : "Move Block")
+            inputDelegate?.textDidChange(self)
             drag.applied = minutes
             timeDrag = drag
             UISelectionFeedbackGenerator().selectionChanged()

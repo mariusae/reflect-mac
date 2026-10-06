@@ -1420,7 +1420,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         // Past where a row's kind is written: its checkboxes, and those of
         // the rows around it, are as they were.
         outlineLayout.keepsProgress = plainEdit && range.location > paragraph.location + 5
-        if plainEdit, measured != nil {
+        // Time blocks: a row's change moves the rooms of those about it — measured whole.
+        if plainEdit, measured != nil, !PhoneTimeSlot.any(in: textStorage) {
             typedRowBefore = (paragraph.location, height(ofParagraphsIn: paragraph))
             localChanges += 1
         }
@@ -1591,6 +1592,19 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         let selection = selectedRowRange
         guard let moved = change(&all, selection) else { return }
         replace(all, caret: OutlineKeys.Caret(row: moved.lowerBound + (caret.row - selection.lowerBound), offset: caret.offset), undoName: name)
+    }
+
+    /// A time block from now, a quarter of an hour long, to name — and
+    /// drag where it goes, or make longer.
+    @objc func newTimeBlock() {
+        let time = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        let made = Timeline.newBlock(in: rows, at: caret.row, now: (time.hour ?? 0) * 60 + (time.minute ?? 0))
+        // The keyboard told: its suggestions, and where it types, follow the caret.
+        inputDelegate?.selectionWillChange(self)
+        inputDelegate?.textWillChange(self)
+        replace(made.rows, caret: OutlineKeys.Caret(row: made.row, offset: made.offset), undoName: "New Time Block")
+        inputDelegate?.textDidChange(self)
+        inputDelegate?.selectionDidChange(self)
     }
 
     @objc func indent() { perform("Indent") { OutlineEditing.indent(&$0, $1) } }
@@ -1965,6 +1979,13 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// for each keystroke, is what made typing in one lag.
     private func locally(at locations: [Int], _ change: () -> Void) {
         guard measured != nil else { return change() }
+        // Time blocks: a row's change moves the rooms of those about it — measured whole.
+        if PhoneTimeSlot.any(in: textStorage) {
+            change()
+            measured = nil
+            heightMayHaveChanged()
+            return
+        }
         let before = locations.map { height(ofParagraphsIn: NSRange(location: $0, length: 0)) }.reduce(0, +)
         localChanges += 1
         change()
@@ -2015,6 +2036,7 @@ final class OutlineToolbar: UIInputView {
             ("checkmark.square", #selector(OutlineEditor.cycleChecklist), "Checklist"),
             ("checkmark.circle", #selector(OutlineEditor.cycleTask), "Task"),
             ("link", #selector(OutlineEditor.insertLink), "Link"),
+            ("clock", #selector(OutlineEditor.newTimeBlock), "New Time Block"),
             ("keyboard.chevron.compact.down", #selector(UIResponder.resignFirstResponder), "Done"),
         ]
         let words: [(String, Selector?, String)] = [

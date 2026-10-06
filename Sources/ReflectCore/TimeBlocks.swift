@@ -16,6 +16,9 @@ public struct TimeStamp: Equatable, Sendable {
     public var end: Int?
     /// How it was written, to write it again so.
     public var style: Style
+    /// Written as bare numbers — `11-1` — which say a time only among
+    /// times written plainly: alone, they could be a count.
+    public var isBare = false
 
     public struct Style: Equatable, Sendable {
         /// `9am`, `9:30pm`: twelve hours, and the suffix's case.
@@ -65,8 +68,10 @@ public struct TimeStamp: Equatable, Sendable {
             }
         }
         if end == nil { index = afterFirst }
-        // A bare number is a count, not a time: one of them says which.
-        guard start.colon || start.suffix != nil || end?.colon == true || end?.suffix != nil else { return nil }
+        // A bare number is a count, not a time; two joined — `11-1` — may be
+        // times, if the list they are in says so.
+        let isBare = !(start.colon || start.suffix != nil || end?.colon == true || end?.suffix != nil)
+        guard !isBare || end != nil else { return nil }
         // What follows is the row's words, or nothing.
         if index < units.count, ![0x20, 0x09, 0x2C, 0x3A].contains(units[index]) { return nil }
         // `11–1pm`: the first takes the second's half of the day, or the other.
@@ -81,11 +86,14 @@ public struct TimeStamp: Equatable, Sendable {
         guard start.isValid(twelveHour: twelve), end?.isValid(twelveHour: twelve) ?? true else { return nil }
         let startMinutes = start.minutes(twelveHour: twelve)
         var endMinutes = end.map { $0.minutes(twelveHour: twelve) }
-        if let e = endMinutes, e <= startMinutes { endMinutes = e + 24 * 60 }
+        // `11-1`: past noon, as it is said; else an end before the start is the next day's.
+        if let e = endMinutes, e <= startMinutes { endMinutes = !twelve && e + 12 * 60 > startMinutes && e < 12 * 60 ? e + 12 * 60 : e + 24 * 60 }
         var full = index
+        // `10:00–11:00: hello`: the colon after the times goes with them.
+        if full < units.count, units[full] == 0x3A || units[full] == 0x2C { full += 1 }
         while full < units.count, units[full] == 0x20 || units[full] == 0x09 { full += 1 }
         return TimeStamp(range: NSRange(location: 0, length: index), fullRange: NSRange(location: 0, length: full),
-                         start: startMinutes, end: endMinutes, style: style)
+                         start: startMinutes, end: endMinutes, style: style, isBare: isBare)
     }
 
     private enum Suffix { case am, pm }
@@ -244,7 +252,10 @@ public struct Timeline: Equatable, Sendable {
                 }
                 i += 1
             }
-            guard heads.count >= 2 else { return nil }
+            // Bare numbers alone are a list of counts — `1-2 cups` — not times;
+            // one block alone is one if it says when it ends.
+            guard heads.contains(where: { !$0.1.isBare }),
+                  heads.count >= 2 || heads.first?.1.end != nil else { return nil }
             var result: [Block] = []
             for (n, (row, stamp)) in heads.enumerated() {
                 let rangeEnd = n + 1 < heads.count ? heads[n + 1].0 : i
@@ -274,6 +285,55 @@ public struct Timeline: Equatable, Sendable {
         if row.kind == .ordered { next.number = row.number + 1 }
         next.text = block.stamp.written(start: block.end, end: block.end + 30) + " "
         return next
+    }
+
+    /// A new time block, made at a row: from now — to the five minutes —
+    /// for a quarter of an hour. The row itself, if empty; else among the
+    /// blocks it is in, or beside the block it is, in order of time; else a
+    /// new last child of it, making it a timeline. The rows after, the new
+    /// one's index, and where the caret goes in it: after its time.
+    public static func newBlock(in rows: [Row], at index: Int, now: Int) -> (rows: [Row], row: Int, offset: Int) {
+        var rows = rows.isEmpty ? [.blank] : rows
+        let index = min(max(index, 0), rows.count - 1)
+        var start = now - now % 5
+        let current = rows[index]
+        let timelines = find(rows)
+        let timeline = timelines.first { $0.blocks.contains { $0.rows.contains(index) } }
+        // Not on top of a block: from the end of the one under way, and on.
+        while let taken = timeline?.blocks.first(where: { $0.start <= start && start < $0.end }) { start = taken.end }
+        // Written as the blocks around it are.
+        let reference = timeline?.blocks.first { !$0.stamp.isBare }?.stamp ?? TimeStamp.at(startOf: current.text)
+        var style = reference?.style ?? TimeStamp.Style()
+        if reference?.isBare == true { style = TimeStamp.Style() }
+        let model = TimeStamp(range: NSRange(), fullRange: NSRange(), start: start, end: start + 15, style: style)
+        let text = model.written(start: start, end: start + 15) + " "
+        func block(like row: Row?, depth: Int) -> Row {
+            var new = Row(kind: .bullet, depth: depth, text: text, task: row?.task == nil ? nil : .open, marker: row?.marker ?? "-")
+            if let row, row.kind.isListItem { new.kind = row.kind }
+            return new
+        }
+        // An empty row: it becomes the block.
+        if current.text.trimmingCharacters(in: .whitespaces).isEmpty, current.kind.isListItem || current.kind == .paragraph {
+            if !current.kind.isListItem { rows[index].kind = .bullet }
+            rows[index].text = text
+            return (rows, index, (text as NSString).length)
+        }
+        // Among blocks, or beside one: before the first that starts later.
+        var siblings: [(row: Int, rows: Range<Int>, start: Int)] = timeline?.blocks.map { ($0.row, $0.rows, $0.start) } ?? []
+        if siblings.isEmpty, let stamp = TimeStamp.at(startOf: current.text), current.kind.isListItem {
+            siblings = [(index, index..<OutlineEditing.subtreeEnd(rows, index), stamp.start)]
+        }
+        if let last = siblings.last {
+            let like = rows[siblings.first { $0.rows.contains(index) }?.row ?? last.row]
+            let at = siblings.first { $0.start > start }?.row ?? last.rows.upperBound
+            rows.insert(block(like: like, depth: like.depth), at: at)
+            return (rows, at, (text as NSString).length)
+        }
+        // Else under the row: its last child — or, a row that cannot hold
+        // children, after it.
+        let at = OutlineEditing.subtreeEnd(rows, index)
+        rows.insert(block(like: nil, depth: current.canHaveChildren ? current.depth + 1 : current.depth), at: at)
+        return (rows, at, (text as NSString).length)
     }
 
     public static func find(_ rows: [Row]) -> [Timeline] {

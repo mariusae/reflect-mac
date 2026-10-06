@@ -48,6 +48,7 @@ package enum EditorMenus {
         let up = arrow(NSUpArrowFunctionKey), down = arrow(NSDownArrowFunctionKey)
         return submenu("Outline", [
             item("New Row", #selector(OutlineTextView.newRow(_:)), "\r"),
+            item("New Time Block", #selector(OutlineTextView.newTimeBlock(_:)), "\r", [.command, .option]),
             .separator(),
             item("Indent", #selector(OutlineTextView.indentRows(_:)), arrow(NSRightArrowFunctionKey), [.command, .control]),
             item("Outdent", #selector(OutlineTextView.outdentRows(_:)), arrow(NSLeftArrowFunctionKey), [.command, .control]),
