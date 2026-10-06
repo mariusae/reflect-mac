@@ -216,7 +216,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     }
 
     /// A view's tab tapped: gone to; tapped again, back to its first sheet —
-    /// the days, to today.
+    /// the days, to today; any other, there already, to its top.
     private func tabTapped(_ column: Int) {
         if StallWatch.enabled { StallWatch.mark("tab tapped") }
         if column == selectedColumn, !bar.isSearching {
@@ -225,6 +225,9 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
                 navigation.popToRootViewController(animated: true)
             } else if let root = navigation.viewControllers.first as? SheetController, root.kind == .timeline {
                 root.show(.day(.today))
+            } else if let root = navigation.viewControllers.first as? SheetController {
+                // Its first sheet already: to the top of it.
+                root.scrollToTop()
             }
         }
         select(column: column)

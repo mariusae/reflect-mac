@@ -867,6 +867,11 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
 
     // MARK: Scrolling to the window's ends
 
+    /// To the top of the sheet, as a tap on the status bar goes.
+    func scrollToTop() {
+        scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: -scroll.adjustedContentInset.top), animated: true)
+    }
+
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         rememberPlaces()
         onStateChange?()
