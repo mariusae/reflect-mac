@@ -26,6 +26,17 @@ if [ ! -f build/PrismIcon.icns ] || [ scripts/make-prism-icon.swift -nt build/Pr
 fi
 cp build/PrismIcon.icns "$app/Contents/Resources/PrismIcon.icns"
 
+# The GitHub App Prism signs in through: the iPhone's, from the file kept
+# beside its xcconfig and never committed. Read here, never printed.
+github_config=iOS/GitHub.local.xcconfig
+github_value() {
+  [ -f "$github_config" ] || return 0
+  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$github_config" | tail -1 | sed 's/[[:space:]]*$//'
+}
+GITHUB_CLIENT_ID=$(github_value GITHUB_CLIENT_ID)
+GITHUB_CLIENT_SECRET=$(github_value GITHUB_CLIENT_SECRET)
+GITHUB_APP_SLUG=$(github_value GITHUB_APP_SLUG)
+
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -41,6 +52,9 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<key>LSMinimumSystemVersion</key><string>26.0</string>
 	<key>NSHighResolutionCapable</key><true/>
 	<key>NSPrincipalClass</key><string>NSApplication</string>
+	<key>GitHubClientID</key><string>$GITHUB_CLIENT_ID</string>
+	<key>GitHubClientSecret</key><string>$GITHUB_CLIENT_SECRET</string>
+	<key>GitHubAppSlug</key><string>$GITHUB_APP_SLUG</string>
 </dict>
 </plist>
 PLIST

@@ -1,5 +1,6 @@
 import AuthenticationServices
 import SwiftUI
+import ReflectGit2
 
 /// Before there is a graph: sign in to GitHub, choose the repository the
 /// notes are kept in, and bring it down. Shared by the apps that show a
@@ -66,7 +67,7 @@ struct ConnectView: View {
             Text("\(appName) keeps your graph in a GitHub repository. Sign in, and choose the one it is in.")
         } actions: {
             Button {
-                run { try await account.signIn(session) }
+                run { try await account.signIn(session.github) }
             } label: {
                 Text("Sign In with GitHub").frame(maxWidth: 260)
             }
@@ -104,7 +105,7 @@ struct ConnectView: View {
             Section {
                 Button("Choose Repositories on GitHub…") {
                     run {
-                        try await account.chooseRepositories(session)
+                        try await account.chooseRepositories(session.github)
                         await loadRepositories()
                     }
                 }
@@ -146,6 +147,15 @@ struct ConnectView: View {
                 self.error = error.localizedDescription
             }
             busy = false
+        }
+    }
+}
+
+extension WebAuthenticationSession {
+    /// GitHub's pages in the system's browser sheet, for the account to sign in through.
+    var github: GitHubAuthenticator {
+        { url, scheme in
+            try await authenticate(using: url, callback: .customScheme(scheme), preferredBrowserSession: .shared, additionalHeaderFields: [:])
         }
     }
 }

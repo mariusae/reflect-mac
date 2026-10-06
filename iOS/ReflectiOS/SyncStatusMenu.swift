@@ -1,4 +1,5 @@
 import SwiftUI
+import ReflectGit2
 
 /// How the sync stands — syncing, failed, or when it last went through —
 /// and the account it goes through.

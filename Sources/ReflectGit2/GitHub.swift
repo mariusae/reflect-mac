@@ -2,21 +2,21 @@ import AuthenticationServices
 import CryptoKit
 import Foundation
 import Observation
-import ReflectGit2
-import SwiftUI
+import Security
 
-/// The GitHub App the phone signs in through, as `GitHub.xcconfig` gives it.
-enum GitHubApp {
-    static let clientID = info("GitHubClientID")
-    static let clientSecret = info("GitHubClientSecret")
-    static let slug = info("GitHubAppSlug")
-    static var isConfigured: Bool { !clientID.isEmpty && !clientSecret.isEmpty && !slug.isEmpty }
+/// The GitHub App the apps sign in through, as the app's Info.plist gives
+/// it — from `iOS/GitHub.xcconfig` on the phone, the build script on the Mac.
+public enum GitHubApp {
+    public static let clientID = info("GitHubClientID")
+    public static let clientSecret = info("GitHubClientSecret")
+    public static let slug = info("GitHubAppSlug")
+    public static var isConfigured: Bool { !clientID.isEmpty && !clientSecret.isEmpty && !slug.isEmpty }
 
     /// Where GitHub sends the browser back to; the app's callback URL.
-    static let callbackScheme = "com.mariusae.reflect"
-    static let redirectURI = "\(callbackScheme)://oauth/callback"
+    public static let callbackScheme = "com.mariusae.reflect"
+    public static let redirectURI = "\(callbackScheme)://oauth/callback"
 
-    static var installURL: URL { URL(string: "https://github.com/apps/\(slug)/installations/new")! }
+    public static var installURL: URL { URL(string: "https://github.com/apps/\(slug)/installations/new")! }
 
     private static func info(_ key: String) -> String {
         (Bundle.main.object(forInfoDictionaryKey: key) as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
@@ -24,22 +24,26 @@ enum GitHubApp {
 }
 
 /// A repository the app was given, to keep a graph in.
-struct GitHubRepository: Decodable, Hashable, Identifiable {
-    var id: Int
-    var fullName: String
-    var cloneURL: String
-    var isPrivate: Bool
+public struct GitHubRepository: Decodable, Hashable, Identifiable, Sendable {
+    public var id: Int
+    public var fullName: String
+    public var cloneURL: String
+    public var isPrivate: Bool
 
     enum CodingKeys: String, CodingKey {
         case id, fullName = "full_name", cloneURL = "clone_url", isPrivate = "private"
     }
 }
 
-/// The GitHub account the phone is signed in to: its tokens, kept in the
+/// Shows GitHub's page for a URL, in the system's browser sheet, and gives
+/// back the URL GitHub sends the browser back to, at a scheme.
+public typealias GitHubAuthenticator = @MainActor (_ url: URL, _ callbackScheme: String) async throws -> URL
+
+/// The GitHub account the app is signed in to: its tokens, kept in the
 /// Keychain and refreshed before they run out, and who it is.
 @MainActor
 @Observable
-final class GitHubAccount {
+public final class GitHubAccount {
     struct Tokens: Codable {
         var access: String
         var accessExpires: Date?
@@ -47,29 +51,29 @@ final class GitHubAccount {
         var refreshExpires: Date?
     }
 
-    struct User: Codable {
-        var login: String
-        var id: Int
-        var name: String?
+    public struct User: Codable, Sendable {
+        public var login: String
+        public var id: Int
+        public var name: String?
 
         /// Who commits are by: the name GitHub has, and the address GitHub
         /// keeps private for them.
-        var identity: (name: String, email: String) {
+        public var identity: (name: String, email: String) {
             (name?.isEmpty == false ? name! : login, "\(id)+\(login)@users.noreply.github.com")
         }
     }
 
     private(set) var tokens: Tokens?
-    private(set) var user: User?
-    var isSignedIn: Bool { tokens != nil }
+    public private(set) var user: User?
+    public var isSignedIn: Bool { tokens != nil }
 
     /// The token the sync hands to git, readable off the main thread.
-    nonisolated let currentToken = TokenBox()
+    public nonisolated let currentToken = TokenBox()
 
     private static let tokensKey = "github.tokens"
     private static let userKey = "github.user"
 
-    init() {
+    public init() {
         tokens = Keychain.read(Self.tokensKey).flatMap { try? JSONDecoder().decode(Tokens.self, from: $0) }
         user = UserDefaults.standard.data(forKey: Self.userKey).flatMap { try? JSONDecoder().decode(User.self, from: $0) }
         currentToken.value = tokens?.access
@@ -79,7 +83,7 @@ final class GitHubAccount {
 
     /// Signs in through GitHub's page in the system's browser sheet, where
     /// the person is likely signed in already.
-    func signIn(_ session: WebAuthenticationSession) async throws {
+    public func signIn(_ authenticate: GitHubAuthenticator) async throws {
         let verifier = Self.randomString()
         let state = Self.randomString()
         var components = URLComponents(string: "https://github.com/login/oauth/authorize")!
@@ -90,8 +94,7 @@ final class GitHubAccount {
             URLQueryItem(name: "code_challenge", value: Self.challenge(verifier)),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
         ]
-        let callback = try await session.authenticate(using: components.url!, callback: .customScheme(GitHubApp.callbackScheme),
-                                                      preferredBrowserSession: .shared, additionalHeaderFields: [:])
+        let callback = try await authenticate(components.url!, GitHubApp.callbackScheme)
         let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
         guard items.first(where: { $0.name == "state" })?.value == state else { throw GitHubError("GitHub sent back an unexpected answer.") }
         guard let code = items.first(where: { $0.name == "code" })?.value else {
@@ -103,11 +106,10 @@ final class GitHubAccount {
     /// Lets the person choose, on GitHub, the repositories the app may use.
     /// Installing it signs in too; changing an installation may not come
     /// back here, and closing the sheet is how the person says they are done.
-    func chooseRepositories(_ session: WebAuthenticationSession) async throws {
+    public func chooseRepositories(_ authenticate: GitHubAuthenticator) async throws {
         let callback: URL
         do {
-            callback = try await session.authenticate(using: GitHubApp.installURL, callback: .customScheme(GitHubApp.callbackScheme),
-                                                      preferredBrowserSession: .shared, additionalHeaderFields: [:])
+            callback = try await authenticate(GitHubApp.installURL, GitHubApp.callbackScheme)
         } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
             return
         }
@@ -117,7 +119,7 @@ final class GitHubAccount {
         }
     }
 
-    func signOut() {
+    public func signOut() {
         tokens = nil
         user = nil
         currentToken.value = nil
@@ -133,7 +135,7 @@ final class GitHubAccount {
     private var refreshing: Task<Void, Error>?
 
     /// A token good for a while yet: refreshed first when it is running out.
-    func validAccessToken() async throws -> String {
+    public func validAccessToken() async throws -> String {
         guard let tokens else { throw GitHubError("Not signed in to GitHub.") }
         if let expires = tokens.accessExpires, expires < Date().addingTimeInterval(5 * 60) {
             if let refreshing {
@@ -199,7 +201,7 @@ final class GitHubAccount {
     }
 
     /// The repositories the app was given, on every account it is installed on.
-    func repositories() async throws -> [GitHubRepository] {
+    public func repositories() async throws -> [GitHubRepository] {
         struct Installations: Decodable { var installations: [Installation] }
         struct Installation: Decodable { var id: Int }
         struct Repositories: Decodable { var repositories: [GitHubRepository] }
@@ -247,27 +249,27 @@ final class GitHubAccount {
 }
 
 /// The token git is handed, from whichever thread git asks on.
-final class TokenBox: @unchecked Sendable {
+public final class TokenBox: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: String?
 
-    var value: String? {
+    public var value: String? {
         get { lock.withLock { stored } }
         set { lock.withLock { stored = newValue } }
     }
 
-    var credentials: LibGit2Backend.Credentials? {
+    public var credentials: LibGit2Backend.Credentials? {
         value.map { LibGit2Backend.Credentials(username: "x-access-token", password: $0) }
     }
 }
 
-struct GitHubError: LocalizedError {
-    var message: String
-    init(_ message: String) { self.message = message }
-    var errorDescription: String? { message }
+public struct GitHubError: LocalizedError {
+    public var message: String
+    public init(_ message: String) { self.message = message }
+    public var errorDescription: String? { message }
 }
 
-/// The Keychain, for the tokens: readable after the phone is first
+/// The Keychain, for the tokens: on the phone, readable after it is first
 /// unlocked, so a sync in the background can use them.
 enum Keychain {
     private static let service = "com.mariusae.Reflect.github"
@@ -281,9 +283,11 @@ enum Keychain {
 
     static func write(_ account: String, _ data: Data) {
         delete(account)
-        let item: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                   kSecAttrAccount as String: account, kSecValueData as String: data,
-                                   kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        var item: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                   kSecAttrAccount as String: account, kSecValueData as String: data]
+        #if os(iOS)
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        #endif
         SecItemAdd(item as CFDictionary, nil)
     }
 

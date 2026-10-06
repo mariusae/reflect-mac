@@ -28,8 +28,9 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     private let syncStatus = SyncIndicator()
     /// The notes a sync left with both sides in them, at the window's foot.
     private let reviewPill = ReviewPill()
-    /// The graph's repository kept in step — only when asked, with ⌘R:
-    /// Reflect, or Reflect Mac, keeps it in step otherwise.
+    /// The graph's repository kept in step: Prism's own clone by Prism —
+    /// at launch, coming to the front, after writing, every few minutes and
+    /// on the way out — and a folder another app keeps only when asked (⌘R).
     private lazy var sync: SyncController = {
         let sync = SyncController(git: graph.git)
         sync.flush = { [weak self] in self?.save() }
@@ -137,7 +138,12 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         }
         index.scan()
         refreshReview()
-        watcher = GraphWatcher(root: graph.root) { [weak self] paths in self?.notesChanged(paths) }
+        watcher = GraphWatcher(root: graph.root) { [weak self] paths in
+            self?.notesChanged(paths)
+            // Whatever wrote them — this window, a capture, another app —
+            // what is written is sent once writing pauses.
+            if self?.ownsSync == true { self?.sync.noteChanged() }
+        }
         LinkCompletion.sources = SearchSources(index: index)
         // A `[[link]]`'s card shows the note it leads to.
         LinkCard.noteSource = { [weak self] title in
@@ -1276,6 +1282,55 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     var reviewMenu: NSMenu { reviewPill.menu() }
     var notesToReview: [String] { reviewPill.paths }
     func openToReview(_ path: String) { open(path) }
+
+    /// Whether Prism keeps this graph in step itself: its own clone.
+    private(set) var ownsSync = false
+    private var roundTimer: Timer?
+    /// A full round this often while Prism is in front.
+    private static let roundInterval: TimeInterval = 5 * 60
+
+    /// Prism's own clone: kept in step from now on — a full sync now, on
+    /// coming to the front and every few minutes while there, and what is
+    /// written sent once writing pauses. `prepare` runs before each sync.
+    func ownSync(prepare: @escaping () async throws -> Void) {
+        ownsSync = true
+        sync.prepare = prepare
+        sync.sync()
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.ownsSync else { return }
+                self.sync.sync(becauseActivated: true)
+                self.startRounds()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.roundTimer?.invalidate()
+                self?.roundTimer = nil
+            }
+        }
+        startRounds()
+    }
+
+    private func startRounds() {
+        roundTimer?.invalidate()
+        roundTimer = Timer.scheduledTimer(withTimeInterval: Self.roundInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sync.sync() }
+        }
+    }
+
+    /// Let go of, for another graph: no more rounds.
+    func endSync() {
+        ownsSync = false
+        roundTimer?.invalidate()
+        roundTimer = nil
+    }
+
+    /// On the way out: what is written sent, a few seconds given to it.
+    func finishSync() async {
+        roundTimer?.invalidate()
+        await sync.finish()
+    }
 
     /// Graph ▸ Sync Now (⌘R): what is written saved, committed, and the
     /// graph's repository brought in step — fetched, merged, pushed.

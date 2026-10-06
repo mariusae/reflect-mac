@@ -4,13 +4,17 @@ import PrismCore
 import ReflectUI
 
 /// Prism: the same notes as Reflect Mac, set for reading and writing and
-/// little else. It writes notes, and syncs them when asked (⌘S).
+/// little else. It keeps its own copy of the graph in step with GitHub, as
+/// the iPhone does; or opens a folder another app keeps, syncing it when
+/// asked (⌘R).
 @MainActor
 final class PrismApp: NSObject, NSApplicationDelegate {
     private var controller: PrismWindowController?
     private var settings: SettingsWindowController?
     /// Where the Prism browser extension sends the pages it captures.
     private var captureServer: CaptureServer?
+    /// Signing in to GitHub, and choosing the graph.
+    private var gitHub: GitHubWindowController?
 
     /// View ▸ Appearance: light, dark, or as the system is.
     @objc func chooseAppearance(_ sender: NSMenuItem) {
@@ -32,23 +36,61 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         Appearance.current.apply()
         Typeface.registerBundled()
         NSApp.mainMenu = Self.menu()
-        guard let root = graphRoot() else { return NSApp.terminate(nil) }
-        let controller = PrismWindowController(graph: Graph(root: root))
-        self.controller = controller
         let environment = ProcessInfo.processInfo.environment
         // Pages from the browser: on a port of Prism's own, beside Reflect
         // Mac's; a scripted run on another, beside the app in use.
         let scripted = environment["PRISM_SNAP"] != nil || environment["PRISM_CAPTURE_SCRIPT"] != nil
         let server = CaptureServer(app: "Prism", port: scripted ? 47_822 : 47_821,
                                    tokensKey: scripted ? "CaptureTokens (scripts)" : "CaptureTokens", isScripted: scripted)
-        server.graphName = { root.lastPathComponent }
-        server.onCapture = { [weak controller] page, screenshot in
-            guard let controller else { throw CocoaError(.fileWriteUnknown) }
+        server.graphName = { [weak self] in self?.controller?.graph.root.lastPathComponent ?? "" }
+        server.onCapture = { [weak self] page, screenshot in
+            guard let controller = self?.controller else { throw CocoaError(.fileWriteUnknown) }
             return try controller.capture(page, screenshot: screenshot)
         }
-        server.onOpen = { [weak controller] path in controller?.openCaptured(path) }
+        server.onOpen = { [weak self] path in self?.controller?.openCaptured(path) }
         server.start()
         captureServer = server
+
+        // `PRISM_GITHUB_SNAP=<png>`: the GitHub window drawn, no graph opened.
+        if let path = environment["PRISM_GITHUB_SNAP"] {
+            let window = GitHubWindowController(onCloned: {}, onOpenFolder: {}, closeGraph: {})
+            window.window?.setFrameOrigin(NSPoint(x: -4000, y: 0))
+            window.showWindow(nil)
+            gitHub = window
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                // Drawn from its layers: SwiftUI's words are not in a view's cached display.
+                guard let view = window.window?.contentView?.superview, let layer = view.layer,
+                      let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width * 2), pixelsHigh: Int(view.bounds.height * 2),
+                                                 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                 colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+                      let context = NSGraphicsContext(bitmapImageRep: rep) else { exit(1) }
+                context.cgContext.scaleBy(x: 2, y: 2)
+                NSColor.windowBackgroundColor.setFill()
+                layer.render(in: context.cgContext)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+                exit(0)
+            }
+            return
+        }
+        // A script's graph, as it says; else Prism's own clone; else a
+        // folder opened before — and, once, the offer of a clone of its own.
+        if let path = environment["PRISM_GRAPH"] {
+            // `PRISM_OWN_SYNC=1`: kept in step as Prism's own clone is, with the Mac's git.
+            start(Graph(root: URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)),
+                  ownsSync: environment["PRISM_OWN_SYNC"] == "1")
+        } else if GitHubGraph.exists {
+            start(GitHubGraph.graph(), ownsSync: true)
+        } else if let root = openedFolder() {
+            start(Graph(root: root), ownsSync: false)
+            if !UserDefaults.standard.bool(forKey: "OfferedGitHub"), !scripted {
+                UserDefaults.standard.set(true, forKey: "OfferedGitHub")
+                showGitHub(nil)
+            }
+        } else {
+            showGitHub(nil)
+            return
+        }
+        guard let controller else { return }
         if environment["PRISM_SNAP"] != nil {
             runScript(controller, environment)
             return
@@ -60,17 +102,60 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         NSApp.activate()
     }
 
-    /// The graph: `PRISM_GRAPH`, or `-GraphPath`, or the one Prism last
-    /// opened, or Reflect Mac's; else asked for.
-    private func graphRoot() -> URL? {
+    /// Opens a graph in a window; one open before is let go. Prism's own
+    /// clone it keeps in step itself; a folder another app keeps, only
+    /// when asked.
+    private func start(_ graph: Graph, ownsSync: Bool) {
+        closeGraph()
+        let controller = PrismWindowController(graph: graph)
+        if ownsSync { controller.ownSync(prepare: graph.root == GitHubGraph.root ? GitHubGraph.prepare : {}) }
+        self.controller = controller
+    }
+
+    /// The graph open let go: written, and its window closed.
+    private func closeGraph() {
+        guard let controller else { return }
+        controller.save()
+        controller.endSync()
+        controller.window?.close()
+        self.controller = nil
+        settings?.close()
+        settings = nil
+    }
+
+    /// Graph ▸ GitHub Account…: signing in, and the graph's repository.
+    @objc func showGitHub(_ sender: Any?) {
+        if let gitHub {
+            gitHub.showWindow(nil)
+            return
+        }
+        let window = GitHubWindowController(onCloned: { [weak self] in
+            guard let self else { return }
+            start(GitHubGraph.graph(), ownsSync: true)
+            controller?.showWindow(nil)
+        }, onOpenFolder: controller == nil ? { [weak self] in
+            guard let self, let root = chooseFolder() else { return }
+            start(Graph(root: root), ownsSync: false)
+            controller?.showWindow(nil)
+        } : nil, closeGraph: { [weak self] in self?.closeGraph() })
+        gitHub = window
+        window.showWindow(nil)
+        NSApp.activate()
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window.window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.gitHub = nil }
+        }
+    }
+
+    /// The folder Prism last opened, or Reflect Mac's.
+    private func openedFolder() -> URL? {
         let candidates = [
-            ProcessInfo.processInfo.environment["PRISM_GRAPH"],
             UserDefaults.standard.string(forKey: "GraphPath"),
             UserDefaults(suiteName: "com.mariusae.ReflectMac")?.string(forKey: "GraphPath"),
         ]
-        if let path = candidates.compactMap({ $0 }).first {
-            return URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
-        }
+        return candidates.compactMap { $0 }.first.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) }
+    }
+
+    private func chooseFolder() -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -270,6 +355,17 @@ final class PrismApp: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) { controller?.save() }
 
+    /// On the way out, what is written sent — a few seconds given to it —
+    /// when Prism keeps the graph in step.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let controller, controller.ownsSync else { return .terminateNow }
+        Task {
+            await controller.finishSync()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     private static func menu() -> NSMenu {
@@ -382,6 +478,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         ])
         submenu("Graph", [
             item("Sync Now", #selector(PrismWindowController.syncNow(_:)), "r"),
+            item("GitHub Account…", #selector(PrismApp.showGitHub(_:))),
             reviewItem(),
         ])
         submenu("Go", [

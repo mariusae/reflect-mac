@@ -20,13 +20,14 @@ let package = Package(
     ],
     targets: [
         .target(name: "ReflectCore"),
-        // The sync's steps done by libgit2, for where there is no `git`.
+        // The sync's steps done by libgit2, and the GitHub account it syncs
+        // through: the phone's, and Prism's own graph on the Mac.
         .target(name: "ReflectGit2", dependencies: ["ReflectCore", .product(name: "libgit2", package: "libgit2")]),
         // The outline editor, and a note shown in it: shared by the apps.
         .target(name: "ReflectUI", dependencies: ["ReflectCore"]),
         .executableTarget(name: "ReflectMac", dependencies: ["ReflectCore", "ReflectUI"]),
         // A second face on the same notes: type first, and little else.
-        .executableTarget(name: "Prism", dependencies: ["ReflectCore", "ReflectUI", "PrismCore"]),
+        .executableTarget(name: "Prism", dependencies: ["ReflectCore", "ReflectUI", "PrismCore", "ReflectGit2"]),
         // What Prism does, whatever it is shown on: the Mac's, the phone's.
         .target(name: "PrismCore", dependencies: ["ReflectCore"]),
         .testTarget(name: "ReflectCoreTests", dependencies: ["ReflectCore", "ReflectGit2", "PrismCore"]),

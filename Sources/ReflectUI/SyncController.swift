@@ -32,6 +32,8 @@ package final class SyncController {
     package var onConflicts: (([String]) -> Void)?
     /// Told of files too large to commit.
     package var onLargeFiles: (([(path: String, size: Int)]) -> Void)?
+    /// Done before each cycle — a GitHub token refreshed, when it runs out.
+    package var prepare: (() async throws -> Void)?
 
     private var idleTimer: Timer?
     private var firstUnsaved: Date?
@@ -91,6 +93,7 @@ package final class SyncController {
         Log.shared.info("sync", "\(name) started")
         Task {
             do {
+                try await prepare?()
                 let report = try await git.sync(mode)
                 Log.shared.info("sync", "\(name) finished" + (report.quiet ? ", nothing to do" : ": \(report)"))
                 if !report.conflicted.isEmpty {
@@ -124,8 +127,12 @@ package final class SyncController {
     package func finish() async {
         guard let git else { return }
         flush?()
+        let prepare = prepare
         await withTaskGroup(of: Void.self) { group in
-            group.addTask { _ = try? await git.sync(.push) }
+            group.addTask {
+                try? await prepare?()
+                _ = try? await git.sync(.push)
+            }
             group.addTask { try? await Task.sleep(for: .seconds(5)) }
             await group.next()
             group.cancelAll()

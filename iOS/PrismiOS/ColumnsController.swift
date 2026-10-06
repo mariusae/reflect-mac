@@ -3,6 +3,7 @@ import AuthenticationServices
 import UIKit
 import ReflectCore
 import PrismCore
+import ReflectGit2
 
 /// Prism's views, a tab each along the bottom — the days, the inbox, the
 /// tasks — each a stack of sheets: going somewhere pushes one, Back or a
@@ -732,7 +733,7 @@ private struct SignInRunner: View {
     var body: some View {
         Color.clear.task {
             do {
-                try await account.signIn(session)
+                try await account.signIn(session.github)
                 done(nil)
             } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
                 done(nil)

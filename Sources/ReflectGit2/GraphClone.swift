@@ -1,20 +1,21 @@
 import Foundation
 import ReflectCore
-import ReflectGit2
 
 /// Brings a graph down from GitHub, for the apps that show one.
-enum GraphClone {
-    /// Clones a repository into a graph's place — only its latest commit.
-    /// Nothing is left behind when it fails.
+public enum GraphClone {
+    /// Clones a repository into a graph's place — on the phone only its
+    /// latest commit, `depth` 1; on the Mac all of it. Nothing is left
+    /// behind when it fails.
     @MainActor
-    static func clone(_ repository: GitHubRepository, account: GitHubAccount, into root: URL) async throws {
+    public static func clone(_ repository: GitHubRepository, account: GitHubAccount, into root: URL, depth: Int32 = 1) async throws {
         _ = try await account.validAccessToken()
         let token = account.currentToken
         let partial = root.deletingLastPathComponent().appendingPathComponent(root.lastPathComponent + ".partial")
         try? FileManager.default.removeItem(at: partial)
         do {
             try await Task.detached(priority: .userInitiated) {
-                _ = try LibGit2Backend.clone(repository.cloneURL, to: partial, depth: 1, credentials: { token.credentials })
+                try FileManager.default.createDirectory(at: root.deletingLastPathComponent(), withIntermediateDirectories: true)
+                _ = try LibGit2Backend.clone(repository.cloneURL, to: partial, depth: depth, credentials: { token.credentials })
                 // An empty folder in the graph's place gives way; one with
                 // something in it is not the app's to remove.
                 if let left = try? FileManager.default.contentsOfDirectory(atPath: root.path) {
