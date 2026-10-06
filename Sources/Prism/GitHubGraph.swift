@@ -38,6 +38,19 @@ enum GitHubGraph {
         return Graph(root: root, git: Git(backend: backend))
     }
 
+    /// Listening to the sync relay, when there is one: told of each push to
+    /// the repository, so another device's writing comes in at once.
+    static func listen(onPush: @escaping () -> Void) -> SyncRelayListener? {
+        let remote = LibGit2Backend(root: root)?.remoteURL()
+        guard SyncRelay.host != nil, let repository = repositoryName ?? SyncRelay.repository(fromRemote: remote) else { return nil }
+        let listener = SyncRelayListener(repository: repository, accessToken: { try await account.validAccessToken() }, onPush: onPush)
+        listener.start()
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak listener] _ in
+            MainActor.assumeIsolated { listener?.reconnect() }
+        }
+        return listener
+    }
+
     /// Before each sync: the token good for a while yet.
     static func prepare() async throws {
         guard account.isSignedIn else { throw GitHubError("Signed out of GitHub. Choose Graph ▸ GitHub Account… to sign in again.") }

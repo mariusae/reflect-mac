@@ -4,10 +4,15 @@
 //     GITHUB_CLIENT_ID = Iv23li…
 //     GITHUB_CLIENT_SECRET = …
 //     GITHUB_APP_SLUG = the-app-name-in-its-url
+//     SYNC_RELAY_HOST = reflect-sync-relay.<account>.workers.dev
+//
+// The last is the sync relay's host (worker/README.md), once it is
+// deployed: GitHub's pushes come through it, so the phone syncs at once.
 //
 // A native app cannot keep a secret; GitHub's advice is to ship it and
 // sign in with PKCE, which the app does.
 GITHUB_CLIENT_ID =
 GITHUB_CLIENT_SECRET =
 GITHUB_APP_SLUG =
+SYNC_RELAY_HOST =
 #include? "GitHub.local.xcconfig"

@@ -4,6 +4,7 @@ import ReflectGit2
 
 @main
 struct PrismApp: App {
+    @UIApplicationDelegateAdaptor(PrismAppDelegate.self) private var delegate
     @State private var account: GitHubAccount
     @State private var store: PrismStore
     @State private var scheduler: SyncScheduler
@@ -16,7 +17,11 @@ struct PrismApp: App {
         let store = PrismStore(account: account)
         _account = State(initialValue: account)
         _store = State(initialValue: store)
-        _scheduler = State(initialValue: SyncScheduler(store: store))
+        let scheduler = SyncScheduler(store: store)
+        _scheduler = State(initialValue: scheduler)
+        PushRelay.shared.store = store
+        PushRelay.shared.scheduler = scheduler
+        PushRelay.shared.account = account
     }
 
     var body: some Scene {

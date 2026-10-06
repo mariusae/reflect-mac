@@ -8,6 +8,12 @@
 	<string>$(GITHUB_CLIENT_ID)</string>
 	<key>GitHubClientSecret</key>
 	<string>$(GITHUB_CLIENT_SECRET)</string>
+	<key>SyncRelayHost</key>
+	<string>$(SYNC_RELAY_HOST)</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>To hear what you say while you hold the + button, and write it into today.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

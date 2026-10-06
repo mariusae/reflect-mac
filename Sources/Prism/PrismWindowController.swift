@@ -1319,6 +1319,12 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         }
     }
 
+    /// Another device pushed, the relay says: a full sync now.
+    func syncForPush() {
+        guard ownsSync else { return }
+        sync.sync()
+    }
+
     /// Let go of, for another graph: no more rounds.
     func endSync() {
         ownsSync = false

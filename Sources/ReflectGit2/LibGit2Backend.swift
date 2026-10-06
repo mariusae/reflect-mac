@@ -117,6 +117,14 @@ public final class LibGit2Backend: GitBackend, @unchecked Sendable {
         return true
     }
 
+    /// Where a remote is: the address it was added with.
+    public func remoteURL(_ name: String = "origin") -> String? {
+        var remote: OpaquePointer?
+        guard git_remote_lookup(&remote, repository, name) == 0 else { return nil }
+        defer { git_remote_free(remote) }
+        return git_remote_url(remote).map { String(cString: $0) }
+    }
+
     public func commitCount() -> Int {
         var walk: OpaquePointer?
         guard git_revwalk_new(&walk, repository) == 0 else { return 0 }

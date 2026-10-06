@@ -2,6 +2,7 @@ import AppKit
 import ReflectCore
 import PrismCore
 import ReflectUI
+import ReflectGit2
 
 /// Prism: the same notes as Reflect Mac, set for reading and writing and
 /// little else. It keeps its own copy of the graph in step with GitHub, as
@@ -15,6 +16,8 @@ final class PrismApp: NSObject, NSApplicationDelegate {
     private var captureServer: CaptureServer?
     /// Signing in to GitHub, and choosing the graph.
     private var gitHub: GitHubWindowController?
+    /// Told by the sync relay of pushes to Prism's own clone's repository.
+    private var relay: SyncRelayListener?
 
     /// View ▸ Appearance: light, dark, or as the system is.
     @objc func chooseAppearance(_ sender: NSMenuItem) {
@@ -110,10 +113,15 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         let controller = PrismWindowController(graph: graph)
         if ownsSync { controller.ownSync(prepare: graph.root == GitHubGraph.root ? GitHubGraph.prepare : {}) }
         self.controller = controller
+        if graph.root == GitHubGraph.root {
+            relay = GitHubGraph.listen { [weak controller] in controller?.syncForPush() }
+        }
     }
 
     /// The graph open let go: written, and its window closed.
     private func closeGraph() {
+        relay?.stop()
+        relay = nil
         guard let controller else { return }
         controller.save()
         controller.endSync()

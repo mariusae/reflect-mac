@@ -71,12 +71,22 @@ final class PrismStore {
         self.index = index
         changed = []
         revision += 1
-        if git == nil, let backend = LibGit2Backend(root: root) {
-            let token = account.currentToken
-            backend.credentials = { token.credentials }
-            if let identity = account.user?.identity { backend.identity = identity }
-            git = Git(backend: backend)
-        }
+        prepareGit()
+    }
+
+    /// The repository, ready to sync — without the notes read in: a push
+    /// woke the app in the background, and the sync is all it needs.
+    func prepareGit() {
+        guard git == nil, hasGraph, let backend = LibGit2Backend(root: root) else { return }
+        let token = account.currentToken
+        backend.credentials = { token.credentials }
+        if let identity = account.user?.identity { backend.identity = identity }
+        git = Git(backend: backend)
+    }
+
+    /// The GitHub repository the graph is a clone of: `owner/name`.
+    var repositoryName: String? {
+        SyncRelay.repository(fromRemote: (git?.backend as? LibGit2Backend)?.remoteURL())
     }
 
     // MARK: Reading and writing
@@ -344,6 +354,7 @@ final class PrismStore {
         try await GraphClone.clone(repository, account: account, into: root)
         await load()
         lastSynced = Date()
+        PushRelay.shared.register()
     }
 }
 
@@ -384,7 +395,38 @@ final class SyncScheduler {
         Task { await store.sync() }
     }
 
+    /// A push from the relay: another device wrote. Synced now, in the
+    /// thirty seconds or so the system gives — stopped safely before then.
+    func syncForPush(_ completion: @escaping (UIBackgroundFetchResult) -> Void) {
+        store.prepareGit()
+        let before = store.revision
+        var task = UIBackgroundTaskIdentifier.invalid
+        var done = false
+        let finish = { [store] in
+            guard !done else { return }
+            done = true
+            completion(store.revision != before ? .newData : .noData)
+            if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
+        }
+        task = UIApplication.shared.beginBackgroundTask(withName: "Pushed") { [weak store] in
+            MainActor.assumeIsolated {
+                store?.stopSyncing()
+                finish()
+            }
+        }
+        let limit = Timer.scheduledTimer(withTimeInterval: 25, repeats: false) { [weak store] _ in
+            MainActor.assumeIsolated { store?.stopSyncing() }
+        }
+        Task {
+            beforeSync()
+            await store.sync()
+            limit.invalidate()
+            finish()
+        }
+    }
+
     func becameActive() {
+        PushRelay.shared.register()
         // Pages shared while away, made notes first, then the round sends them.
         Task {
             await store.takeShared()

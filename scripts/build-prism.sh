@@ -36,6 +36,8 @@ github_value() {
 GITHUB_CLIENT_ID=$(github_value GITHUB_CLIENT_ID)
 GITHUB_CLIENT_SECRET=$(github_value GITHUB_CLIENT_SECRET)
 GITHUB_APP_SLUG=$(github_value GITHUB_APP_SLUG)
+# The sync relay (worker/): its host, once deployed.
+SYNC_RELAY_HOST=$(github_value SYNC_RELAY_HOST)
 
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -55,6 +57,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<key>GitHubClientID</key><string>$GITHUB_CLIENT_ID</string>
 	<key>GitHubClientSecret</key><string>$GITHUB_CLIENT_SECRET</string>
 	<key>GitHubAppSlug</key><string>$GITHUB_APP_SLUG</string>
+	<key>SyncRelayHost</key><string>$SYNC_RELAY_HOST</string>
 </dict>
 </plist>
 PLIST
