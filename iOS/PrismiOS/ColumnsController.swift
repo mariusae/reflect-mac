@@ -13,7 +13,7 @@ import ReflectGit2
 final class ColumnsController: UITabBarController, UITabBarControllerDelegate, UINavigationControllerDelegate {
     let store: PrismStore
     /// The bar along the bottom, in the system's tab bar's place.
-    private lazy var bar = BottomBar(items: Self.tabs.map { BottomBar.Item(title: $0.title, symbol: $0.symbol) })
+    private lazy var bar = BottomBar(items: Self.tabs.indices.map { BottomBar.Item(title: tab($0).title, symbol: tab($0).symbol) })
     private var barToBottom: NSLayoutConstraint?
     /// How far the keyboard reaches up the screen, from its foot.
     private var keyboardHeight: CGFloat = 0
@@ -32,6 +32,16 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         (.inbox, "Inbox", "tray"),
         (.tasks, "Tasks", "checkmark.circle"),
     ]
+    /// The inbox's tab, held, shows the pinned notes instead — and, held
+    /// again, the inbox. Kept from one launch to the next.
+    private static let inboxColumn = 1
+    private static let pinnedTab: (kind: SheetKind, title: String, symbol: String) = (.pinned, "Pinned", "pin")
+    private var showsPinned = UserDefaults.standard.bool(forKey: "InboxShowsPinned")
+
+    /// The tab at a column, as it is now.
+    private func tab(_ column: Int) -> (kind: SheetKind, title: String, symbol: String) {
+        column == Self.inboxColumn && showsPinned ? Self.pinnedTab : Self.tabs[column]
+    }
 
     init(store: PrismStore) {
         self.store = store
@@ -55,13 +65,13 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             guard let index = store?.index else { return [] }
             return LinkSuggestions.candidates(query, index: index)
         }
-        columns = Self.tabs.map { tab in
+        columns = Self.tabs.indices.map(tab).map { tab in
             let navigation = UINavigationController(rootViewController: makeSheet(tab.kind, around: tab.kind == .timeline ? .day(.today) : nil))
             navigation.delegate = self
             styleBar(navigation)
             return navigation
         }
-        columnTabs = zip(Self.tabs, columns).map { tab, navigation in
+        columnTabs = zip(Self.tabs.indices.map(tab), columns).map { tab, navigation in
             UITab(title: tab.title, image: UIImage(systemName: tab.symbol), identifier: tab.title) { _ in navigation }
         }
         // Search: the finder, the field for it in the bar.
@@ -182,7 +192,9 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         barToBottom = toBottom
         bar.onSelect = { [weak self] column in self?.tabTapped(column) }
         bar.onHold = { [weak self] column in
-            guard let self, Self.tabs[column].kind == .timeline else { return }
+            guard let self else { return }
+            if column == Self.inboxColumn { return togglePinned() }
+            guard Self.tabs[column].kind == .timeline else { return }
             showCalendar()
         }
         bar.onWrite = { [weak self] in
@@ -232,6 +244,23 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             }
         }
         select(column: column)
+        setChromeHidden(false)
+        layoutChanged()
+    }
+
+    /// The inbox's tab to the pinned notes, or back: its column started
+    /// afresh on the other, and shown.
+    private func togglePinned() {
+        showsPinned.toggle()
+        UserDefaults.standard.set(showsPinned, forKey: "InboxShowsPinned")
+        let tab = tab(Self.inboxColumn)
+        bar.setItem(BottomBar.Item(title: tab.title, symbol: tab.symbol), at: Self.inboxColumn)
+        columnTabs[Self.inboxColumn].title = tab.title
+        let navigation = columns[Self.inboxColumn]
+        UIView.transition(with: navigation.view, duration: 0.25, options: .transitionCrossDissolve) {
+            navigation.setViewControllers([self.makeSheet(tab.kind)], animated: false)
+        }
+        select(column: Self.inboxColumn)
         setChromeHidden(false)
         layoutChanged()
     }
@@ -717,7 +746,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     private func restoreLayout() {
         guard let data = UserDefaults.standard.data(forKey: "Tabs"),
               let layout = try? JSONDecoder().decode(Layout.self, from: data) else { return }
-        for (c, sheets) in layout.columns.enumerated() where columns.indices.contains(c) && sheets.first?.kind == Self.tabs[c].kind {
+        for (c, sheets) in layout.columns.enumerated() where columns.indices.contains(c) && sheets.first?.kind == tab(c).kind {
             let navigation = columns[c]
             for sheet in sheets.dropFirst() { navigation.pushViewController(makeSheet(sheet.kind), animated: false) }
             for (s, sheet) in navigation.viewControllers.compactMap({ $0 as? SheetController }).enumerated() where sheets.indices.contains(s) {

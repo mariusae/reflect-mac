@@ -168,7 +168,7 @@ enum Typeface: String, CaseIterable {
         // Lato, the face Prism opens in, as it was settled on.
         if self == .lato {
             return Settings(size: 15, lineHeight: 1.39, rowSpacing: 0.34, indent: 1.6, lineLength: 660, headingScale: 1.25,
-                            textStyle: nil, headingStyle: nil, smoothing: true)
+                            textStyle: nil, headingStyle: nil, smoothing: true, headingCase: .smallCaps)
         }
         // Alegreya Sans, as it was settled on.
         if self == .alegreya {

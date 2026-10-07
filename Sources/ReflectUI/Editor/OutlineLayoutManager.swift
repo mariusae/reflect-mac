@@ -37,6 +37,50 @@ package final class OutlineLayoutManager: NSLayoutManager {
         context.restoreGState()
     }
 
+    /// How much of the line at a glyph is the room under a time block's row
+    /// for the timeline — not the row's, so not to be selected or underlined.
+    private func timelineFoot(atGlyph glyph: Int) -> CGFloat {
+        guard let storage = textStorage, glyph < numberOfGlyphs else { return 0 }
+        var lineGlyphs = NSRange()
+        lineFragmentRect(forGlyphAt: glyph, effectiveRange: &lineGlyphs, withoutAdditionalLayout: true)
+        let characters = characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil)
+        guard characters.length > 0, NSMaxRange(characters) <= storage.length,
+              (storage.string as NSString).character(at: NSMaxRange(characters) - 1) == 0x0a,
+              let slot = storage.attribute(.outlineTimeSlot, at: NSMaxRange(characters) - 1, effectiveRange: nil) as? TimeSlot else { return 0 }
+        return slot.footHeight
+    }
+
+    /// A selection on a time block's row as tall as its text, not the room
+    /// for the timeline under it.
+    package override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>, count rectCount: Int,
+                                                  forCharacterRange charRange: NSRange, color: NSColor) {
+        guard let container = textContainers.first, numberOfGlyphs > 0 else {
+            return super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: color)
+        }
+        let rects = (0..<rectCount).map { i -> NSRect in
+            var rect = rectArray[i]
+            let glyph = glyphIndex(for: NSPoint(x: rect.midX, y: rect.minY + 1), in: container)
+            let foot = timelineFoot(atGlyph: glyph)
+            guard foot > 0 else { return rect }
+            let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil, withoutAdditionalLayout: true)
+            rect.size.height = max(0, min(rect.maxY, line.maxY - foot) - rect.minY)
+            return rect
+        }
+        rects.withUnsafeBufferPointer { buffer in
+            super.fillBackgroundRectArray(buffer.baseAddress!, count: rectCount, forCharacterRange: charRange, color: color)
+        }
+    }
+
+    /// Underlines — and misspellings' dots — under the row's text, not
+    /// under the room for the timeline.
+    package override func underlineGlyphRange(_ glyphRange: NSRange, underlineType: NSUnderlineStyle, lineFragmentRect: NSRect,
+                                              lineFragmentGlyphRange: NSRange, containerOrigin: NSPoint) {
+        var line = lineFragmentRect
+        line.size.height -= timelineFoot(atGlyph: lineFragmentGlyphRange.location)
+        super.underlineGlyphRange(glyphRange, underlineType: underlineType, lineFragmentRect: line,
+                                  lineFragmentGlyphRange: lineFragmentGlyphRange, containerOrigin: containerOrigin)
+    }
+
     package override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage, let view = outlineView, storage.length > 0 else { return }

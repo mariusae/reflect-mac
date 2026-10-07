@@ -214,7 +214,7 @@ struct PhoneSpacing: Codable, Equatable {
 
     static func defaults(_ face: Typeface) -> PhoneSpacing {
         // Lato as the Mac sets it.
-        if face == .lato { return PhoneSpacing(lineHeight: 1.39, rowSpacing: 0.34, indent: 1.6, headingScale: 1.25) }
+        if face == .lato { return PhoneSpacing(lineHeight: 1.39, rowSpacing: 0.34, indent: 1.6, headingScale: 1.25, headingCase: .smallCaps) }
         return PhoneSpacing(lineHeight: Double(face.lineHeight), rowSpacing: 0.32, indent: 1.35, headingScale: 1.55)
     }
 

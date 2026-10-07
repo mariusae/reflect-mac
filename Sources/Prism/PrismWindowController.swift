@@ -2365,6 +2365,16 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         }
     }
 
+    /// The first `text` in a note selected, as by the pointer.
+    func selectForScript(_ text: String, in path: String) {
+        guard let view = columns.lazy.compactMap({ $0.view(for: NoteRef(path: path)) }).first else { return }
+        let editor = view.editor
+        let range = (editor.string as NSString).range(of: text)
+        guard range.location != NSNotFound else { return print("not found: \(text)") }
+        window?.makeFirstResponder(editor)
+        editor.setSelectedRange(range)
+    }
+
     /// The caret at a note's top, its nth checkbox scrolled to and
     /// clicked: where the column was scrolled, before and after.
     func clickBoxForScript(in path: String, nth: Int) {

@@ -29,7 +29,7 @@ final class BottomBar: UIView, UITextFieldDelegate {
     static let margin: CGFloat = 21
     static let gap: CGFloat = 8
 
-    private let items: [Item]
+    private var items: [Item]
     private let container = UIVisualEffectView(effect: UIGlassContainerEffect())
     private let pill = BottomBar.glass()
     /// Write and search, together; searching, the field.
@@ -155,6 +155,21 @@ final class BottomBar: UIView, UITextFieldDelegate {
         let symbol = items[selected].symbol
         gathered.setImage(UIImage(systemName: symbol + ".fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold))
             ?? UIImage(systemName: symbol), for: .normal)
+    }
+
+    /// A tab shown as another: its symbol and name changed in place.
+    func setItem(_ item: Item, at i: Int) {
+        guard items.indices.contains(i), buttons.indices.contains(i) else { return }
+        items[i] = item
+        let button = buttons[i]
+        var configuration = button.configuration ?? .plain()
+        configuration.image = UIImage(systemName: item.symbol + ".fill") ?? UIImage(systemName: item.symbol)
+        configuration.attributedTitle = AttributedString(item.title, attributes: AttributeContainer([
+            .font: UIFont.systemFont(ofSize: 11, weight: .semibold),
+        ]))
+        UIView.transition(with: button, duration: 0.2, options: .transitionCrossDissolve) { button.configuration = configuration }
+        button.accessibilityLabel = item.title
+        styleButtons()
     }
 
     @objc private func heldTab(_ gesture: UILongPressGestureRecognizer) {
