@@ -271,6 +271,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             controller.calendarSnapshotForScript(to: URL(fileURLWithPath: path), dark: environment["PRISM_DARK"] == "1")
         }
         if let path = environment["PRISM_OPEN_PAGE"] { controller.openPageForScript(path) }
+        if let query = environment["PRISM_HEADINGS"] { controller.headingsForScript(query) }
         if let query = environment["PRISM_RECENT"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { controller.recentForScript(query, go: environment["PRISM_RECENT_GO"] == "1") }
         }
@@ -500,6 +501,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("Go to Note…", #selector(PrismWindowController.findNote(_:)), "o"),
             item("Today", #selector(PrismWindowController.goToday(_:)), "d"),
             item("Recent Edits…", #selector(PrismWindowController.showRecentEdits(_:)), "y"),
+            item("Move to Heading…", #selector(PrismWindowController.moveToHeading(_:)), "\\"),
             item("This Week", #selector(PrismWindowController.goThisWeek(_:)), "y", [.command, .shift]),
             .separator(),
             item("Back", #selector(PrismWindowController.goBack(_:)), "["),

@@ -193,6 +193,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         bar.onDictateBegin = { [weak self] in self?.beginDictation() }
         bar.onDictateEnd = { [weak self] cancelled in self?.endDictation(cancelled: cancelled) }
         bar.onSearch = { [weak self] in self?.showSearch() }
+        bar.recents = { [weak self] in self?.recentNotes() ?? [] }
         bar.onLeaveSearch = { [weak self] in self?.leaveSearch(back: true) }
         bar.onQuery = { [weak self] text in self?.finder.search(text) }
         bar.onSubmit = { [weak self] in self?.finder.searchEverything() }
@@ -521,6 +522,25 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         }
         finder.reset()
         bar.field.text = ""
+    }
+
+    /// The notes written in last — not the days, which the days tab has —
+    /// to go to, oldest first: in a menu rising from the bar, the latest is
+    /// nearest the thumb.
+    private func recentNotes() -> [UIMenuElement] {
+        guard let index = store.index else { return [] }
+        let recent = index.all
+            .filter { $0.day == nil && !$0.path.hasPrefix(GraphPaths.weeklyDirectory + "/") }
+            .sorted { $0.modified > $1.modified }
+            .prefix(10)
+        return recent.reversed().map { entry in
+            // A line each: a menu taller than the screen opens at its top,
+            // and the latest, at its foot, would be out of sight.
+            UIAction(title: entry.title.isEmpty ? (entry.path as NSString).lastPathComponent : entry.title,
+                     image: UIImage(systemName: "doc.text")) { [weak self] _ in
+                self?.openInColumn(.note(entry.path))
+            }
+        }
     }
 
     private func openInColumn(_ kind: SheetKind) {

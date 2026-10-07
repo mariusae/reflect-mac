@@ -19,6 +19,7 @@ final class Finder: NSView, NSTextFieldDelegate {
     private var face: Typeface = .lato
     /// What the field asks for, empty.
     var placeholder = "Go to a note"
+    var hintText = "↩ Open   ⌘↩ Beside   ⇧⌘↩ New Column"
     private var rowHeight: CGFloat { places.contains { $0.trail != nil } ? 54 : 40 }
 
     private static let limit = 9
@@ -106,7 +107,7 @@ final class Finder: NSView, NSTextFieldDelegate {
         card.frame = NSRect(x: floor((bounds.width - width) / 2), y: bounds.height - floor(bounds.height * 0.18) - height,
                             width: width, height: height)
         let fieldSize = field.intrinsicContentSize.height
-        hint.attributedStringValue = NSAttributedString(string: "↩ Open   ⌘↩ Beside   ⇧⌘↩ New Column", attributes: [
+        hint.attributedStringValue = NSAttributedString(string: hintText, attributes: [
             .font: face.font(size: 11.5), .foregroundColor: Ink.faint,
         ])
         // A label draws a couple of points in from its edges: room for them.

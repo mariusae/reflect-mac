@@ -13,6 +13,8 @@ struct Place: Equatable {
     /// then the rows — and the edit it was.
     var trail: String? = nil
     var edit: RecentEdits.Edit? = nil
+    /// A row of the note open, by index: Move to Heading's.
+    var row: Int? = nil
 }
 
 /// The notes to hand, on a card that slides out from the window's left

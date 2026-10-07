@@ -19,6 +19,10 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     private let finder = Finder()
     /// ⌘Y: the rows lately written in, to go back to.
     private let recentFinder = Finder()
+    /// ⌘\: the headings and top rows of the note open, to go to.
+    private let headingFinder = Finder()
+    /// The note's view Move to Heading goes about in.
+    private weak var headingView: DayView?
     private var recent = RecentEdits()
     /// What each note shown said when last read or written: the edits are
     /// what changed from it.
@@ -125,6 +129,15 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             if let edit = place.edit { goTo(edit, newColumn: newColumn) }
         }
         recentFinder.onClose = { [weak self] in self?.closeRecent() }
+        headingFinder.placeholder = "Move to heading"
+        headingFinder.hintText = "↩ Move"
+        headingFinder.search = { [weak self] query in self?.findHeadings(query) ?? [] }
+        headingFinder.onChoose = { [weak self] place, _ in
+            guard let self else { return }
+            closeHeadings()
+            if let row = place.row { moveToRow(row) }
+        }
+        headingFinder.onClose = { [weak self] in self?.closeHeadings() }
         recent = Self.loadRecent(graph.root)
 
         // The column the keyboard goes into is the one marked, and the one
@@ -2172,6 +2185,80 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             let text = InlineMarkup.plainText(edit.text)
             return Place(title: text.isEmpty ? "(empty)" : text, path: edit.path, detail: Self.ago.localizedString(for: edit.date, relativeTo: Date()), trail: path, edit: edit)
         }
+    }
+
+    // MARK: Move to Heading
+
+    /// Go ▸ Move to Heading (⌘\), as Bike has it: the note's headings and
+    /// its top rows, to choose from by typing; the caret put at the one chosen.
+    @objc func moveToHeading(_ sender: Any?) {
+        // The note the keyboard is in; else the one the column shows.
+        let editor = window?.firstResponder as? OutlineTextView
+        headingView = focusedColumn.blocks.compactMap { $0 as? DayView }.first { $0.editor === editor } ?? focusedColumn.current
+        guard headingView != nil else { return NSSound.beep() }
+        if headingFinder.superview == nil {
+            headingFinder.frame = page.bounds
+            page.addSubview(headingFinder)
+        }
+        headingFinder.open(face: face)
+    }
+
+    private func closeHeadings() {
+        headingFinder.removeFromSuperview()
+        if let view = headingView ?? active?.current { window?.makeFirstResponder(view.editor) }
+    }
+
+    /// The rows to go to: the note's top, then its headings and its rows
+    /// at the top, nested headings set in — those whose words have every
+    /// word of the query.
+    private func findHeadings(_ query: String) -> [Place] {
+        guard let view = headingView else { return [] }
+        let rows = view.editor.rows
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace)
+        let name = Column.name(of: view.ref).title
+        var found: [Place] = []
+        if words.isEmpty || words.allSatisfy({ name.lowercased().contains($0) }) {
+            found.append(Place(title: "Top of \(name)", path: view.ref.path, row: 0))
+        }
+        // Indented as the page reads: a heading under the one above it of a
+        // larger level, and a bullet under its heading.
+        var levels: [Int] = []
+        for (index, row) in rows.enumerated() {
+            var level: Int?
+            if case .heading(let l) = row.kind { level = l }
+            guard level != nil || row.depth == 0 else { continue }
+            let depth: Int
+            if let level {
+                while let last = levels.last, last >= level { levels.removeLast() }
+                depth = levels.count + row.depth
+                levels.append(level)
+            } else {
+                depth = levels.count
+            }
+            let text = InlineMarkup.plainText(row.text.components(separatedBy: "\n").first ?? "").trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty, words.allSatisfy({ text.lowercased().contains($0) }) else { continue }
+            let indent = String(repeating: "    ", count: min(depth, 6))
+            found.append(Place(title: indent + text, path: view.ref.path, row: index))
+        }
+        return found
+    }
+
+    /// The caret at the end of a row of the note Move to Heading was in, the
+    /// row shown and marked a moment.
+    private func moveToRow(_ row: Int) {
+        guard let view = headingView else { return }
+        let editor = view.editor
+        guard row < editor.paragraphRanges.count else { return }
+        window?.makeFirstResponder(editor)
+        editor.editText(inRow: row)
+        editor.showFindIndicator(for: editor.paragraphRanges[row])
+    }
+
+    /// `PRISM_HEADINGS=<query>`: ⌘\'s finder opened on a query, its rows printed.
+    func headingsForScript(_ query: String) {
+        moveToHeading(nil)
+        headingFinder.open(face: face, query: query)
+        for place in findHeadings(query) { print("heading: \(place.title)") }
     }
 
     /// `PRISM_RECENT=<query>`: ⌘Y's finder opened on a query, its rows printed;
