@@ -533,9 +533,10 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             .filter { $0.day == nil && !$0.path.hasPrefix(GraphPaths.weeklyDirectory + "/") }
             .sorted { $0.modified > $1.modified }
             .prefix(10)
-        return recent.reversed().map { entry in
-            // A line each: a menu taller than the screen opens at its top,
-            // and the latest, at its foot, would be out of sight.
+        // Latest first: the menu sets the first nearest the button.
+        return recent.map { entry in
+            // A line each: a menu taller than the screen would scroll the
+            // latest out of sight.
             UIAction(title: entry.title.isEmpty ? (entry.path as NSString).lastPathComponent : entry.title,
                      image: UIImage(systemName: "doc.text")) { [weak self] _ in
                 self?.openInColumn(.note(entry.path))

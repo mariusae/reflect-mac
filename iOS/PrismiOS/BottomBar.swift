@@ -112,12 +112,13 @@ final class BottomBar: UIView, UITextFieldDelegate {
         searchButton.tintColor = Ink.text
         searchButton.accessibilityLabel = "Search"
         searchButton.addAction(UIAction { [weak self] _ in self?.onSearch?() }, for: .touchUpInside)
-        // Held, the notes written in last — the latest at the foot, by the thumb.
+        // Held, the notes written in last, the latest by the thumb.
         let recent = UIMenu(title: "Recent", children: [UIDeferredMenuElement.uncached { [weak self] done in
             done(self?.recents?() ?? [])
         }])
         searchButton.menu = recent
-        searchButton.preferredMenuElementOrder = .fixed
+        // The first, the latest, nearest the thumb whichever way it opens.
+        searchButton.preferredMenuElementOrder = .priority
         searchButton.showsMenuAsPrimaryAction = false
         actions.contentView.addSubview(searchButton)
         magnifier.image = UIImage(systemName: "magnifyingglass", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .medium))
