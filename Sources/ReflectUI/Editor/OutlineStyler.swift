@@ -28,6 +28,24 @@ package struct OutlineMetrics {
     package var columnWidth: CGFloat { typography.lineLength }
 
     package func heading(_ level: Int) -> NSFont {
+        switch typography.headingCase {
+        case .family:
+            break
+        case .bold:
+            // At the text's size: bold says it is a heading.
+            return typography.headingFont(size: fontSize, weight: .bold)
+        case .smallCaps where typography.headingHasSmallCaps:
+            // The face's own small capitals, its capitals small too.
+            let font = typography.headingFont(size: round(fontSize * (level == 1 ? 1.08 : 1)), weight: .bold)
+            let features: [[NSFontDescriptor.FeatureKey: Int]] = [
+                [.typeIdentifier: kLowerCaseType, .selectorIdentifier: kLowerCaseSmallCapsSelector],
+                [.typeIdentifier: kUpperCaseType, .selectorIdentifier: kUpperCaseSmallCapsSelector],
+            ]
+            return NSFont(descriptor: font.fontDescriptor.addingAttributes([.featureSettings: features]), size: font.pointSize) ?? font
+        case .smallCaps, .caps:
+            // Capitals, set small: as tall as the text's small letters, near enough.
+            return typography.headingFont(size: round(fontSize * HeadingCase.capitalsScale(level: level)), weight: .bold)
+        }
         // The first level at the scale set; the rest step down to body size.
         let scale = typography.headingScale
         let (factor, weight): (CGFloat, NSFont.Weight) = switch level {
@@ -230,6 +248,12 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
                 InlineMarkdown.style(storage, in: paragraph, base: metrics.font(for: row), done: row.task?.isDone == true,
                                      images: images, caret: caret, pills: !inHeading, typography: metrics.typography)
             }
+            // Headings in capitals the text does not have: drawn so, a little apart.
+            if case .heading = row.kind, metrics.typography.headingsInCapitals, paragraph.length > 1 {
+                let words = NSRange(location: paragraph.location, length: paragraph.length - 1)
+                storage.addAttribute(.outlineUppercase, value: true, range: words)
+                storage.addAttribute(.kern, value: round(metrics.fontSize * HeadingCase.capitalsTracking * 10) / 10, range: words)
+            }
             // A block's time is told at its left; written out only where the caret is.
             if let slot, let stamp = slot.mark.head?.stamp, !slot.revealed, stamp.fullRange.length < paragraph.length {
                 storage.addAttribute(.outlineHidden, value: true,
@@ -292,6 +316,8 @@ extension NSAttributedString.Key {
     package static let outlineHidden = NSAttributedString.Key("ReflectOutlineHidden")
     /// A typed arrow's last character: drawn as the arrow it makes.
     package static let outlineArrow = NSAttributedString.Key("ReflectOutlineArrow")
+    /// Words drawn in capitals — a heading, set so — whatever case they are written in.
+    package static let outlineUppercase = NSAttributedString.Key("ReflectOutlineUppercase")
     /// A row a timeline draws something at, as a `TimeSlot`.
     package static let outlineTimeSlot = NSAttributedString.Key("ReflectOutlineTimeSlot")
 }
@@ -544,14 +570,31 @@ package final class HiddenMarkupGlyphs: NSObject, NSLayoutManagerDelegate {
         guard let storage = layoutManager.textStorage else { return 0 }
         var hidden = false
         var arrows = false
+        var capitals = false
         for index in 0..<range.length {
             if storage.attribute(.outlineHidden, at: characterIndexes[index], effectiveRange: nil) != nil { hidden = true }
             if storage.attribute(.outlineArrow, at: characterIndexes[index], effectiveRange: nil) != nil { arrows = true }
-            if hidden && arrows { break }
+            if storage.attribute(.outlineUppercase, at: characterIndexes[index], effectiveRange: nil) != nil { capitals = true }
+            if hidden && arrows && capitals { break }
         }
-        guard hidden || arrows else { return 0 }
+        guard hidden || arrows || capitals else { return 0 }
         // A typed arrow's last character as the arrow, in its own font.
         var glyphList = [CGGlyph](UnsafeBufferPointer(start: glyphs, count: range.length))
+        // Words set in capitals: each letter's capital, where it is one
+        // character and the face has it — the text itself as written.
+        if capitals {
+            let text = storage.string as NSString
+            for index in 0..<range.length
+            where storage.attribute(.outlineUppercase, at: characterIndexes[index], effectiveRange: nil) != nil {
+                let unit = text.character(at: characterIndexes[index])
+                guard !UTF16.isLeadSurrogate(unit), !UTF16.isTrailSurrogate(unit),
+                      let scalar = Unicode.Scalar(unit), CharacterSet.lowercaseLetters.contains(scalar) else { continue }
+                var upper = Array(String(Character(scalar)).uppercased().utf16)
+                guard upper.count == 1 else { continue }
+                var glyph: CGGlyph = 0
+                if CTFontGetGlyphsForCharacters(font, &upper, &glyph, 1), glyph != 0 { glyphList[index] = glyph }
+            }
+        }
         /// Arrows the face cannot draw: their characters left as typed.
         var unmade = Set<Int>()
         if arrows {

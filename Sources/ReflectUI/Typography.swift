@@ -1,4 +1,5 @@
 import AppKit
+import ReflectCore
 
 /// The colours notes are set in: the words, those set back — quotes, done
 /// tasks — the faintest marks, and the rules between things.
@@ -54,12 +55,14 @@ package struct Typography: Equatable {
     /// thickens strokes — light text on dark the most. A face whose
     /// regular is heavy already reads better without it.
     package var smoothing = true
+    /// How headings are set.
+    package var headingCase: HeadingCase = .family
 
     package init(bodyFamily: String? = nil, headingFamily: String? = nil, monospaceFamily: String? = nil,
                  bodyFace: String? = nil, headingFace: String? = nil, monospaceFace: String? = nil,
                  size: CGFloat = 15, lineHeight: CGFloat = 1.18, rowSpacing: CGFloat = 0.2,
                  headingScale: CGFloat = 1.5, lineLength: CGFloat = 720, indent: CGFloat = 1.6, ink: TextInk = .system,
-                 smoothing: Bool = true, headingAxes: [String: Double] = [:]) {
+                 smoothing: Bool = true, headingAxes: [String: Double] = [:], headingCase: HeadingCase = .family) {
         self.bodyFamily = bodyFamily
         self.headingFamily = headingFamily
         self.monospaceFamily = monospaceFamily
@@ -75,6 +78,7 @@ package struct Typography: Equatable {
         self.ink = ink
         self.smoothing = smoothing
         self.headingAxes = headingAxes
+        self.headingCase = headingCase
     }
 
     package static let defaults = Typography()
@@ -153,6 +157,19 @@ package struct Typography: Equatable {
 
     /// A heading's font: the heading face, its axes set as asked, the
     /// others as the face has them.
+    /// Whether the headings' face has small capitals of its own.
+    package var headingHasSmallCaps: Bool {
+        let font = Self.font(headingFamily, face: headingFace, size: 12, weight: .bold)
+        guard let table = CTFontCopyTable(font as CTFont, CTFontTableTag(kCTFontTableGSUB), []) as Data? else { return false }
+        return table.range(of: Data("smcp".utf8)) != nil
+    }
+
+    /// Whether headings are drawn in capitals the text does not have: all
+    /// caps, or small caps made so for a face without its own.
+    package var headingsInCapitals: Bool {
+        headingCase == .caps || (headingCase == .smallCaps && !headingHasSmallCaps)
+    }
+
     package func headingFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
         let font = Self.font(headingFamily, face: headingFace, size: size, weight: weight)
         guard !headingAxes.isEmpty else { return font }

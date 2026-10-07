@@ -1,5 +1,6 @@
 import AppKit
 import PrismCore
+import ReflectCore
 import ReflectUI
 
 /// Prism ▸ Settings (⌘,): the font set, and how it is set — its faces, size,
@@ -12,6 +13,8 @@ final class SettingsWindowController: NSWindowController {
     private let faces = NSPopUpButton()
     private let textStyle = NSPopUpButton()
     private let headingStyle = NSPopUpButton()
+    /// How headings are set: larger, at the text's size, small caps, caps.
+    private let headingCase = NSPopUpButton()
     private let smoothing = NSButton(checkboxWithTitle: "Font smoothing", target: nil, action: nil)
     private let reset = NSButton(title: "Reset to Defaults", target: nil, action: nil)
     private var sliders: [Measure: (slider: NSSlider, value: NSTextField)] = [:]
@@ -96,6 +99,12 @@ final class SettingsWindowController: NSWindowController {
             popup.target = self
             popup.action = #selector(chooseStyle)
         }
+        for option in HeadingCase.allCases {
+            headingCase.addItem(withTitle: option.title)
+            headingCase.lastItem?.representedObject = option.rawValue
+        }
+        headingCase.target = self
+        headingCase.action = #selector(chooseHeadingCase)
         smoothing.target = self
         smoothing.action = #selector(changeSmoothing)
         reset.target = self
@@ -105,6 +114,7 @@ final class SettingsWindowController: NSWindowController {
             [label("Font set"), faces, NSView()],
             [label("Text"), textStyle, NSView()],
             [label("Headings"), headingStyle, NSView()],
+            [label("Heading style"), headingCase, NSView()],
         ]
         for measure in Measure.allCases {
             let slider = NSSlider(value: measure.range.lowerBound, minValue: measure.range.lowerBound,
@@ -126,7 +136,7 @@ final class SettingsWindowController: NSWindowController {
         grid.column(at: 0).xPlacement = .trailing
         grid.rowAlignment = .firstBaseline
         // Room between the faces and the measures.
-        grid.row(at: 3).topPadding = 10
+        grid.row(at: 4).topPadding = 10
         grid.row(at: rows.count - 2).topPadding = 6
         grid.row(at: rows.count - 1).topPadding = 6
         grid.translatesAutoresizingMaskIntoConstraints = false
@@ -179,6 +189,7 @@ final class SettingsWindowController: NSWindowController {
             controls.value.stringValue = measure.text(value)
         }
         smoothing.state = settings.smoothing ? .on : .off
+        headingCase.selectItem(at: HeadingCase.allCases.firstIndex(of: settings.headingCase ?? .family) ?? 0)
         reset.isEnabled = settings != face.defaults
     }
 
@@ -248,6 +259,11 @@ final class SettingsWindowController: NSWindowController {
         let value = (sender.doubleValue / measure.step).rounded() * measure.step
         controls.value.stringValue = measure.text(value)
         change { measure.set(value, in: &$0) }
+    }
+
+    @objc private func chooseHeadingCase() {
+        let option = (headingCase.selectedItem?.representedObject as? String).flatMap(HeadingCase.init(rawValue:)) ?? .family
+        change { $0.headingCase = option == .family ? nil : option }
     }
 
     @objc private func changeSmoothing() {

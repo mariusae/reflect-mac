@@ -9,6 +9,8 @@ extension NSAttributedString.Key {
     static let prismHidden = NSAttributedString.Key("PrismHidden")
     /// A typed arrow's last character: drawn as the arrow it makes.
     static let prismArrow = NSAttributedString.Key("PrismArrow")
+    /// Words drawn in capitals — a heading, set so — whatever case they are written in.
+    static let prismUppercase = NSAttributedString.Key("PrismUppercase")
     /// On the first character of a picture's Markdown: the picture, drawn in its place.
     static let prismImage = NSAttributedString.Key("PrismImage")
     /// On a link's last hidden opening character: the symbol drawn there —
@@ -54,7 +56,38 @@ struct PhoneMetrics: Equatable {
     /// The space after each row, in points.
     var rowGap: CGFloat { round(size * CGFloat(spacing.rowSpacing)) }
 
+    /// Whether headings are drawn in capitals the text does not have: all
+    /// caps, or small caps made so for a face without its own.
+    var headingsInCapitals: Bool {
+        spacing.headingCase == .caps || (spacing.headingCase == .smallCaps && !headingHasSmallCaps)
+    }
+
+    var headingHasSmallCaps: Bool {
+        let font = face.heading(12, weight: .bold)
+        guard let table = CTFontCopyTable(font as CTFont, CTFontTableTag(kCTFontTableGSUB), []) as Data? else { return false }
+        return table.range(of: Data("smcp".utf8)) != nil
+    }
+
     func heading(_ level: Int) -> UIFont {
+        let text = face.size(size)
+        switch spacing.headingCase ?? .family {
+        case .family:
+            break
+        case .bold:
+            // At the text's size: bold says it is a heading.
+            return face.heading(text, weight: .bold)
+        case .smallCaps where headingHasSmallCaps:
+            // The face's own small capitals, its capitals small too.
+            let font = face.heading(round(text * (level == 1 ? 1.08 : 1)), weight: .bold)
+            let features: [[UIFontDescriptor.FeatureKey: Int]] = [
+                [.type: kLowerCaseType, .selector: kLowerCaseSmallCapsSelector],
+                [.type: kUpperCaseType, .selector: kUpperCaseSmallCapsSelector],
+            ]
+            return UIFont(descriptor: font.fontDescriptor.addingAttributes([.featureSettings: features]), size: font.pointSize)
+        case .smallCaps, .caps:
+            // Capitals, set small: as tall as the text's small letters, near enough.
+            return face.heading(round(text * CGFloat(HeadingCase.capitalsScale(level: level))), weight: .bold)
+        }
         // A first-level heading as large as set; the others stepping down to the text's size.
         let top = CGFloat(spacing.headingScale)
         let scale: CGFloat = [top, 1 + (top - 1) * 0.55, 1 + (top - 1) * 0.22, 1.0, 1.0, 1.0][min(max(level, 1), 6) - 1]
@@ -200,6 +233,12 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             switch row.kind {
             case .code, .rule: break
             default: styleInline(storage, in: paragraph, row: row)
+            }
+            // Headings in capitals the text does not have: drawn so, a little apart.
+            if case .heading = row.kind, metrics.headingsInCapitals, paragraph.length > 1 {
+                let words = NSRange(location: paragraph.location, length: paragraph.length - 1)
+                storage.addAttribute(.prismUppercase, value: true, range: words)
+                storage.addAttribute(.kern, value: round(metrics.size * CGFloat(HeadingCase.capitalsTracking) * 10) / 10, range: words)
             }
             // A block's time is told at its left; written out only where the caret is.
             if let slot, let stamp = slot.mark.head?.stamp, !slot.revealed, stamp.fullRange.length < paragraph.length {
@@ -498,6 +537,21 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                     if arrowGlyphs == nil { arrowGlyphs = Array(UnsafeBufferPointer(start: glyphs, count: range.length)) }
                     arrowGlyphs![i] = glyph[0]
                     if changed == nil { changed = Array(UnsafeBufferPointer(start: properties, count: range.length)) }
+                }
+            }
+            // Words set in capitals: each letter's capital, where it is one
+            // character and the face has it — the text itself as written.
+            if storage.attribute(.prismUppercase, at: index, effectiveRange: nil) != nil {
+                let unit = plainText.character(at: index)
+                if !UTF16.isLeadSurrogate(unit), !UTF16.isTrailSurrogate(unit), let scalar = Unicode.Scalar(unit),
+                   CharacterSet.lowercaseLetters.contains(scalar) {
+                    var upper = Array(String(Character(scalar)).uppercased().utf16)
+                    var glyph: CGGlyph = 0
+                    if upper.count == 1, CTFontGetGlyphsForCharacters(font, &upper, &glyph, 1), glyph != 0 {
+                        if arrowGlyphs == nil { arrowGlyphs = Array(UnsafeBufferPointer(start: glyphs, count: range.length)) }
+                        arrowGlyphs![i] = glyph
+                        if changed == nil { changed = Array(UnsafeBufferPointer(start: properties, count: range.length)) }
+                    }
                 }
             }
             // A picture's first character is a space as big as the picture;

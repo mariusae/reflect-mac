@@ -1,4 +1,5 @@
 import SwiftUI
+import ReflectCore
 import UIKit
 
 /// Settings: the face notes are set in, and how large — each shown as it
@@ -48,6 +49,10 @@ struct SettingsView: View {
                     setting("Space between rows", $spacing.rowSpacing, 0...0.8, step: 0.02, unit: "em")
                     setting("Outline indent", $spacing.indent, 0.9...2.2, step: 0.05, unit: "em")
                     setting("Heading size", $spacing.headingScale, 1.0...2.0, step: 0.01, unit: "×")
+                    Picker("Heading style", selection: Binding(get: { spacing.headingCase ?? .family },
+                                                               set: { spacing.headingCase = $0 == .family ? nil : $0 })) {
+                        ForEach(HeadingCase.allCases, id: \.self) { option in Text(option.title).tag(option) }
+                    }
                     Button("Reset \(face.title) to Defaults") { spacing = PhoneSpacing.defaults(face) }
                         .disabled(spacing == PhoneSpacing.defaults(face))
                 } header: {
@@ -110,6 +115,8 @@ struct SettingsView: View {
         return VStack(alignment: .leading, spacing: metrics.rowGap) {
             Text("Sunday, October 4")
                 .font(Font(metrics.heading(1) as CTFont))
+                .textCase(metrics.headingsInCapitals ? .uppercase : nil)
+                .tracking(metrics.headingsInCapitals ? metrics.size * CGFloat(HeadingCase.capitalsTracking) : 0)
                 .padding(.bottom, 4)
             ForEach(Array(["Read the notes on cards, then look over the calendar for the week",
                            "Lunch with Ana", "Bring the book back"].enumerated()), id: \.offset) { i, row in

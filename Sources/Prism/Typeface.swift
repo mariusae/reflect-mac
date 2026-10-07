@@ -1,4 +1,5 @@
 import AppKit
+import ReflectCore
 import PrismCore
 import ReflectUI
 
@@ -143,6 +144,8 @@ enum Typeface: String, CaseIterable {
         var headingStyle: String?
         /// Whether text is drawn with the font smoothing that thickens it.
         var smoothing: Bool
+        /// How headings are set; nil, as they always were — larger, bold.
+        var headingCase: HeadingCase? = nil
     }
 
     /// How the face is set unless changed: sized to read as Mona Sans does
@@ -164,7 +167,7 @@ enum Typeface: String, CaseIterable {
         }
         // Lato, the face Prism opens in, as it was settled on.
         if self == .lato {
-            return Settings(size: 16, lineHeight: 1.39, rowSpacing: 0.34, indent: 1.6, lineLength: 660, headingScale: 1.5,
+            return Settings(size: 15, lineHeight: 1.39, rowSpacing: 0.34, indent: 1.6, lineLength: 660, headingScale: 1.25,
                             textStyle: nil, headingStyle: nil, smoothing: true)
         }
         // Alegreya Sans, as it was settled on.
@@ -227,7 +230,8 @@ enum Typeface: String, CaseIterable {
                           size: CGFloat(settings.size), lineHeight: CGFloat(settings.lineHeight / naturalLine(style: settings.textStyle)),
                           rowSpacing: CGFloat(settings.rowSpacing), headingScale: CGFloat(settings.headingScale),
                           lineLength: CGFloat(settings.lineLength), indent: CGFloat(settings.indent),
-                          ink: Ink.notes, smoothing: settings.smoothing, headingAxes: headingAxes)
+                          ink: Ink.notes, smoothing: settings.smoothing, headingAxes: headingAxes,
+                          headingCase: settings.headingCase ?? .family)
     }
 
     /// The face for the window's own words — the sidebar, the finder, the

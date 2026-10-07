@@ -220,6 +220,13 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             if parts.count == 2, let mode = CardMode(rawValue: parts[1]) { CardModes.set(mode, for: parts[0]) }
         }
         if let face = environment["PRISM_FACE"].flatMap(Typeface.init(rawValue:)) { controller.face = face }
+        // `PRISM_HEADING_CASE`: headings set so — family, bold, smallCaps, caps.
+        if let option = environment["PRISM_HEADING_CASE"].flatMap(HeadingCase.init(rawValue:)) {
+            var settings = controller.face.settings
+            settings.headingCase = option
+            controller.face.settings = settings
+            controller.typographyChanged()
+        }
         if let size = environment["PRISM_SIZE"].flatMap(Double.init) { controller.size = CGFloat(size) }
         if let line = environment["PRISM_LINE"].flatMap(Double.init) {
             var settings = controller.face.settings

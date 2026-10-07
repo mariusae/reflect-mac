@@ -1,5 +1,6 @@
 import CoreText
 import UIKit
+import ReflectCore
 
 /// What notes are set in, as on the Mac: a face for the text, one for
 /// headings — most often the same — and a fixed-width one for code.
@@ -184,10 +185,12 @@ struct PhoneSpacing: Codable, Equatable {
     var indent: Double
     /// A first-level heading, as a multiple of the text.
     var headingScale: Double
+    /// How headings are set; nil, as they always were — larger, bold.
+    var headingCase: HeadingCase? = nil
 
     static func defaults(_ face: Typeface) -> PhoneSpacing {
         // Lato as the Mac sets it.
-        if face == .lato { return PhoneSpacing(lineHeight: 1.39, rowSpacing: 0.34, indent: 1.6, headingScale: 1.5) }
+        if face == .lato { return PhoneSpacing(lineHeight: 1.39, rowSpacing: 0.34, indent: 1.6, headingScale: 1.25) }
         return PhoneSpacing(lineHeight: Double(face.lineHeight), rowSpacing: 0.32, indent: 1.35, headingScale: 1.55)
     }
 
