@@ -63,10 +63,23 @@ final class Finder: NSView, NSTextFieldDelegate {
         ])
         field.stringValue = query
         window?.makeFirstResponder(field)
+        mouse = NSEvent.mouseLocation
         refresh()
     }
 
     var query: String { field.stringValue }
+
+    /// Where the pointer was last seen. A row choosing itself under a still
+    /// pointer — opened over it, or come there as the query changed — is
+    /// not the pointer's doing; only moving it chooses.
+    private var mouse = NSPoint.zero
+
+    private func hovered(_ index: Int) {
+        let location = NSEvent.mouseLocation
+        guard location != mouse else { return }
+        mouse = location
+        select(index)
+    }
 
     private func refresh() {
         places = Array((search?(field.stringValue) ?? []).prefix(Self.limit))
@@ -74,7 +87,7 @@ final class Finder: NSView, NSTextFieldDelegate {
         rows.forEach { $0.removeFromSuperview() }
         rows = places.enumerated().map { index, place in
             let row = FinderRow(place: place, face: face)
-            row.onHover = { [weak self] in self?.select(index) }
+            row.onHover = { [weak self] in self?.hovered(index) }
             row.onClick = { [weak self] newColumn in self?.choose(index, newColumn: newColumn) }
             card.addSubview(row)
             return row
@@ -217,11 +230,12 @@ final class FinderRow: NSView {
 
     override func updateTrackingAreas() {
         trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
         super.updateTrackingAreas()
     }
 
     override func mouseEntered(with event: NSEvent) { onHover?() }
+    override func mouseMoved(with event: NSEvent) { onHover?() }
     override func mouseDown(with event: NSEvent) {}
     override func mouseUp(with event: NSEvent) { onClick?(event.modifierFlags.contains(.command)) }
 

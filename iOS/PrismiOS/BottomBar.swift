@@ -20,7 +20,7 @@ final class BottomBar: UIView, UITextFieldDelegate {
     var onDictateEnd: ((_ cancelled: Bool) -> Void)?
     var onSearch: (() -> Void)?
     /// The notes written in last, for the magnifier held: the most recent last.
-    var recents: (() -> [UIMenuElement])?
+    var recents: (() -> [HoldMenu.Entry])?
     var onLeaveSearch: (() -> Void)?
     var onQuery: ((String) -> Void)?
     var onSubmit: (() -> Void)?
@@ -112,14 +112,9 @@ final class BottomBar: UIView, UITextFieldDelegate {
         searchButton.tintColor = Ink.text
         searchButton.accessibilityLabel = "Search"
         searchButton.addAction(UIAction { [weak self] _ in self?.onSearch?() }, for: .touchUpInside)
-        // Held, the notes written in last, the latest by the thumb.
-        let recent = UIMenu(title: "Recent", children: [UIDeferredMenuElement.uncached { [weak self] done in
-            done(self?.recents?() ?? [])
-        }])
-        searchButton.menu = recent
-        // The first, the latest, nearest the thumb whichever way it opens.
-        searchButton.preferredMenuElementOrder = .priority
-        searchButton.showsMenuAsPrimaryAction = false
+        // Held, the notes written in last, the latest under the thumb.
+        searchHold.minimumPressDuration = 0.35
+        searchButton.addGestureRecognizer(searchHold)
         actions.contentView.addSubview(searchButton)
         magnifier.image = UIImage(systemName: "magnifyingglass", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .medium))
         magnifier.tintColor = Ink.text
@@ -166,6 +161,36 @@ final class BottomBar: UIView, UITextFieldDelegate {
         guard gesture.state == .began, let button = gesture.view as? UIButton, let i = buttons.firstIndex(of: button) else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         onHold?(i)
+    }
+
+    // MARK: Recent notes
+
+    private lazy var searchHold = UILongPressGestureRecognizer(target: self, action: #selector(heldSearch(_:)))
+    private var recentMenu: HoldMenu?
+
+    /// One press: held, the menu; slid, a note; lifted, opened.
+    @objc private func heldSearch(_ gesture: UILongPressGestureRecognizer) {
+        guard let window else { return }
+        let point = gesture.location(in: window)
+        switch gesture.state {
+        case .began:
+            let entries = recents?() ?? []
+            guard !entries.isEmpty else { return }
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            let menu = HoldMenu(title: "Recent", entries: entries)
+            menu.show(in: window, at: point)
+            recentMenu = menu
+        case .changed:
+            recentMenu?.track(point)
+        case .ended:
+            recentMenu?.finish(at: point)
+            recentMenu = nil
+        case .cancelled, .failed:
+            recentMenu?.finish(at: nil)
+            recentMenu = nil
+        default:
+            break
+        }
     }
 
     // MARK: Dictating

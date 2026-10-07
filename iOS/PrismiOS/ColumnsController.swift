@@ -525,20 +525,16 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     }
 
     /// The notes written in last — not the days, which the days tab has —
-    /// to go to, oldest first: in a menu rising from the bar, the latest is
-    /// nearest the thumb.
-    private func recentNotes() -> [UIMenuElement] {
+    /// to go to, oldest first: the latest at the menu's foot, under the thumb.
+    private func recentNotes() -> [HoldMenu.Entry] {
         guard let index = store.index else { return [] }
         let recent = index.all
             .filter { $0.day == nil && !$0.path.hasPrefix(GraphPaths.weeklyDirectory + "/") }
             .sorted { $0.modified > $1.modified }
             .prefix(10)
-        // Latest first: the menu sets the first nearest the button.
-        return recent.map { entry in
-            // A line each: a menu taller than the screen would scroll the
-            // latest out of sight.
-            UIAction(title: entry.title.isEmpty ? (entry.path as NSString).lastPathComponent : entry.title,
-                     image: UIImage(systemName: "doc.text")) { [weak self] _ in
+        return recent.reversed().map { entry in
+            HoldMenu.Entry(title: entry.title.isEmpty ? (entry.path as NSString).lastPathComponent : entry.title,
+                           symbol: "doc.text") { [weak self] in
                 self?.openInColumn(.note(entry.path))
             }
         }
