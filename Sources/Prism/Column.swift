@@ -901,6 +901,7 @@ final class Column: NSView, OutlineTextViewNavigator {
     private func nameMiddle(of view: DayView) -> CGFloat {
         // Laid out at its frame first: the editor placed under its name.
         view.layoutSubtreeIfNeeded()
+        if let middle = view.nameMiddle { return view.frame.minY + middle }
         let editor = view.editor
         if editor.frame.minY < metrics.fontSize * 2, let layout = editor.layoutManager, layout.numberOfGlyphs > 0 {
             let line = layout.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil)

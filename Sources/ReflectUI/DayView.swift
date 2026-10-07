@@ -193,6 +193,14 @@ package final class DayView: NSView, NSTextViewDelegate {
     private var badgeOnFirstLine: Bool { ref.day == nil && title.stringValue.isEmpty && !badge.isHidden }
 
     /// Room at the right of the first line, the window's buttons there.
+    /// The middle of the name's lowercase letters, in this view — for the
+    /// buttons beside it to be centred on; nil with no name over the note.
+    package var nameMiddle: CGFloat? {
+        guard !title.stringValue.isEmpty, let font = title.font else { return nil }
+        layoutSubtreeIfNeeded()
+        return title.frame.minY + font.ascender - font.xHeight / 2
+    }
+
     package var trailingReserve: CGFloat = 0 { didSet { if trailingReserve != oldValue { needsLayout = true } } }
 
     private var editorTop: CGFloat {
