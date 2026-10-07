@@ -507,7 +507,7 @@ final class NoteBlock: UIView {
                 ringView.bounds = CGRect(x: 0, y: 0, width: side, height: side)
             } else {
                 let ring = NSTextAttachment(image: image)
-                let cap = UIFont.systemFont(ofSize: storedMetrics.size, weight: .bold).capHeight
+                let cap = Typeface.current.heading(storedMetrics.size, weight: .bold).capHeight
                 ring.bounds = CGRect(x: 0, y: ((cap - side) / 2).rounded(), width: side, height: side)
                 title.append(NSAttributedString(string: "  "))
                 title.append(NSAttributedString(attachment: ring))
@@ -767,13 +767,15 @@ enum Card {
         label.textAlignment = .right
     }
 
+    /// The name in the font set's heading face, as on the Mac.
     static func header(name: String, meta: String?, size: CGFloat) -> NSAttributedString {
+        let face = Typeface.current
         let text = NSMutableAttributedString(string: name, attributes: [
-            .font: UIFont.systemFont(ofSize: size, weight: .bold), .foregroundColor: Ink.text,
+            .font: face.heading(size, weight: .bold), .foregroundColor: Ink.text,
         ])
         if let meta, !meta.isEmpty {
             text.append(NSAttributedString(string: "  " + meta, attributes: [
-                .font: UIFont.systemFont(ofSize: size, weight: .regular), .foregroundColor: Ink.secondary,
+                .font: face.body(size), .foregroundColor: Ink.secondary,
             ]))
         }
         return text

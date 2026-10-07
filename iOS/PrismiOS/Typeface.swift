@@ -105,18 +105,42 @@ enum Typeface: String, CaseIterable, Identifiable {
     }
 
     private func font(_ family: String?, size: CGFloat, weight: UIFont.Weight, italic: Bool = false) -> UIFont {
-        var descriptor: UIFontDescriptor
-        if let family {
-            descriptor = UIFontDescriptor(fontAttributes: [
-                .family: family, .traits: [UIFontDescriptor.TraitKey.weight: weight.rawValue],
-            ])
-        } else {
-            descriptor = UIFont.systemFont(ofSize: size, weight: weight).fontDescriptor
+        guard let family else {
+            var descriptor = UIFont.systemFont(ofSize: size, weight: weight).fontDescriptor
+            if italic, let slanted = descriptor.withSymbolicTraits(descriptor.symbolicTraits.union(.traitItalic)) { descriptor = slanted }
+            return UIFont(descriptor: descriptor, size: size)
         }
-        if italic, let slanted = descriptor.withSymbolicTraits(descriptor.symbolicTraits.union(.traitItalic)) { descriptor = slanted }
-        let font = UIFont(descriptor: descriptor, size: size)
-        if let family, font.familyName != family { return .systemFont(ofSize: size, weight: weight) }
+        // The face picked from the family's own, by name: matched by
+        // descriptor, Bold Text turns a weight heavier, to a face — Lato
+        // Black — of a family of its own, and the text fell to the system's.
+        guard let name = Self.face(in: family, weight: weight, italic: italic),
+              let font = UIFont(name: name, size: size) else { return .systemFont(ofSize: size, weight: weight) }
         return font
+    }
+
+    /// The faces of each family — name, weight, italic — as registered.
+    nonisolated(unsafe) private static var faces: [String: [(name: String, weight: CGFloat, italic: Bool)]] = [:]
+    private static let facesLock = NSLock()
+
+    /// The face of `family` nearest `weight`, italic or not as asked when
+    /// it can be.
+    private static func face(in family: String, weight: UIFont.Weight, italic: Bool) -> String? {
+        facesLock.lock()
+        defer { facesLock.unlock() }
+        if faces[family] == nil {
+            let found = UIFont.fontNames(forFamilyName: family).compactMap { name -> (String, CGFloat, Bool)? in
+                guard let font = UIFont(name: name, size: 12) else { return nil }
+                let traits = CTFontCopyTraits(font as CTFont) as NSDictionary
+                let weight = (traits[kCTFontWeightTrait] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 0
+                return (name, weight, font.fontDescriptor.symbolicTraits.contains(.traitItalic))
+            }
+            // Not yet registered: asked again next time.
+            guard !found.isEmpty else { return nil }
+            faces[family] = found.map { (name: $0.0, weight: $0.1, italic: $0.2) }
+        }
+        let all = faces[family] ?? []
+        let styled = all.filter { $0.italic == italic }
+        return (styled.isEmpty ? all : styled).min { abs($0.weight - weight.rawValue) < abs($1.weight - weight.rawValue) }?.name
     }
 
     /// The face chosen in Settings; else Lato, as on the Mac.
