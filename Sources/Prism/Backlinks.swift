@@ -11,19 +11,19 @@ protocol ColumnBlock: NSView {
     func desiredHeight(width: CGFloat) -> CGFloat
     /// What its card is headed by, kept at the column's top once scrolled
     /// past: its name, when, and whether it is today's. Nil: nothing to keep.
-    var stickyTitle: (title: String, when: String?, today: Bool)? { get }
+    var stickyTitle: (title: String, when: String?)? { get }
     /// The block's marks, from its top: among other notes — in the
     /// timeline, the inbox — its own name too.
     func scrubMarks(listed: Bool) -> [ScrubMark]
 }
 
 extension ColumnBlock {
-    var stickyTitle: (title: String, when: String?, today: Bool)? { nil }
+    var stickyTitle: (title: String, when: String?)? { nil }
 }
 
 extension DayView: ColumnBlock {
-    var stickyTitle: (title: String, when: String?, today: Bool)? {
-        (Column.name(of: ref).title, Column.when(of: ref), ref.day == .today)
+    var stickyTitle: (title: String, when: String?)? {
+        (Column.name(of: ref).title, Column.when(of: ref))
     }
 
     func scrubMarks(listed: Bool) -> [ScrubMark] {
@@ -425,7 +425,7 @@ final class BacklinkBlock: NSView, ColumnBlock {
         }
     }
 
-    var stickyTitle: (title: String, when: String?, today: Bool)? { (name, linkCount, false) }
+    var stickyTitle: (title: String, when: String?)? { (name, linkCount) }
 
     func scrubMarks(listed: Bool) -> [ScrubMark] {
         [ScrubMark(y: 0, title: name, detail: places.count > 1 ? "\(places.count) \(unit + (unit.hasSuffix("ch") ? "es" : "s"))" : nil, rank: 3)]

@@ -1430,18 +1430,18 @@ final class Column: NSView, OutlineTextViewNavigator {
         let top = scroll.contentView.bounds.minY
         let typography = metrics.typography
         let titleFont = typography.headingFont(size: round(metrics.fontSize * 1.05), weight: .bold)
-        let whenFont = NSFont.systemFont(ofSize: round(metrics.fontSize * 0.82))
+        let whenFont = Typography.font(typography.bodyFamily, face: typography.bodyFace, size: round(metrics.fontSize * 0.82))
         sticky.setScrolledUnder(scroll.contentView.bounds.minY > 2)
         // The block under the bar — a note, a group of tasks, a note linking
         // here — its own heading gone up under it, its card still there.
         guard !isWeb, let block = blocks.last(where: { $0.frame.minY <= top + 4 }), let head = block.stickyTitle,
               block.frame.minY + 44 < top, block.frame.maxY - top > 40 else {
             if sticky.shown != nil { needsLayout = true }
-            sticky.show(name: nil, when: nil, titleFont: titleFont, whenFont: whenFont, today: false)
+            sticky.show(name: nil, when: nil, titleFont: titleFont, whenFont: whenFont)
             return
         }
         let before = sticky.shown
-        sticky.show(name: head.title, when: head.when, titleFont: titleFont, whenFont: whenFont, today: head.today)
+        sticky.show(name: head.title, when: head.when, titleFont: titleFont, whenFont: whenFont)
         if sticky.shown != before { needsLayout = true }
         sticky.onClick = { [weak self, weak block] in
             guard let self, let block else { return }
@@ -2168,14 +2168,14 @@ final class StickyHeader: NSView {
 
     /// Shows a card's name — slid up into place from under the bar's foot, as
     /// if the card's own header had come to rest here — or, nil, slides it away.
-    func show(name: String?, when text: String?, titleFont: NSFont, whenFont: NSFont, today: Bool) {
+    func show(name: String?, when text: String?, titleFont: NSFont, whenFont: NSFont) {
         guard name != shown || text != shownWhen else { return }
         let rising = shown == nil || name != shown
         shown = name
         shownWhen = text
         if let name {
             title.attributedStringValue = NSAttributedString(string: name, attributes: [
-                .font: titleFont, .foregroundColor: today ? NSColor.controlAccentColor : Ink.text,
+                .font: titleFont, .foregroundColor: Ink.text,
             ])
             when.attributedStringValue = NSAttributedString(string: text ?? "", attributes: [.font: whenFont, .foregroundColor: Ink.secondary])
         }

@@ -236,8 +236,8 @@ final class TaskGroupBlock: NSView, ColumnBlock {
 
     func desiredHeight(width: CGFloat) -> CGFloat { place(width: width, laying: false) }
 
-    var stickyTitle: (title: String, when: String?, today: Bool)? {
-        (group.label, "\(group.tasks.count) \(group.tasks.count == 1 ? "task" : "tasks")", false)
+    var stickyTitle: (title: String, when: String?)? {
+        (group.label, "\(group.tasks.count) \(group.tasks.count == 1 ? "task" : "tasks")")
     }
 
     override func layout() {

@@ -103,9 +103,10 @@ package final class DayView: NSView, NSTextViewDelegate {
     }
 
     private func applyMetrics() {
-        // In the headings' typeface, as the notes' own headings are.
-        title.font = metrics.typography.headingFont(size: round(metrics.fontSize * 1.45), weight: .bold)
-        badge.font = .systemFont(ofSize: round(metrics.fontSize * 0.95), weight: .medium)
+        // At the text's size, bold, in the headings' typeface, as on the
+        // iPhone; when, beside it, in the text's.
+        title.font = metrics.typography.headingFont(size: metrics.fontSize, weight: .bold)
+        badge.font = Typography.font(metrics.typography.bodyFamily, face: metrics.typography.bodyFace, size: round(metrics.fontSize * 0.88))
         badge.textColor = metrics.typography.ink.secondary
         // The rule over a day is drawn in the colours set.
         needsDisplay = true
@@ -134,9 +135,9 @@ package final class DayView: NSView, NSTextViewDelegate {
             let untitled = TitleRename.authoredTitle(path: ref.path, source: savedText) == nil && entry.title == "Untitled"
             title.stringValue = entry.titleIsHeading || untitled ? "" : entry.title
             var notes: [String] = []
-            // A week's note: its days beside its name, this week's in the accent colour.
+            // A week's note: its days beside its name.
             let week = GraphPaths.week(fromWeeklyPath: ref.path)
-            title.textColor = week == .current ? .controlAccentColor : metrics.typography.ink.text
+            title.textColor = metrics.typography.ink.text
             if let week {
                 notes.append(OpenQuickly.weekRange(week))
                 if week == .current { notes.append("This Week") }
@@ -152,7 +153,7 @@ package final class DayView: NSView, NSTextViewDelegate {
         let today = Day.today
         let date = day.date ?? Date()
         title.stringValue = (day.year == today.year ? Self.titleFormatter : Self.titleWithYearFormatter).string(from: date)
-        title.textColor = day == today ? .controlAccentColor : metrics.typography.ink.text
+        title.textColor = metrics.typography.ink.text
         var notes: [String] = []
         switch day {
         case today: notes.append("Today")
@@ -211,7 +212,10 @@ package final class DayView: NSView, NSTextViewDelegate {
         let size = title.intrinsicContentSize
         title.frame = NSRect(x: textX, y: headerTop, width: ceil(size.width) + 4, height: ceil(size.height))
         let badgeSize = badge.intrinsicContentSize
-        badge.frame = NSRect(x: title.frame.maxX + 6, y: title.frame.maxY - ceil(badgeSize.height) - 3,
+        // At the right, clear of the buttons there, on the name's baseline.
+        let rise = (title.font?.ascender ?? 0) - (badge.font?.ascender ?? 0)
+        badge.frame = NSRect(x: max(title.frame.maxX + 6, column.maxX - trailingReserve - ceil(badgeSize.width) - 4),
+                             y: (title.frame.minY + rise).rounded(),
                              width: ceil(badgeSize.width) + 4, height: ceil(badgeSize.height))
         if badgeOnFirstLine {
             // At the right of the first line, on its middle, clear of the buttons there.

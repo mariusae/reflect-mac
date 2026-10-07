@@ -621,7 +621,7 @@ final class NoteBlock: UIView {
         }
         // The ⋯ at the header's end, on its first line's middle; the inbox's
         // Done hanging in the margin before the name, as a task's box does.
-        let firstLine = Card.top + ceil(UIFont.systemFont(ofSize: storedMetrics.size, weight: .bold).lineHeight) / 2
+        let firstLine = Card.top + ceil(Typeface.current.heading(storedMetrics.size, weight: .bold).lineHeight) / 2
         // The ⋯ only on the card being typed in; held, any card's header has it.
         menuButton.isHidden = noteMenu == nil || header.isHidden || !(isLive && editor.isFirstResponder)
         menuButton.frame = CGRect(x: bounds.width - Self.side - 8, y: firstLine - 18, width: 36, height: 36)
@@ -760,9 +760,9 @@ enum Card {
         CGRect(x: inset, y: spacing, width: max(0, bounds.width - 2 * inset), height: max(0, bounds.height - 2 * spacing))
     }
 
-    /// When, at a card's top right.
+    /// When, at a card's top right, in the font set's face.
     static func styleMeta(_ label: UILabel, size: CGFloat) {
-        label.font = UIFont.systemFont(ofSize: round(size * 0.88), weight: .regular)
+        label.font = Typeface.current.body(round(size * 0.88))
         label.textColor = Ink.secondary
         label.textAlignment = .right
     }

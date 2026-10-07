@@ -135,8 +135,8 @@ final class NoteCardBlock: NSView, ColumnBlock {
         place(width: bounds.width, laying: true)
     }
 
-    var stickyTitle: (title: String, when: String?, today: Bool)? {
-        (Column.name(of: ref).title, Column.when(of: ref), ref.day == .today)
+    var stickyTitle: (title: String, when: String?)? {
+        (Column.name(of: ref).title, Column.when(of: ref))
     }
 
     func scrubMarks(listed: Bool) -> [ScrubMark] {
