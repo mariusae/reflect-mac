@@ -1229,7 +1229,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         // typing, where holding the words moves the caret — is picked up.
         rowHold.minimumPressDuration = 0.4
         rowHold.isOnPicture = { [weak self] point in
-            guard let self, self.isEditable, self.rowUnder(point) != nil, !self.blockHold.isOnPicture!(point) else { return false }
+            guard let self, self.isEditable, self.rowUnder(point) != nil, !self.blockHold.isOnPicture!(point),
+                  self.webLink(at: point) == nil else { return false }
             switch self.target(at: point) {
             case .image: return false
             case .marker: return true
@@ -1237,6 +1238,12 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             }
         }
         rowHold.addTarget(self, action: #selector(heldRow(_:)))
+        // A web link held — reading or typing — its menu, not the row picked up.
+        linkHold.minimumPressDuration = 0.4
+        linkHold.isOnPicture = { [weak self] point in self?.webLink(at: point) != nil }
+        linkHold.addTarget(self, action: #selector(heldLink(_:)))
+        linkHold.delegate = self
+        addGestureRecognizer(linkHold)
         // A time block held by its times, its foot or its empty part: moved,
         // or made longer — not its row picked up.
         blockHold.minimumPressDuration = 0.25
@@ -2024,8 +2031,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         if let swipe = gesture as? UISwipeGestureRecognizer, carouselSwipes.contains(swipe) {
             return other is UIPanGestureRecognizer && other.view !== self && !(other.view is UIScrollView)
         }
-        return (gesture === pictureHold || gesture === rowHold || gesture === blockHold) && other.view === self && other !== markerTap
-            && other !== pictureHold && other !== rowHold && other !== blockHold
+        return (gesture === pictureHold || gesture === rowHold || gesture === blockHold || gesture === linkHold) && other.view === self
+            && other !== markerTap && other !== pictureHold && other !== rowHold && other !== blockHold && other !== linkHold
     }
 
     /// A carousel's swipes follow only a touch that starts on one: nothing
@@ -2154,6 +2161,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     private let pictureHold = PictureHold()
+    /// A web link held: its title, to add or change.
+    private let linkHold = PictureHold()
     private let rowHold = PictureHold()
     private let blockHold = PictureHold()
     /// A time block being dragged.
@@ -2225,6 +2234,86 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         // `![](path "title")` and `![](<path>)` alike.
         if let space = source.firstIndex(of: " ") { source = String(source[..<space]) }
         return source.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
+    }
+
+    // MARK: A link's title
+
+    /// The web link at a point: its row, where in the row's text, where it
+    /// goes, the title it shows, and where it is drawn.
+    private func webLink(at point: CGPoint) -> (row: Int, offset: Int, address: String, title: String, frame: CGRect)? {
+        guard textStorage.length > 0 else { return nil }
+        let inContainer = CGPoint(x: point.x - textContainerInset.left, y: point.y - textContainerInset.top)
+        let glyph = outlineLayout.glyphIndex(for: inContainer, in: textContainer)
+        guard glyph < outlineLayout.numberOfGlyphs else { return nil }
+        let bounds = outlineLayout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainer)
+        guard bounds.insetBy(dx: -4, dy: -4).contains(inContainer) else { return nil }
+        let character = outlineLayout.characterIndexForGlyph(at: glyph)
+        let row = rowIndex(at: character)
+        let paragraph = paragraphRanges[row]
+        let text = textStorage.mutableString
+        let body = NSRange(location: paragraph.location, length: max(0, paragraph.length - 1))
+        guard let span = InlineMarkup.spans(in: text, range: body).first(where: { NSLocationInRange(character, $0.range) }),
+              let link = LinkTitle.link(span, in: text) else { return nil }
+        let drawn = outlineLayout.boundingRect(forGlyphRange: outlineLayout.glyphRange(forCharacterRange: span.content, actualCharacterRange: nil),
+                                               in: textContainer).offsetBy(dx: textContainerInset.left, dy: textContainerInset.top)
+        return (row, span.range.location - paragraph.location, link.address, link.title, drawn)
+    }
+
+    /// The link held, for its menu.
+    private var heldLinkNow: (row: Int, offset: Int, address: String, title: String, frame: CGRect)?
+
+    @objc private func heldLink(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began, let link = webLink(at: gesture.location(in: self)) else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        heldLinkNow = link
+        pictureMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: "link" as NSString, sourcePoint: CGPoint(x: link.frame.midX, y: link.frame.minY)))
+    }
+
+    /// What can be done with the link held.
+    fileprivate func linkMenu() -> UIMenu? {
+        guard let link = heldLinkNow else { return nil }
+        var actions: [UIMenuElement] = []
+        if isEditable {
+            actions.append(UIAction(title: link.title.isEmpty ? "Add Title…" : "Edit Title…", image: UIImage(systemName: "character.cursor.ibeam")) { [weak self] _ in
+                self?.askTitle(for: link)
+            })
+        }
+        actions.append(UIAction(title: "Open", image: UIImage(systemName: "safari")) { [weak self] _ in self?.onOpenLink?(link.address) })
+        actions.append(UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { _ in UIPasteboard.general.string = link.address })
+        return UIMenu(children: actions)
+    }
+
+    fileprivate var heldLinkFrame: CGRect? { heldLinkNow?.frame }
+
+    /// Asks for a link's title — the one it has, to change — and sets it;
+    /// none, the address alone.
+    private func askTitle(for link: (row: Int, offset: Int, address: String, title: String, frame: CGRect)) {
+        let alert = UIAlertController(title: link.title.isEmpty ? "Add a Title" : "Edit the Title", message: link.address, preferredStyle: .alert)
+        alert.addTextField { field in
+            field.text = link.title
+            field.placeholder = "The words the link shows"
+            field.clearButtonMode = .whileEditing
+            field.autocapitalizationType = .sentences
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if !link.title.isEmpty {
+            alert.addAction(UIAlertAction(title: "Remove Title", style: .destructive) { [weak self] _ in self?.retitle(link, to: "") })
+        }
+        alert.addAction(UIAlertAction(title: link.title.isEmpty ? "Add" : "Change", style: .default) { [weak self, weak alert] _ in
+            self?.retitle(link, to: alert?.textFields?.first?.text ?? "")
+        })
+        var presenter = window?.rootViewController
+        while let next = presenter?.presentedViewController { presenter = next }
+        presenter?.present(alert, animated: true)
+    }
+
+    /// A link's title set, as a change to its row: undone as one.
+    private func retitle(_ link: (row: Int, offset: Int, address: String, title: String, frame: CGRect), to title: String) {
+        var all = rows
+        guard all.indices.contains(link.row), let retitled = LinkTitle.retitling(all[link.row].text, at: link.offset, to: title) else { return }
+        all[link.row].text = retitled.text
+        replace(all, caret: isFirstResponder ? caret : nil, undoName: link.title.isEmpty ? "Add Link Title" : "Edit Link Title")
+        UISelectionFeedbackGenerator().selectionChanged()
     }
 
     // MARK: Pictures seen
@@ -2557,6 +2646,7 @@ extension OutlineEditor: UIEditMenuInteractionDelegate {
     func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration,
                              suggestedActions: [UIMenuElement]) -> UIMenu? {
         guard let id = configuration.identifier as? NSString else { return nil }
+        if id == "link" { return linkMenu() }
         // A checklist's ring: its done items to the bottom.
         if id.hasPrefix("list:"), let index = Int(id.substring(from: 5)) {
             var all = rows
@@ -2581,6 +2671,7 @@ extension OutlineEditor: UIEditMenuInteractionDelegate {
 
     func editMenuInteraction(_ interaction: UIEditMenuInteraction, targetRectFor configuration: UIEditMenuConfiguration) -> CGRect {
         guard let id = configuration.identifier as? NSString else { return .null }
+        if id == "link" { return heldLinkFrame ?? .null }
         if id.hasPrefix("list:") { return CGRect(x: listMenuPoint.x - 12, y: listMenuPoint.y - 12, width: 24, height: 24) }
         return pictureFrame(NSRangeFromString(id as String)) ?? .null
     }

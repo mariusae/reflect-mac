@@ -993,6 +993,10 @@ package final class OutlineTextView: NSTextView {
 
     package override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
+        if outlineLayout.pictureHit(at: point, origin: textContainerOrigin) == nil, let link = webLink(at: point) {
+            LinkCard.shared.hide()
+            return linkMenu(link)
+        }
         guard let picture = outlineLayout.pictureHit(at: point, origin: textContainerOrigin),
               let location = rangeOfPicture(picture)?.location else { return super.menu(for: event) }
         LinkCard.shared.hide()
@@ -1000,6 +1004,82 @@ package final class OutlineTextView: NSTextView {
         if selectedRows != nil { leaveRowSelection() }
         setSelectedRange(NSRange(location: location, length: 0))
         return pictureMenu(picture, at: location)
+    }
+
+    // MARK: A link's menu
+
+    /// The web link under a point: its row, where in the row's text, where
+    /// it goes and the title it shows.
+    private func webLink(at point: NSPoint) -> (row: Int, offset: Int, address: String, title: String)? {
+        guard let layout = layoutManager, let container = textContainer, let storage = textStorage, storage.length > 0 else { return nil }
+        let inContainer = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        let glyph = layout.glyphIndex(for: inContainer, in: container)
+        guard glyph < layout.numberOfGlyphs,
+              layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).insetBy(dx: -1, dy: -2).contains(inContainer)
+        else { return nil }
+        let character = layout.characterIndexForGlyph(at: glyph)
+        let text = storage.string as NSString
+        guard let span = spans(atRowOf: character).first(where: { NSLocationInRange(character, $0.range) }),
+              let link = LinkTitle.link(span, in: text) else { return nil }
+        let row = rowIndex(at: character)
+        return (row, span.range.location - paragraphRanges[row].location, link.address, link.title)
+    }
+
+    /// A link's title to add or change, its address to open or copy.
+    private func linkMenu(_ link: (row: Int, offset: Int, address: String, title: String)) -> NSMenu {
+        let menu = NSMenu(title: "Link")
+        if isEditable {
+            menu.addItem(ClosureMenuItem(title: link.title.isEmpty ? "Add Title…" : "Edit Title…") { [weak self] in
+                self?.askTitle(for: link)
+            })
+            menu.addItem(.separator())
+        }
+        menu.addItem(ClosureMenuItem(title: "Open Link") { [weak self] in
+            guard let self, let url = URL(string: link.address) else { return }
+            navigator?.outlineView(self, open: url, inSplit: false)
+        })
+        menu.addItem(ClosureMenuItem(title: "Copy Link") { Self.copy(string: link.address) })
+        return menu
+    }
+
+    /// Asks for a link's title — the one it has, to change — and sets it;
+    /// none, the address alone.
+    private func askTitle(for link: (row: Int, offset: Int, address: String, title: String)) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = link.title.isEmpty ? "Add a Title" : "Edit the Title"
+        alert.informativeText = link.address
+        let field = NSTextField(string: link.title)
+        field.placeholderString = "The words the link shows"
+        field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: link.title.isEmpty ? "Add" : "Change")
+        alert.addButton(withTitle: "Cancel")
+        if !link.title.isEmpty {
+            let remove = alert.addButton(withTitle: "Remove Title")
+            remove.hasDestructiveAction = true
+        }
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                switch response {
+                case .alertFirstButtonReturn: self?.retitle(link, to: field.stringValue)
+                case .alertThirdButtonReturn: self?.retitle(link, to: "")
+                default: break
+                }
+            }
+        }
+    }
+
+    /// A link's title set, as a change to its row: undone as one.
+    private func retitle(_ link: (row: Int, offset: Int, address: String, title: String), to title: String) {
+        let before = rows
+        guard before.indices.contains(link.row),
+              let retitled = LinkTitle.retitling(before[link.row].text, at: link.offset, to: title) else { return NSSound.beep() }
+        var after = before
+        after[link.row].text = retitled.text
+        replace(before, with: after, actionName: link.title.isEmpty ? "Add Link Title" : "Edit Link Title")
+        restoreCaret(CaretPosition(row: link.row, offset: NSMaxRange(retitled.range)))
     }
 
     /// What can be done with a picture: as Safari and TextEdit offer it.
