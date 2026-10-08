@@ -12,6 +12,8 @@ extension OutlineEditor {
         var grab: CGPoint
         var autoscroll: CADisplayLink?
         var lastPoint: CGPoint = .zero
+        /// Where the finger was when the row was picked up.
+        var start: CGPoint = .zero
 
         init(block: Range<Int>, lifted: UIView, grab: CGPoint) {
             self.block = block
@@ -85,6 +87,7 @@ extension OutlineEditor {
             lifted.addSubview(picture)
             addSubview(lifted)
             let state = RowDragState(block: block, lifted: lifted, grab: CGPoint(x: point.x - frame.minX, y: point.y - frame.minY))
+            state.start = point
             state.line.backgroundColor = Ink.accent
             state.line.layer.cornerRadius = 1.5
             state.line.isHidden = true
@@ -100,6 +103,13 @@ extension OutlineEditor {
         case .changed:
             followDrag(to: point)
         case .ended:
+            // Let go where it was picked up, by a checklist's ring: what can
+            // be done to the list, not a move.
+            if let state = rowDrag, hypot(point.x - state.start.x, point.y - state.start.y) < 10, hasChecklist(under: state.block.lowerBound) {
+                finishDrag(dropping: false)
+                showListMenu(forRow: state.block.lowerBound, at: point)
+                return
+            }
             finishDrag(dropping: true)
         default:
             finishDrag(dropping: false)

@@ -360,6 +360,25 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     /// The notes shown whole: the timeline's days, a note on its own, the inbox's.
     private var noteBlocks: [NoteBlock] { blocks.compactMap { $0 as? NoteBlock } }
 
+    /// Whether a note has done items to move below the rest.
+    func canMoveDoneToBottom(in path: String) -> Bool {
+        var rows = noteBlocks.first(where: { $0.ref.path == path })?.liveEditor?.rows ?? OutlineMarkdown.parse(store.text(path)).rows
+        return OutlineEditing.moveAllDoneToBottom(&rows)
+    }
+
+    /// Every list in a note with its done items below the rest: in its
+    /// editor, to be undone there, when it is shown whole; else on disk.
+    func moveDoneToBottom(in path: String) {
+        if let editor = noteBlocks.first(where: { $0.ref.path == path })?.liveEditor {
+            editor.moveAllDoneToBottom()
+            return
+        }
+        saveAll()
+        var outline = OutlineMarkdown.parse(store.text(path))
+        guard OutlineEditing.moveAllDoneToBottom(&outline.rows) else { return }
+        store.write(OutlineMarkdown.serialize(outline), path: path)
+    }
+
     /// A new row at the top of a note shown here, the caret in it — or its
     /// one empty row, when it has nothing in it yet.
     func writeAtTop(of ref: NoteRef) {

@@ -2154,6 +2154,45 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     var rowDrag: RowDragState?
     private lazy var pictureMenu = UIEditMenuInteraction(delegate: self)
 
+    // MARK: Done to the bottom
+
+    /// Whether a row is a bullet with checkboxes among its children: the
+    /// ring round its bullet.
+    func hasChecklist(under index: Int) -> Bool {
+        guard rows.indices.contains(index), rows[index].kind == .bullet, rows[index].task == nil else { return false }
+        let end = OutlineEditing.subtreeEnd(rows, index)
+        return rows[(index + 1)..<end].contains { $0.task != nil }
+    }
+
+    /// Where the list menu was asked for, in the editor.
+    private var listMenuPoint: CGPoint = .zero
+
+    func showListMenu(forRow index: Int, at point: CGPoint) {
+        listMenuPoint = point
+        // After the finger is up: shown as it lifts, the menu goes with it.
+        DispatchQueue.main.async { [self] in
+            pictureMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: "list:\(index)" as NSString, sourcePoint: point))
+        }
+    }
+
+    /// The done items among a row's children below the rest.
+    func moveDoneToBottom(under index: Int) {
+        var all = rows
+        guard OutlineEditing.moveDoneToBottom(&all, under: index) else { return }
+        replace(all, caret: isFirstResponder ? caret : nil, undoName: "Move Done to Bottom")
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    /// Every list's done items below the rest. Says whether any moved.
+    @discardableResult
+    func moveAllDoneToBottom() -> Bool {
+        var all = rows
+        guard OutlineEditing.moveAllDoneToBottom(&all) else { return false }
+        replace(all, caret: isFirstResponder ? caret : nil, undoName: "Move Done to Bottom")
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        return true
+    }
+
     @objc private func heldPicture(_ gesture: UILongPressGestureRecognizer) {
         guard gesture.state == .began, case .image(let span) = target(at: gesture.location(in: self)),
               let frame = pictureFrame(span) else { return }
@@ -2472,10 +2511,20 @@ final class OutlineToolbar: UIInputView {
 }
 
 extension OutlineEditor: UIEditMenuInteractionDelegate {
-    /// Copy and Share, for the picture held.
+    /// Copy and Share, for the picture held; for a checklist's ring, its
+    /// done items to the bottom.
     func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration,
                              suggestedActions: [UIMenuElement]) -> UIMenu? {
         guard let id = configuration.identifier as? NSString else { return nil }
+        // A checklist's ring: its done items to the bottom.
+        if id.hasPrefix("list:"), let index = Int(id.substring(from: 5)) {
+            var all = rows
+            let movable = OutlineEditing.moveDoneToBottom(&all, under: index)
+            return UIMenu(children: [
+                UIAction(title: "Move Done to Bottom", image: UIImage(systemName: "arrow.down.to.line"),
+                         attributes: movable ? [] : .disabled) { [weak self] _ in self?.moveDoneToBottom(under: index) },
+            ])
+        }
         let span = NSRangeFromString(id as String)
         guard let file = pictureFile(span) else { return nil }
         let rect = pictureFrame(span) ?? .zero
@@ -2487,6 +2536,7 @@ extension OutlineEditor: UIEditMenuInteractionDelegate {
 
     func editMenuInteraction(_ interaction: UIEditMenuInteraction, targetRectFor configuration: UIEditMenuConfiguration) -> CGRect {
         guard let id = configuration.identifier as? NSString else { return .null }
+        if id.hasPrefix("list:") { return CGRect(x: listMenuPoint.x - 12, y: listMenuPoint.y - 12, width: 24, height: 24) }
         return pictureFrame(NSRangeFromString(id as String)) ?? .null
     }
 }

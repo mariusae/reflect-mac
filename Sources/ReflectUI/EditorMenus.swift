@@ -56,6 +56,7 @@ package enum EditorMenus {
             item("Move Down", #selector(OutlineTextView.moveRowsDown(_:)), down, [.command, .control]),
             .separator(),
             item("Toggle Done", #selector(OutlineTextView.toggleDone(_:))),
+            item("Move Done to Bottom", #selector(OutlineTextView.moveDoneToBottom(_:)), "d", [.command, .option]),
             item("Duplicate", #selector(OutlineTextView.duplicateRows(_:)), "d", [.command, .shift]),
             item("Delete Rows", #selector(OutlineTextView.deleteRows(_:)), "k", [.command, .shift]),
             .separator(),

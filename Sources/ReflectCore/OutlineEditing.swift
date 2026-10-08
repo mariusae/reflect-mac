@@ -281,6 +281,98 @@ public enum OutlineEditing {
         for index in tasks { rows[index].task = allDone ? .open : .done("x") }
     }
 
+    // MARK: Done to the bottom
+
+    /// Moves the done items of a list below the rest: those not done — and
+    /// rows with no checkbox — keep their order at the top, the done ones
+    /// theirs under them, each taking its children along. The list is the
+    /// one the row at `index` is in; or, when that has nothing done to
+    /// move, the row's own children. Blank lines stay where they were, and
+    /// an ordered list keeps counting from the top. A heading or paragraph
+    /// among the items is fixed, and the items on each side of it sorted
+    /// apart. Gives back where the row at `index` went, or nil when nothing
+    /// moved.
+    public static func moveDoneToBottom(_ rows: inout [Row], at index: Int) -> Int? {
+        guard rows.indices.contains(index) else { return nil }
+        if let moved = sinkDone(&rows, around: index, following: index) { return moved }
+        let levels = levels(rows)
+        guard subtreeEnd(levels, index) > index + 1 else { return nil }
+        return sinkDone(&rows, around: index + 1, following: index)
+    }
+
+    /// The done items among a row's children moved below the rest, as
+    /// `moveDoneToBottom` moves them. Says whether any moved.
+    @discardableResult
+    public static func moveDoneToBottom(_ rows: inout [Row], under parent: Int) -> Bool {
+        guard rows.indices.contains(parent), subtreeEnd(levels(rows), parent) > parent + 1 else { return false }
+        return sinkDone(&rows, around: parent + 1, following: parent) != nil
+    }
+
+    /// Every list in the note with its done items below the rest. Says
+    /// whether any moved.
+    @discardableResult
+    public static func moveAllDoneToBottom(_ rows: inout [Row]) -> Bool {
+        var moved = false
+        // A list is sorted from its first item, before any list in it: the
+        // rows only move within the list, so those after are still to come.
+        for index in rows.indices where sinkDone(&rows, around: index, following: index) != nil { moved = true }
+        return moved
+    }
+
+    /// The done items of the list `member` is in, moved below the rest;
+    /// where the row at `following` then is.
+    private static func sinkDone(_ rows: inout [Row], around member: Int, following: Int) -> Int? {
+        let levels = levels(rows)
+        let level = levels[member]
+        // The list: back and on over the siblings and what they hold.
+        var start = member
+        while start > 0, levels[start - 1] >= level { start -= 1 }
+        var end = member
+        while end < rows.count, levels[end] >= level { end += 1 }
+        // Each sibling, with its children.
+        var items: [Range<Int>] = []
+        var at = start
+        while at < end {
+            let next = subtreeEnd(levels, at)
+            items.append(at..<next)
+            at = next
+        }
+        // Sorted in runs of list items, apart from anything else among them.
+        var order: [Range<Int>] = []
+        var run: [Range<Int>] = []
+        var changed = false
+        func finish() {
+            let open = run.filter { rows[$0.lowerBound].task?.isDone != true }
+            let done = run.filter { rows[$0.lowerBound].task?.isDone == true }
+            if open + done != run { changed = true }
+            order += open + done
+            run.removeAll()
+        }
+        for item in items {
+            if rows[item.lowerBound].kind.isListItem {
+                run.append(item)
+            } else {
+                finish()
+                order.append(item)
+            }
+        }
+        finish()
+        guard changed else { return nil }
+        // Blank lines, and numbers, where they were; the rows in their new order.
+        let heads = items.map { rows[$0.lowerBound] }
+        var sorted: [Row] = []
+        var landed = following
+        for (position, item) in order.enumerated() {
+            if item.contains(following) { landed = start + sorted.count + (following - item.lowerBound) }
+            var moved = Array(rows[item])
+            moved[0].gap = heads[position].gap
+            if moved[0].kind == .ordered, heads[position].kind == .ordered { moved[0].number = heads[position].number }
+            sorted += moved
+        }
+        rows.replaceSubrange(start..<end, with: sorted)
+        return landed
+    }
+
     /// Brings every row to a depth Markdown can write: no deeper than one
     /// below the row before, and only below a list item.
     public static func normalize(_ rows: inout [Row]) {

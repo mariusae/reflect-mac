@@ -490,6 +490,11 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
                 store.setFrontmatter(path, "pinned", entry?.pin == nil ? String(index.nextPinOrder) : nil)
             })
         }
+        if sheet.canMoveDoneToBottom(in: path) {
+            items.append(UIAction(title: "Move Done to Bottom", image: UIImage(systemName: "arrow.down.to.line")) { [weak sheet] _ in
+                sheet?.moveDoneToBottom(in: path)
+            })
+        }
         items.append(UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { _ in
             UIPasteboard.general.string = "[[" + (day?.description ?? entry?.title ?? (path as NSString).deletingPathExtension) + "]]"
         })

@@ -255,6 +255,15 @@ extension OutlineTextView {
         }
     }
 
+    /// Outline ▸ Move Done to Bottom (⌥⌘D): the done items of the list the
+    /// caret is in — or of the row's own children — below the rest.
+    @objc package func moveDoneToBottom(_ sender: Any?) {
+        let row = targetRows.lowerBound
+        perform("Move Done to Bottom", on: row..<(row + 1)) { rows, selection in
+            OutlineEditing.moveDoneToBottom(&rows, at: selection.lowerBound).map { $0..<($0 + 1) }
+        }
+    }
+
     // MARK: Folding
 
     @objc package func collapse(_ sender: Any?) {
@@ -607,7 +616,7 @@ extension OutlineTextView {
             return isEditable && !isSelectingRows
         case #selector(indentRows(_:)), #selector(outdentRows(_:)), #selector(moveRowsUp(_:)),
              #selector(moveRowsDown(_:)), #selector(deleteRows(_:)), #selector(duplicateRows(_:)),
-             #selector(toggleDone(_:)), #selector(newRow(_:)), #selector(setRowType(_:)), #selector(toggleBullet(_:)),
+             #selector(toggleDone(_:)), #selector(moveDoneToBottom(_:)), #selector(newRow(_:)), #selector(setRowType(_:)), #selector(toggleBullet(_:)),
              #selector(insertHorizontalRule(_:)), #selector(toggleCodeBlock(_:)),
              #selector(cycleChecklist(_:)), #selector(cycleTask(_:)), #selector(newTimeBlock(_:)):
             return isEditable

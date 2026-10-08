@@ -16,6 +16,8 @@ final class NoteBlock: UIView {
         return editor
     }
     private var editorStorage: OutlineEditor?
+    /// Its editor, when it is shown whole and edited where it is.
+    var liveEditor: OutlineEditor? { mode == .full && isLive ? editorStorage : nil }
     private var storedMetrics: PhoneMetrics
     private let header = UIButton(type: .system)
     /// The card it is drawn on, and when it is, at its top right.
