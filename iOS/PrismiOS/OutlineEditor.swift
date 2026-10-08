@@ -2007,6 +2007,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     override func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
         if gesture === markerTap { return target(at: gesture.location(in: self)) != nil }
+        if gesture === dragScroll { return rowDrag != nil }
         // A carousel swiped to the picture before or after it.
         if let swipe = gesture as? UISwipeGestureRecognizer, carouselSwipes.contains(swipe) {
             return carousel(at: gesture.location(in: self)) != nil
@@ -2034,7 +2035,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-        gesture is UISwipeGestureRecognizer
+        gesture is UISwipeGestureRecognizer || gesture === dragScroll || other === dragScroll
     }
 
     @objc private func tapped(_ gesture: UITapGestureRecognizer) {
@@ -2152,6 +2153,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         didSet { outlineLayout.today = day == .today }
     }
     var rowDrag: RowDragState?
+    /// While a row is carried: another finger scrolling the sheet under it.
+    let dragScroll = UIPanGestureRecognizer()
     private lazy var pictureMenu = UIEditMenuInteraction(delegate: self)
 
     // MARK: Done to the bottom
@@ -2559,10 +2562,26 @@ final class PictureHold: UILongPressGestureRecognizer {
     /// Where the finger went down, in the view.
     private(set) var downPoint: CGPoint?
 
+    /// The finger it follows: others that come down while it is held —
+    /// another, scrolling — are not its.
+    private weak var finger: UITouch?
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        if let finger, finger.phase != .ended, finger.phase != .cancelled {
+            for touch in touches where touch !== finger { ignore(touch, for: event) }
+            let own = touches.filter { $0 === finger }
+            if !own.isEmpty { super.touchesBegan(own, with: event) }
+            return
+        }
         super.touchesBegan(touches, with: event)
+        finger = touches.first
         downPoint = touches.first?.location(in: view)
         if let touch = touches.first, isOnPicture?(touch.location(in: view)) != true { state = .failed }
+    }
+
+    override func reset() {
+        super.reset()
+        finger = nil
     }
 }
 

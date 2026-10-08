@@ -100,6 +100,14 @@ extension OutlineEditor {
             let link = CADisplayLink(target: self, selector: #selector(autoscrollDrag))
             link.add(to: .main, forMode: .common)
             state.autoscroll = link
+            // Another finger, anywhere, scrolls the sheet under the row
+            // carried: the one carrying it is already down, and not its.
+            if dragScroll.view == nil {
+                dragScroll.addTarget(self, action: #selector(scrolledWhileDragging(_:)))
+                dragScroll.delegate = self
+                dragScroll.maximumNumberOfTouches = 1
+            }
+            window?.addGestureRecognizer(dragScroll)
         case .changed:
             followDrag(to: point)
         case .ended:
@@ -157,6 +165,22 @@ extension OutlineEditor {
         followDrag(to: CGPoint(x: state.lastPoint.x, y: state.lastPoint.y + moved))
     }
 
+    /// The sheet moved by another finger while a row is carried: the row
+    /// stays under the finger carrying it, over what has come under it.
+    @objc private func scrolledWhileDragging(_ gesture: UIPanGestureRecognizer) {
+        guard gesture.state == .changed, let state = rowDrag, let outer = enclosingScroll else { return }
+        // In the window: the sheet's own measure moves as it scrolls.
+        let step = gesture.translation(in: nil).y
+        gesture.setTranslation(.zero, in: nil)
+        let top = -outer.adjustedContentInset.top
+        let bottom = max(top, outer.contentSize.height - outer.bounds.height + outer.adjustedContentInset.bottom)
+        let y = min(max(outer.contentOffset.y - step, top), bottom)
+        let moved = y - outer.contentOffset.y
+        guard moved != 0 else { return }
+        outer.contentOffset.y = y
+        followDrag(to: CGPoint(x: state.lastPoint.x, y: state.lastPoint.y + moved))
+    }
+
     private var enclosingScroll: UIScrollView? {
         var view = superview
         while let current = view {
@@ -169,6 +193,7 @@ extension OutlineEditor {
     private func finishDrag(dropping: Bool) {
         guard let state = rowDrag else { return }
         rowDrag = nil
+        dragScroll.view?.removeGestureRecognizer(dragScroll)
         state.autoscroll?.invalidate()
         state.line.removeFromSuperview()
         UIView.animate(withDuration: 0.15, animations: { state.lifted.alpha = 0 }) { _ in state.lifted.removeFromSuperview() }
