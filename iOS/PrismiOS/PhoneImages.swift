@@ -71,30 +71,76 @@ enum PhoneImages {
     }
 }
 
-/// A picture in a row: drawn in the room its first character is given.
+/// A picture in a row: drawn in the room its first character is given. Or
+/// a carousel — pictures written side by side, `![](a.png)![](b.png)` with
+/// nothing but space between, shown one at a time — as on the Mac.
 final class PhoneImageBox: NSObject {
     let image: UIImage
     /// The width the note asks for, in points, when it says.
     let width: CGFloat?
+    /// A carousel's pictures, and where each is from; one alone, just it.
+    let images: [UIImage]
+    let sources: [String]
+
+    var isCarousel: Bool { images.count > 1 }
 
     init(image: UIImage, width: CGFloat?) {
         self.image = image
+        self.width = width
+        images = [image]
+        sources = []
+    }
+
+    init(carousel images: [UIImage], sources: [String], width: CGFloat?) {
+        image = images[0]
+        self.images = images
+        self.sources = sources
         self.width = width
     }
 
     static let maxHeight: CGFloat = 420
     static let margin: CGFloat = 6
+    /// Under a carousel's pictures: a dot for each.
+    static let dotsRoom: CGFloat = 20
 
-    /// Its size where there is so much room across.
+    /// Its size where there is so much room across: a carousel as wide as
+    /// there is room, and as tall as the tallest of its pictures there, its
+    /// dots under them.
     func size(fitting available: CGFloat) -> CGSize {
-        let natural = image.size
+        if isCarousel {
+            let width = min(width ?? available, max(available, 40))
+            let height = images.map { Self.fitted($0.size, width: width).height }.max() ?? 0
+            return CGSize(width: floor(width), height: floor(height) + Self.dotsRoom)
+        }
+        return Self.fitted(image.size, width: min(width ?? image.size.width, max(available, 40)))
+    }
+
+    private static func fitted(_ natural: CGSize, width: CGFloat) -> CGSize {
         guard natural.width > 0, natural.height > 0 else { return .zero }
-        var width = min(width ?? natural.width, max(available, 40))
+        var width = width
         var height = width * natural.height / natural.width
-        if height > Self.maxHeight {
-            height = Self.maxHeight
+        if height > maxHeight {
+            height = maxHeight
             width = height * natural.width / natural.height
         }
         return CGSize(width: floor(width), height: floor(height))
+    }
+}
+
+/// Which picture each carousel shows, by its first picture's source: kept
+/// as how this phone shows the notes, as the Mac keeps its own.
+enum PhoneCarousel {
+    private static let key = "Carousels"
+    private static var shown = UserDefaults.standard.dictionary(forKey: key) as? [String: Int] ?? [:]
+
+    static func index(_ box: PhoneImageBox) -> Int {
+        guard let first = box.sources.first else { return 0 }
+        return min(max(shown[first] ?? 0, 0), box.images.count - 1)
+    }
+
+    static func set(_ index: Int, for box: PhoneImageBox) {
+        guard let first = box.sources.first else { return }
+        shown[first] = min(max(index, 0), box.images.count - 1)
+        UserDefaults.standard.set(shown, forKey: key)
     }
 }

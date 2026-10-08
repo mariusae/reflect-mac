@@ -318,6 +318,46 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
         return attributes
     }
 
+    /// A picture's part in a carousel: its first, with all its pictures; or
+    /// a later one, hidden from where the one before it ends.
+    private enum CarouselPart {
+        case first([(source: String, image: UIImage)])
+        case member(from: Int)
+    }
+
+    /// The carousels among a row's spans — pictures written side by side,
+    /// nothing but space between, two or more — by where each picture is.
+    /// A picture the caret is in is its Markdown, and parts them.
+    private func carousels(in spans: [InlineSpan], text: NSString) -> [Int: CarouselPart] {
+        var result: [Int: CarouselPart] = [:]
+        var run: [(range: NSRange, source: String, image: UIImage)] = []
+        func finish() {
+            defer { run.removeAll() }
+            guard run.count >= 2 else { return }
+            result[run[0].range.location] = .first(run.map { ($0.source, $0.image) })
+            for (previous, member) in zip(run, run.dropFirst()) {
+                result[member.range.location] = .member(from: NSMaxRange(previous.range))
+            }
+        }
+        for span in spans {
+            guard case .image(let reference) = span.kind, span.range.length > 2,
+                  Tweet.key(from: reference.source) == nil, Video.id(from: reference.source) == nil,
+                  !(caret.map { $0 > span.range.location && $0 < NSMaxRange(span.range) } ?? false),
+                  let image = PhoneImages.lookup(reference.source) else {
+                // Anything shown between two pictures parts them.
+                if span.kind != .comment { finish() }
+                continue
+            }
+            if let last = run.last {
+                let gap = NSRange(location: NSMaxRange(last.range), length: span.range.location - NSMaxRange(last.range))
+                if gap.length < 0 || !text.substring(with: gap).trimmingCharacters(in: .whitespaces).isEmpty { finish() }
+            }
+            run.append((span.range, reference.source, image))
+        }
+        finish()
+        return result
+    }
+
     /// The inline Markdown in a row, drawn: its marks hidden — but for the
     /// span the caret is in — links as pills, and the rest as it reads.
     private func styleInline(_ storage: NSTextStorage, in paragraph: NSRange, row: Row) {
@@ -326,7 +366,9 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
         let base = metrics.font(for: row)
         func font(at location: Int) -> UIFont { storage.attribute(.font, at: location, effectiveRange: nil) as? UIFont ?? base }
         let inHeading: Bool = { if case .heading = row.kind { true } else { false } }()
-        for span in InlineMarkup.spans(in: text, range: body) {
+        let spans = InlineMarkup.spans(in: text, range: body)
+        let carousels = carousels(in: spans, text: text)
+        for span in spans {
             let content = span.content
             let revealed = caret.map { NSLocationInRange($0, span.range) || $0 == NSMaxRange(span.range) } ?? false
             switch span.kind {
@@ -383,12 +425,22 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
                 // for while the caret is in it, to edit what it says.
                 // (Text is styled on the main thread, where the pictures are kept.)
                 let inside = caret.map { $0 > span.range.location && $0 < NSMaxRange(span.range) } ?? false
+                // A carousel's later pictures, and the space before each, drawn in its first.
+                if case .member(let from)? = carousels[span.range.location] {
+                    let hidden = NSRange(location: from, length: NSMaxRange(span.range) - from)
+                    storage.addAttribute(.prismHidden, value: true, range: hidden)
+                    storage.removeAttribute(.strikethroughStyle, range: hidden)
+                    continue
+                }
                 if !inside, span.range.length > 2, let image = PhoneImages.lookup(reference.source) {
                     // The `!` takes the rest of a line it follows text on —
                     // a line may not break before `!`, but may after it —
                     // and the `[` is the picture, on a line of its own; the
                     // rest of the Markdown is not shown.
-                    let box = PhoneImageBox(image: image, width: reference.width.map { CGFloat($0) })
+                    var box = PhoneImageBox(image: image, width: reference.width.map { CGFloat($0) })
+                    if case .first(let pictures)? = carousels[span.range.location] {
+                        box = PhoneImageBox(carousel: pictures.map(\.image), sources: pictures.map(\.source), width: box.width)
+                    }
                     let start = span.range.location
                     storage.addAttribute(.prismBreak, value: true, range: NSRange(location: start, length: 1))
                     storage.addAttribute(.prismImage, value: box, range: NSRange(location: start + 1, length: 1))
@@ -792,6 +844,10 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     private func drawImages(in characters: NSRange, at origin: CGPoint) {
         for (box, _, frame) in images(in: characters) {
             let frame = frame.offsetBy(dx: origin.x, dy: origin.y)
+            if box.isCarousel {
+                drawCarousel(box, in: frame)
+                continue
+            }
             let path = UIBezierPath(roundedRect: frame, cornerRadius: 8)
             UIGraphicsGetCurrentContext()?.saveGState()
             path.addClip()
@@ -800,6 +856,48 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             Ink.rule.setStroke()
             path.lineWidth = 1
             path.stroke()
+        }
+    }
+
+    /// The picture a carousel is at, fitted and centred over a quiet
+    /// ground, which it is of how many over it; a dot for each under it.
+    private func drawCarousel(_ box: PhoneImageBox, in frame: CGRect) {
+        let index = PhoneCarousel.index(box)
+        var pictures = frame
+        pictures.size.height -= PhoneImageBox.dotsRoom
+        let path = UIBezierPath(roundedRect: pictures, cornerRadius: 8)
+        let context = UIGraphicsGetCurrentContext()
+        context?.saveGState()
+        path.addClip()
+        Ink.codeBack.setFill()
+        UIRectFill(pictures)
+        let image = box.images[index]
+        if image.size.width > 0, image.size.height > 0 {
+            let scale = min(pictures.width / image.size.width, pictures.height / image.size.height)
+            let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+            image.draw(in: CGRect(x: pictures.midX - size.width / 2, y: pictures.midY - size.height / 2, width: size.width, height: size.height))
+        }
+        // Which, of how many, at the top right.
+        let label = NSAttributedString(string: "\(index + 1)/\(box.images.count)", attributes: [
+            .font: UIFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold), .foregroundColor: UIColor.white,
+        ])
+        let size = label.size()
+        let badge = CGRect(x: pictures.maxX - size.width - 22, y: pictures.minY + 10, width: size.width + 12, height: size.height + 4)
+        UIColor.black.withAlphaComponent(0.45).setFill()
+        UIBezierPath(roundedRect: badge, cornerRadius: badge.height / 2).fill()
+        label.draw(at: CGPoint(x: badge.minX + 6, y: badge.minY + 2))
+        context?.restoreGState()
+        Ink.rule.setStroke()
+        path.lineWidth = 1
+        path.stroke()
+        // The dots, under it.
+        let count = box.images.count
+        let spacing: CGFloat = 12, side: CGFloat = 6
+        let start = pictures.midX - spacing * CGFloat(count - 1) / 2
+        for i in 0..<count {
+            (i == index ? Ink.text : Ink.faint).setFill()
+            UIBezierPath(ovalIn: CGRect(x: start + spacing * CGFloat(i) - side / 2, y: frame.maxY - PhoneImageBox.dotsRoom / 2 + 1 - side / 2,
+                                        width: side, height: side)).fill()
         }
     }
 
@@ -1159,6 +1257,11 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             swipe.direction = direction
             swipe.delegate = self
             addGestureRecognizer(swipe)
+            let turn = UISwipeGestureRecognizer(target: self, action: #selector(swipedCarousel(_:)))
+            turn.direction = direction
+            turn.delegate = self
+            addGestureRecognizer(turn)
+            carouselSwipes.append(turn)
         }
         // Each kept, to be let go with the editor: an observer outlives what
         // it watches, and a storage built later at the same address, off
@@ -1904,15 +2007,30 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     override func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
         if gesture === markerTap { return target(at: gesture.location(in: self)) != nil }
+        // A carousel swiped to the picture before or after it.
+        if let swipe = gesture as? UISwipeGestureRecognizer, carouselSwipes.contains(swipe) {
+            return carousel(at: gesture.location(in: self)) != nil
+        }
         // A row swiped in or out only while typing in it: otherwise a
         // swipe goes between the columns.
-        if gesture is UISwipeGestureRecognizer { return isFirstResponder }
+        if gesture is UISwipeGestureRecognizer { return isFirstResponder && carousel(at: gesture.location(in: self)) == nil }
         return super.gestureRecognizerShouldBegin(gesture)
     }
 
     func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
-        (gesture === pictureHold || gesture === rowHold || gesture === blockHold) && other.view === self && other !== markerTap
+        // A swipe on a carousel turns it, not the sheet back to the one before.
+        if let swipe = gesture as? UISwipeGestureRecognizer, carouselSwipes.contains(swipe) {
+            return other is UIPanGestureRecognizer && other.view !== self && !(other.view is UIScrollView)
+        }
+        return (gesture === pictureHold || gesture === rowHold || gesture === blockHold) && other.view === self && other !== markerTap
             && other !== pictureHold && other !== rowHold && other !== blockHold
+    }
+
+    /// A carousel's swipes follow only a touch that starts on one: nothing
+    /// else waits on them.
+    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard let swipe = gesture as? UISwipeGestureRecognizer, carouselSwipes.contains(swipe) else { return true }
+        return carousel(at: touch.location(in: self)) != nil
     }
 
     func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
@@ -1937,6 +2055,13 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             toggleFold(at: index)
             UISelectionFeedbackGenerator().selectionChanged()
         case .image(let span):
+            // A carousel's edges turn it.
+            let point = gesture.location(in: self)
+            if let carousel = carousel(at: point) {
+                let edge = carousel.frame.width * 0.3
+                if point.x < carousel.frame.minX + edge { return turn(carousel.box, span: carousel.span, by: -1) }
+                if point.x > carousel.frame.maxX - edge { return turn(carousel.box, span: carousel.span, by: 1) }
+            }
             // The caret after it, the picture still shown: its Markdown is
             // for the caret to go into, not for a tap.
             if !isFirstResponder { becomeFirstResponder() }
@@ -2072,6 +2197,50 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         let paragraph = textStorage.mutableString.paragraphRange(for: NSRange(location: span.location, length: 0))
         guard let frame = outlineLayout.images(in: paragraph).first(where: { $0.span == span })?.frame else { return nil }
         return frame.offsetBy(dx: textContainerInset.left, dy: textContainerInset.top)
+    }
+
+    // MARK: Carousels
+
+    private var carouselSwipes: [UISwipeGestureRecognizer] = []
+
+    /// The carousel at a point in the editor: it, its Markdown's range,
+    /// and where it is drawn, in the editor.
+    private func carousel(at point: CGPoint) -> (box: PhoneImageBox, span: NSRange, frame: CGRect)? {
+        guard textStorage.length > 0 else { return nil }
+        let inContainer = CGPoint(x: point.x - textContainerInset.left, y: point.y - textContainerInset.top)
+        let glyph = outlineLayout.glyphIndex(for: inContainer, in: textContainer)
+        let index = rowIndex(at: outlineLayout.characterIndexForGlyph(at: glyph))
+        guard let found = outlineLayout.images(in: paragraphRanges[index]).first(where: { $0.box.isCarousel && $0.frame.contains(inContainer) })
+        else { return nil }
+        return (found.box, found.span, found.frame.offsetBy(dx: textContainerInset.left, dy: textContainerInset.top))
+    }
+
+    @objc private func swipedCarousel(_ gesture: UISwipeGestureRecognizer) {
+        guard let carousel = carousel(at: gesture.location(in: self)) else { return }
+        turn(carousel.box, span: carousel.span, by: gesture.direction == .left ? 1 : -1)
+    }
+
+    /// A carousel to the picture so many after the one it shows — before,
+    /// for fewer than none — faded across.
+    private func turn(_ box: PhoneImageBox, span: NSRange, by step: Int) {
+        let current = PhoneCarousel.index(box)
+        let next = min(max(current + step, 0), box.images.count - 1)
+        guard next != current else {
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred(intensity: 0.5)
+            return
+        }
+        PhoneCarousel.set(next, for: box)
+        UISelectionFeedbackGenerator().selectionChanged()
+        outlineLayout.invalidateDisplay(forCharacterRange: span)
+        // The text is drawn in views within this one, which do not hear of
+        // it otherwise: each told, the carousel's picture faded across.
+        func redraw(_ view: UIView) {
+            view.setNeedsDisplay()
+            view.subviews.forEach(redraw)
+        }
+        UIView.transition(with: self, duration: 0.2, options: [.transitionCrossDissolve, .allowUserInteraction]) {
+            redraw(self)
+        }
     }
 
     /// A row swiped right goes in a level; left, out.
