@@ -255,7 +255,7 @@ extension OutlineTextView {
         }
     }
 
-    /// Outline ▸ Move Done to Bottom (⌥⌘D): the done items of the list the
+    /// Outline ▸ Move Done to Bottom (⌥⇧⌘D — ⌥⌘D is the Dock's): the done items of the list the
     /// caret is in — or of the row's own children — below the rest.
     @objc package func moveDoneToBottom(_ sender: Any?) {
         let row = targetRows.lowerBound
