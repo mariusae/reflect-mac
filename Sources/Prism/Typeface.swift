@@ -95,7 +95,7 @@ enum Typeface: String, CaseIterable {
         switch self {
         case .mona: "Monaspace Xenon"
         case .literata, .fraunces, .alegreya, .styrene: "JetBrains Mono"
-        case .lato: "Roboto Mono"
+        case .lato: "Paper Mono"
         // Hoefler's own, when it is installed; else the bundled one.
         case .ideal: Self.isInstalled("Operator Mono SSm") ? "Operator Mono SSm" : "JetBrains Mono"
         case .source: "Source Code Pro"

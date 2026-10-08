@@ -69,7 +69,7 @@ enum Typeface: String, CaseIterable, Identifiable {
         switch self {
         case .mona: "Monaspace Xenon"
         case .literata, .fraunces, .alegreya: "JetBrains Mono"
-        case .lato: "Roboto Mono"
+        case .lato: "Paper Mono"
         case .source: "Source Code Pro"
         case .plex: "IBM Plex Mono"
         case .system: nil

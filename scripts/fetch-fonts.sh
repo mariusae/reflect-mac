@@ -3,8 +3,8 @@
 # BSD) into Frameworks/: Mona Sans, with Monaspace Xenon for code and Radon
 # for its italic; Recursive's Linear statics; Go; and, from Google Fonts,
 # Literata with JetBrains Mono, Source Serif 4 with Source Sans 3 and Source
-# Code Pro, IBM Plex Sans with Plex Mono, Fraunces, Alegreya Sans, and Lato. Files
-# already there are kept.
+# Code Pro, IBM Plex Sans with Plex Mono, Fraunces, Alegreya Sans, and Lato;
+# and Paper Mono, for Lato's code. Files already there are kept.
 set -e
 cd "$(dirname "$0")/.."
 
@@ -81,7 +81,12 @@ google_fonts alegreyasans alegreya AlegreyaSans-Regular.ttf AlegreyaSans-Italic.
   AlegreyaSans-LightItalic.ttf AlegreyaSans-Medium.ttf AlegreyaSans-MediumItalic.ttf AlegreyaSans-Bold.ttf AlegreyaSans-BoldItalic.ttf
 google_fonts lato lato Lato-Regular.ttf Lato-Italic.ttf Lato-Light.ttf Lato-LightItalic.ttf Lato-Bold.ttf \
   Lato-BoldItalic.ttf Lato-Black.ttf Lato-BlackItalic.ttf
-google_fonts robotomono lato 'RobotoMono[wght].ttf' 'RobotoMono-Italic[wght].ttf'
+# Lato's code in Paper Mono, from Paper's own repository.
+paper=e6eaeceaef02e77e3db997711e07a16378de2bd7
+for face in Regular Medium Bold; do
+  github_file paper-design/paper-mono $paper "fonts/ttf/PaperMono-$face.ttf" "Frameworks/lato/PaperMono-$face.ttf"
+done
+github_file paper-design/paper-mono $paper OFL.txt Frameworks/lato/OFL-papermono.txt
 google_fonts ibmplexsans plex 'IBMPlexSans[wdth,wght].ttf' 'IBMPlexSans-Italic[wdth,wght].ttf'
 google_fonts ibmplexmono plex IBMPlexMono-Regular.ttf IBMPlexMono-Italic.ttf IBMPlexMono-Medium.ttf \
   IBMPlexMono-SemiBold.ttf IBMPlexMono-Bold.ttf IBMPlexMono-BoldItalic.ttf
