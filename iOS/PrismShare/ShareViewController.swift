@@ -3,7 +3,8 @@ import UniformTypeIdentifiers
 
 /// Share ▸ Prism: a web page kept as a link note, as the Mac's capture
 /// keeps one — its title, address and description, and what was selected
-/// on it as a highlight — linked from today. A card shows what will be
+/// on it as a highlight — linked from today; or, chosen, a bullet linking
+/// to it at the top of today. A card shows what will be
 /// kept, the title editable; Save leaves it for Prism, which makes the
 /// note when it next opens.
 final class ShareViewController: UIViewController {
@@ -13,6 +14,8 @@ final class ShareViewController: UIViewController {
     private let address = UILabel()
     private let quote = UILabel()
     private let status = UILabel()
+    /// Where it goes: a note of its own, or a bullet at the top of today.
+    private let destination = UISegmentedControl(items: ["Link Note", "Today"])
     private let save = UIButton(type: .system)
     private let cancel = UIButton(type: .system)
     private var item: ShareQueue.Item?
@@ -71,8 +74,15 @@ final class ShareViewController: UIViewController {
         cancel.configuration = cancelStyle
         cancel.addAction(UIAction { [weak self] _ in self?.close(cancelled: true) }, for: .touchUpInside)
 
+        destination.selectedSegmentIndex = ShareQueue.lastDestination == "today" ? 1 : 0
+        destination.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            ShareQueue.lastDestination = isToday ? "today" : "note"
+            describe()
+        }, for: .valueChanged)
+
         let buttons = UIStackView(arrangedSubviews: [cancel, UIView(), save])
-        let stack = UIStackView(arrangedSubviews: [heading, titleField, address, quote, status, buttons])
+        let stack = UIStackView(arrangedSubviews: [heading, titleField, address, quote, destination, status, buttons])
         stack.axis = .vertical
         stack.spacing = 10
         stack.setCustomSpacing(18, after: status)
@@ -144,6 +154,7 @@ final class ShareViewController: UIViewController {
             status.text = "There is no web page here to save."
             titleField.isHidden = true
             address.isHidden = true
+            destination.isHidden = true
             quote.isHidden = true
             return
         }
@@ -151,10 +162,24 @@ final class ShareViewController: UIViewController {
         address.text = found.url
         quote.text = found.highlights.first.map { "“\($0)”" }
         quote.isHidden = found.highlights.isEmpty
-        status.text = found.highlights.isEmpty
-            ? "Kept as a link note, linked from today."
-            : "Kept as a link note with this highlight, linked from today."
+        describe()
         save.isEnabled = true
+    }
+
+    private var isToday: Bool { destination.selectedSegmentIndex == 1 }
+
+    /// What saving will do, as chosen.
+    private func describe() {
+        guard let item else { return }
+        if isToday {
+            status.text = item.highlights.isEmpty
+                ? "Added to the top of today, as a link."
+                : "Added to the top of today, as a link, this highlight under it."
+        } else {
+            status.text = item.highlights.isEmpty
+                ? "Kept as a link note, linked from today."
+                : "Kept as a link note with this highlight, linked from today."
+        }
     }
 
     // MARK: Keeping it
@@ -163,6 +188,7 @@ final class ShareViewController: UIViewController {
         guard var item else { return }
         let typed = titleField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         item.title = typed
+        item.destination = isToday ? "today" : "note"
         do {
             try ShareQueue.enqueue(item)
         } catch {

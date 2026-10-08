@@ -76,6 +76,18 @@ function render() {
   if (extra) $("selection").textContent = "The selected text will be included too.";
 }
 
+/** Where the page goes: "note", a note of its own, or "today". */
+function destination() {
+  return document.querySelector('input[name="destination"]:checked')?.value ?? "note";
+}
+
+function setDestination(value) {
+  for (const input of document.querySelectorAll('input[name="destination"]')) input.checked = input.value === value;
+  // Today keeps a link, not a picture of the page.
+  $("screenshot-toggle").hidden = value === "today";
+  $("save").textContent = value === "today" ? "Add to Today" : "Save to Prism";
+}
+
 async function takeScreenshot() {
   if (shot || !$("screenshot").checked) return;
   shot = await api.tabs.captureVisibleTab(tab.windowId, { format: "png" }).catch(() => null);
@@ -84,8 +96,9 @@ async function takeScreenshot() {
 async function load() {
   [tab] = await api.tabs.query({ active: true, currentWindow: true });
   token = (await api.storage.local.get("token")).token ?? null;
-  const stored = await api.storage.local.get("screenshot");
+  const stored = await api.storage.local.get(["screenshot", "destination"]);
   $("screenshot").checked = stored.screenshot ?? true;
+  setDestination(stored.destination ?? "note");
 
   let ping;
   try {
@@ -124,16 +137,20 @@ async function save() {
   try {
     const highlights = [...page.highlights];
     if (page.selection && !highlights.includes(page.selection)) highlights.push(page.selection);
+    const to = destination();
     const saved = await call("/capture", {
       url: page.url,
       title: $("title").value.trim() || page.title,
       description: page.description,
       highlights,
-      screenshot: $("screenshot").checked ? shot : null,
+      screenshot: to === "note" && $("screenshot").checked ? shot : null,
+      to,
     });
     button.textContent = "Saved";
     $("when").textContent = "Saved";
-    $("status").textContent = `In your notes as “${saved.title}”, and linked from today.`;
+    $("status").textContent = to === "today"
+      ? "Added to the top of today."
+      : `In your notes as “${saved.title}”, and linked from today.`;
     $("status").className = "status";
     $("status").hidden = false;
     $("open").hidden = false;
@@ -149,7 +166,7 @@ async function save() {
       return;
     }
     button.disabled = false;
-    button.textContent = "Save to Prism";
+    button.textContent = destination() === "today" ? "Add to Today" : "Save to Prism";
     $("status").textContent = error.message.includes("fetch") ? "Prism isn’t open." : error.message;
     $("status").className = "status error";
     $("status").hidden = false;
@@ -178,6 +195,12 @@ async function pair() {
 }
 
 $("save").addEventListener("click", save);
+for (const input of document.querySelectorAll('input[name="destination"]')) {
+  input.addEventListener("change", () => {
+    setDestination(input.value);
+    api.storage.local.set({ destination: input.value });
+  });
+}
 $("pair-button").addEventListener("click", pair);
 $("retry").addEventListener("click", load);
 $("title").addEventListener("input", fit);

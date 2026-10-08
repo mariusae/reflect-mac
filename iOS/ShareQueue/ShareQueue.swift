@@ -15,6 +15,15 @@ enum ShareQueue {
         var description: String
         var highlights: [String]
         var shared: Date
+        /// "today": a bullet at the top of the day's note, linking to it;
+        /// else, as before, a note of its own linked from the day.
+        var destination: String? = nil
+    }
+
+    /// The last choice of where pages go, for the next share.
+    static var lastDestination: String {
+        get { UserDefaults(suiteName: group)?.string(forKey: "ShareDestination") ?? "note" }
+        set { UserDefaults(suiteName: group)?.set(newValue, forKey: "ShareDestination") }
     }
 
     static var folder: URL? {

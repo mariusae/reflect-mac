@@ -17,6 +17,13 @@ public enum WebCapture {
         public var highlights: [String]
         /// The screenshot, once saved: its source in the graph.
         public var screenshot: String?
+        /// Where it goes: a note of its own, linked from the day; or a
+        /// bullet linking to it at the top of the day's note.
+        public var destination: Destination = .note
+
+        public enum Destination: String, Sendable, Codable {
+            case note, today
+        }
 
         public init(url: String, title: String, description: String = "", highlights: [String] = [], screenshot: String? = nil) {
             self.url = url
@@ -187,6 +194,41 @@ public enum WebCapture {
         }
         outline.rows = rows
         return OutlineMarkdown.serialize(outline)
+    }
+
+    /// A day's note with a page at its top: a plain bullet linking to it
+    /// by its title, the passages highlighted on it under that. Under a
+    /// title the note opens with, after it.
+    public static func prepending(_ page: Page, toDay source: String) -> String {
+        var outline = OutlineMarkdown.parse(source)
+        var rows = outline.isBlank ? [] : outline.rows
+        // As a note's title: brackets made parentheses, so it reads as a link.
+        let words = title(page.title, url: page.url)
+        // An address Markdown would end early, in angle brackets.
+        let address = page.url.contains(" ") || page.url.contains(")") || page.url.contains("(") ? "<\(page.url)>" : page.url
+        var added = [Row(kind: .bullet, text: "[\(words)](\(address))")]
+        added += page.highlights.map(clean).filter { !$0.isEmpty }.map { Row(kind: .bullet, depth: 1, text: $0) }
+        var at = 0
+        if let first = rows.first, case .heading(1) = first.kind { at = 1 }
+        // The blank lines before what was first stay before what is now.
+        if at < rows.count {
+            added[0].gap = rows[at].gap
+            rows[at].gap = []
+        }
+        rows.insert(contentsOf: added, at: at)
+        outline.rows = rows
+        return OutlineMarkdown.serialize(outline)
+    }
+
+    /// Saves a page to a day: a bullet linking to it at the top of the
+    /// day's note, made when the day has none. Returns the day's path.
+    @discardableResult
+    public static func saveToDay(_ page: Page, in graph: Graph, index: NoteIndex, on day: Day = .today) throws -> String {
+        let path = GraphPaths.dailyPath(for: day)
+        let source = graph.read(path: path) ?? ""
+        try graph.write(prepending(page, toDay: source), path: path)
+        index.refresh(path)
+        return path
     }
 
     // MARK: Saving

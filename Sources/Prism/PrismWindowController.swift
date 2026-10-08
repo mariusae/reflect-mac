@@ -2095,6 +2095,13 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     /// and linked from today; every column showing them caught up.
     func capture(_ page: WebCapture.Page, screenshot: Data?) throws -> (path: String, title: String) {
         save()
+        // To today: a bullet at its top, linking to the page; no note, nor screenshot.
+        if page.destination == .today {
+            let path = try WebCapture.saveToDay(page, in: graph, index: index)
+            notesChanged([path])
+            sync.noteChanged()
+            return (path, "Today")
+        }
         var page = page
         if let screenshot {
             let name = "screenshot-" + Assets.slug(WebCapture.title(page.title, url: page.url)).prefix(40) + "-"

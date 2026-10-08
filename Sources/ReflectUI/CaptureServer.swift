@@ -15,7 +15,8 @@ import ReflectCore
 ///
 ///     GET  /ping      the app, and the graph it writes to
 ///     POST /pair      {"browser"} → {"token"}, once allowed
-///     POST /capture   {"url", "title", "description", "highlights", "screenshot"} → {"path", "title"}
+///     POST /capture   {"url", "title", "description", "highlights", "screenshot", "to"} → {"path", "title"}
+///                     — `to` "today" for a bullet at the top of today, else a note of its own
 ///     POST /open      {"path"}: the note shown, and the app brought forward
 @MainActor
 package final class CaptureServer {
@@ -174,9 +175,11 @@ package final class CaptureServer {
             respond(connection, status: 400, json: ["error": "Nothing to capture."], origin: origin)
             return
         }
-        let page = WebCapture.Page(url: url, title: body["title"] as? String ?? "",
+        var page = WebCapture.Page(url: url, title: body["title"] as? String ?? "",
                                    description: body["description"] as? String ?? "",
                                    highlights: body["highlights"] as? [String] ?? [])
+        // `"to": "today"`: a bullet at the top of today, not a note of its own.
+        page.destination = (body["to"] as? String).flatMap(WebCapture.Page.Destination.init(rawValue:)) ?? .note
         // A data URL: `data:image/png;base64,…`.
         let screenshot = (body["screenshot"] as? String).flatMap { dataURL -> Data? in
             guard let comma = dataURL.firstIndex(of: ",") else { return nil }

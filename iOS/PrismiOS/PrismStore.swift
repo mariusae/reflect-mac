@@ -238,8 +238,10 @@ final class PrismStore {
                 if page.description.isEmpty { page.description = read.description }
             }
             let day = Day(item.shared)
+            let toDay = item.destination == "today"
             let saved = await Task.detached(priority: .userInitiated) {
-                try? WebCapture.save(page, in: graph, index: index, on: day)
+                toDay ? try? WebCapture.saveToDay(page, in: graph, index: index, on: day)
+                    : try? WebCapture.save(page, in: graph, index: index, on: day)
             }.value
             guard let saved else { continue }
             paths += [saved, GraphPaths.dailyPath(for: day)]

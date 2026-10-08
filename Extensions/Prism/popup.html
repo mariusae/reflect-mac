@@ -21,8 +21,14 @@
       <p id="selection" class="hint" hidden></p>
     </article>
 
+    <!-- Where it goes: a note of its own, or a bullet at the top of today. -->
+    <div class="destination" role="radiogroup" aria-label="Save as">
+      <label><input type="radio" name="destination" value="note" checked> Link note</label>
+      <label><input type="radio" name="destination" value="today"> Today</label>
+    </div>
+
     <footer>
-      <label class="toggle"><input id="screenshot" type="checkbox" checked> Screenshot</label>
+      <label class="toggle" id="screenshot-toggle"><input id="screenshot" type="checkbox" checked> Screenshot</label>
       <button id="save" class="primary">Save to Prism</button>
     </footer>
     <p id="status" class="status" hidden></p>
