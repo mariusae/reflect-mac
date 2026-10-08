@@ -34,7 +34,15 @@ Settings ▸ **Allow unsigned extensions**.
 same kind of note, through Prism — which listens on `127.0.0.1:47821`, beside
 Reflect Mac's — and its popup shows the page as Prism will, as a card: the site
 and when, a screenshot, the title (editable), its description, and the passages
-highlighted. Both extensions can be installed at once.
+highlighted. It can also save a page to **Today** instead: a plain bullet
+linking to it at the top of today's note, its highlights under it, and no note
+of its own. The choice is remembered. Both extensions can be installed at once.
 
 `chrome://extensions` → **Developer mode** → **Load unpacked** → choose
 `Extensions/Prism`.
+
+For Safari, `Safari/Prism Capture/` carries it as `Safari/Reflect Capture/`
+carries Reflect's, from the same files in `Prism/`: build and run
+`Prism Capture.xcodeproj`, signed with your team, then turn it on in Safari ▸
+Settings ▸ Extensions (a build signed only locally needs **Allow unsigned
+extensions**, as above).
