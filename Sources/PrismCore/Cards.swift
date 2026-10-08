@@ -30,19 +30,24 @@ public struct NoteSummary: Equatable, Sendable {
     public var headline: String?
     /// The words after it, as they read.
     public var snippet: String
-    /// The first picture's source, as its Markdown gives it.
+    /// The first picture's source, as its Markdown gives it — or its
+    /// cover's, when it has one.
     public var picture: String?
+    /// Whether the picture is its cover: shown larger, at the card's top.
+    public var isCover: Bool
 
-    public init(headline: String?, snippet: String, picture: String?) {
+    public init(headline: String?, snippet: String, picture: String?, isCover: Bool = false) {
         self.headline = headline
         self.snippet = snippet
         self.picture = picture
+        self.isCover = isCover
     }
 
     /// The summary of a note's source, its card headed by `title`.
     public static func of(_ source: String, title: String?, length: Int = 280) -> NoteSummary {
         let rows = Row.unfold(OutlineMarkdown.parse(source).rows)
-        var picture: String?
+        let cover = NoteCover.source(in: source)
+        var picture = cover
         var lines: [String] = []
         for row in rows {
             if picture == nil, let found = firstPicture(in: row.text) { picture = found }
@@ -58,7 +63,7 @@ public struct NoteSummary: Equatable, Sendable {
         let headline = lines.first
         var snippet = lines.dropFirst().joined(separator: " · ")
         if snippet.count > length { snippet = String(snippet.prefix(length)).trimmingCharacters(in: .whitespaces) + "…" }
-        return NoteSummary(headline: headline, snippet: snippet, picture: picture)
+        return NoteSummary(headline: headline, snippet: snippet, picture: picture, isCover: cover != nil)
     }
 
     private static let image = try! NSRegularExpression(pattern: #"!\[[^\[\]\n]*\]\(([^)\s]+)\)"#)

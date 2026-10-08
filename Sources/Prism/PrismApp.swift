@@ -462,6 +462,9 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("Topic", #selector(PrismWindowController.toggleTopic(_:))),
             item("Private", #selector(PrismWindowController.togglePrivate(_:))),
             .separator(),
+            item("Add Cover…", #selector(PrismWindowController.addCover(_:))),
+            item("Remove Cover", #selector(PrismWindowController.removeCover(_:))),
+            .separator(),
             item("Copy Link", #selector(PrismWindowController.copyNoteLink(_:))),
             item("Show in Finder", #selector(PrismWindowController.revealNoteInFinder(_:))),
         ])

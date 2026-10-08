@@ -1,6 +1,7 @@
 import SwiftUI
 import AuthenticationServices
 import UIKit
+import PhotosUI
 import ReflectCore
 import PrismCore
 import ReflectGit2
@@ -490,6 +491,18 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
                 store.setFrontmatter(path, "pinned", entry?.pin == nil ? String(index.nextPinOrder) : nil)
             })
         }
+        if day == nil {
+            items.append(UIAction(title: entry?.cover == nil ? "Add Cover…" : "Change Cover…", image: UIImage(systemName: "photo.artframe")) { [weak self, weak sheet] _ in
+                sheet?.saveAll()
+                self?.chooseCover(for: path)
+            })
+            if entry?.cover != nil {
+                items.append(UIAction(title: "Remove Cover", image: UIImage(systemName: "rectangle.slash")) { [weak self, weak sheet] _ in
+                    sheet?.saveAll()
+                    self?.store.setCover(path, nil)
+                })
+            }
+        }
         if sheet.canMoveDoneToBottom(in: path) {
             items.append(UIAction(title: "Move Done to Bottom", image: UIImage(systemName: "arrow.down.to.line")) { [weak sheet] _ in
                 sheet?.moveDoneToBottom(in: path)
@@ -509,6 +522,22 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             }))
         }
         return UIMenu(options: .displayInline, children: items)
+    }
+
+    // MARK: Covers
+
+    /// The note a picture is being chosen for, as its cover.
+    private var coverFor: String?
+
+    /// A picture from Photos, for a note's cover.
+    private func chooseCover(for path: String) {
+        var configuration = PHPickerConfiguration()
+        configuration.filter = .images
+        configuration.selectionLimit = 1
+        let picker = PHPickerViewController(configuration: configuration)
+        picker.delegate = self
+        coverFor = path
+        present(picker, animated: true)
     }
 
     /// Go to a note or a day, or search them all: the search tab, opened out.
@@ -797,5 +826,39 @@ private struct SignInRunner: View {
                 done(error.localizedDescription)
             }
         }
+    }
+}
+
+extension ColumnsController: PHPickerViewControllerDelegate {
+    /// The picture chosen: no bigger than a cover needs, kept as a JPEG —
+    /// what the Mac, and Reflect, show — and made the note's cover.
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+        guard let path = coverFor, let provider = results.first?.itemProvider, provider.canLoadObject(ofClass: UIImage.self) else { return }
+        coverFor = nil
+        provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+            guard let image = object as? UIImage, let data = Self.coverData(image) else { return }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                do {
+                    try self.store.setCover(path, picture: data, extension: "jpg")
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                } catch {
+                    (self.selectedNavigation?.topViewController as? SheetController)?.say("The cover could not be kept: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    /// A picture at most 2400 points on its longer side, as a JPEG.
+    nonisolated static func coverData(_ image: UIImage) -> Data? {
+        let longest: CGFloat = 2400
+        let scale = min(1, longest / max(image.size.width, image.size.height, 1))
+        guard scale < 1 else { return image.jpegData(compressionQuality: 0.85) }
+        let size = CGSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+        return resized.jpegData(compressionQuality: 0.85)
     }
 }

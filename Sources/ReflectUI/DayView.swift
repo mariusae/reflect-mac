@@ -82,6 +82,8 @@ package final class DayView: NSView, NSTextViewDelegate {
         title.isSelectable = false
         badge.isSelectable = false
         badge.textColor = .secondaryLabelColor
+        banner.isHidden = true
+        addSubview(banner)
         addSubview(title)
         addSubview(badge)
         addSubview(editor)
@@ -91,6 +93,10 @@ package final class DayView: NSView, NSTextViewDelegate {
 
     @available(*, unavailable)
     package required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        if let coverObserver { NotificationCenter.default.removeObserver(coverObserver) }
+    }
 
     package var metrics: OutlineMetrics {
         get { editor.metrics }
@@ -128,6 +134,7 @@ package final class DayView: NSView, NSTextViewDelegate {
     }()
 
     package func updateTitle() {
+        updateCover()
         guard let day = ref.day else {
             // A note's name, when its first heading does not already give it.
             let entry = NoteIndex.entry(path: ref.path, source: savedText)
@@ -183,7 +190,7 @@ package final class DayView: NSView, NSTextViewDelegate {
         return NSRect(x: ((bounds.width - width) / 2).rounded(), y: 0, width: width, height: bounds.height)
     }
 
-    private var headerTop: CGFloat { round(metrics.fontSize * 2.2) }
+    private var headerTop: CGFloat { coverRoom(columnWidth: column.width) + round(metrics.fontSize * 2.2) }
     private var headerHeight: CGFloat { ceil(title.intrinsicContentSize.height) }
     /// Where the note starts: under its name, or, for a note whose first
     /// heading is its name, straight away.
@@ -203,9 +210,53 @@ package final class DayView: NSView, NSTextViewDelegate {
 
     package var trailingReserve: CGFloat = 0 { didSet { if trailingReserve != oldValue { needsLayout = true } } }
 
-    private var editorTop: CGFloat {
-        guard ref.day != nil || !title.stringValue.isEmpty else { return round(metrics.fontSize * 1.6) }
-        return headerTop + headerHeight + round(metrics.fontSize * 0.7)
+    private var editorTop: CGFloat { editorTop(columnWidth: column.width) }
+
+    private func editorTop(columnWidth: CGFloat) -> CGFloat {
+        let cover = coverRoom(columnWidth: columnWidth)
+        guard ref.day != nil || !title.stringValue.isEmpty else { return cover + round(metrics.fontSize * 1.6) }
+        return cover + round(metrics.fontSize * 2.2) + headerHeight + round(metrics.fontSize * 0.7)
+    }
+
+    // MARK: Cover
+
+    /// Its cover across its top, when it has one.
+    private let banner = CoverBanner()
+    /// The cover the note names — frontmatter `cover:` — if any: not a day's.
+    package private(set) var coverSource: String?
+    nonisolated(unsafe) private var coverObserver: NSObjectProtocol?
+
+    /// How wide the banner is over a column of text: the card's width, or
+    /// the column's on the page.
+    private func coverWidth(columnWidth: CGFloat) -> CGFloat {
+        card == nil ? columnWidth : columnWidth + 2 * CardSurface.outset
+    }
+
+    /// The room the cover takes above the name: none without one.
+    private func coverRoom(columnWidth: CGFloat) -> CGFloat {
+        guard coverSource != nil else { return 0 }
+        return (card == nil ? 0 : CardSurface.spacing) + CoverBanner.height(width: coverWidth(columnWidth: columnWidth))
+    }
+
+    /// The cover as the note now says, its picture as the store has it.
+    private func updateCover() {
+        let source = ref.day == nil ? NoteCover.source(in: savedText) : nil
+        if source != coverSource {
+            coverSource = source
+            heightMayHaveChanged()
+        }
+        if let source, coverObserver == nil {
+            coverObserver = NotificationCenter.default.addObserver(forName: ImageStore.didLoad, object: nil, queue: .main) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let self, let loaded = note.object as? String, loaded == self.coverSource else { return }
+                    self.banner.image = self.editor.images?.image(loaded)
+                }
+            }
+        }
+        banner.isHidden = source == nil
+        banner.image = source.flatMap { editor.images?.image($0) }
+        banner.topOnly = card != nil
+        banner.radius = card == nil ? 8 : CardSurface.radius
     }
     private var bottomPadding: CGFloat { round(metrics.fontSize * 1.6) }
 
@@ -213,6 +264,11 @@ package final class DayView: NSView, NSTextViewDelegate {
         super.layout()
         let column = column
         card?.frame = CardSurface.frame(column: column, in: bounds)
+        if coverSource != nil {
+            let width = coverWidth(columnWidth: column.width)
+            banner.frame = NSRect(x: card?.frame.minX ?? column.minX, y: card?.frame.minY ?? 0,
+                                  width: width, height: CoverBanner.height(width: width))
+        }
         // A label draws its text a couple of points in from its edge.
         let textX = column.minX + metrics.indent - 2
         // Whole points, and a little over: a bold face's last figure reaches
@@ -365,7 +421,7 @@ package final class DayView: NSView, NSTextViewDelegate {
     /// The height the day wants at a width.
     package func desiredHeight(width: CGFloat) -> CGFloat {
         let columnWidth = min(metrics.columnWidth, width - 48)
-        var height = editorTop + bottomPadding + focusBarRoom
+        var height = editorTop(columnWidth: columnWidth) + bottomPadding + focusBarRoom
         height += conflictView?.height(forWidth: columnWidth) ?? editorHeight(width: columnWidth)
         return max(minimumHeight, height)
     }

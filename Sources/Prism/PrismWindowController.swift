@@ -1154,6 +1154,13 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }
 
     private func noteShown(_ view: DayView) {
+        // A day has no cover; any other note's pictures can be one.
+        if view.ref.day == nil {
+            view.editor.onMakeCover = { [weak self, weak view] source in
+                guard let self, let view else { return }
+                setFrontmatter(view.ref.path, NoteCover.key, NoteCover.quoted(source))
+            }
+        }
         if lastText[view.ref.path] == nil { lastText[view.ref.path] = graph.read(path: view.ref.path) ?? "" }
         guard view.ref.day == nil, settledTitles[view.ref.path] == nil, let title = title(of: view) else { return }
         settledTitles[view.ref.path] = title
@@ -1817,6 +1824,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         item("Topic", #selector(toggleTopic(_:)))
         item("Private", #selector(togglePrivate(_:)))
         menu.addItem(.separator())
+        if view.ref.day == nil {
+            item("Add Cover…", #selector(addCover(_:)))
+            item("Remove Cover", #selector(removeCover(_:)))
+            menu.addItem(.separator())
+        }
         item("Backlinks", #selector(showBacklinks(_:)))
         item("Copy Link", #selector(copyNoteLink(_:)))
         item("Reveal in Finder", #selector(revealNoteInFinder(_:)))
@@ -1846,6 +1858,38 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     @objc func togglePrivate(_ sender: Any?) {
         guard let note = menuNote else { return NSSound.beep() }
         setFrontmatter(note.path, "private", note.isPrivate ? nil : "true")
+    }
+
+    /// Note ▸ Add Cover…: a picture chosen from the Mac, kept in the
+    /// graph's `assets/`, across the top of the note.
+    @objc func addCover(_ sender: Any?) {
+        guard let note = menuNote, note.day == nil, let window else { return NSSound.beep() }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a picture for the cover of “\(note.title)”."
+        panel.prompt = "Use as Cover"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            setCover(of: note.path, from: url)
+        }
+    }
+
+    /// A picture file made a note's cover: copied into the graph first.
+    private func setCover(of path: String, from url: URL) {
+        do {
+            let data = try Data(contentsOf: url)
+            let added = try Assets.add(data, named: Assets.fileName(for: url.lastPathComponent), to: graph.root)
+            Log.shared.info("files", "Added \(added)", detail: "the cover of \(path)")
+            setFrontmatter(path, NoteCover.key, NoteCover.quoted(added))
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
+    @objc func removeCover(_ sender: Any?) {
+        guard let note = menuNote, note.cover != nil else { return NSSound.beep() }
+        setFrontmatter(note.path, NoteCover.key, nil)
     }
 
     /// Puts a `[[link]]` to the note on the pasteboard.
@@ -2332,6 +2376,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             return menuNote != nil
         case #selector(copyNoteLink(_:)), #selector(revealNoteInFinder(_:)):
             return menuNote != nil
+        case #selector(addCover(_:)):
+            item.title = menuNote?.cover != nil ? "Change Cover…" : "Add Cover…"
+            return menuNote.map { $0.day == nil } ?? false
+        case #selector(removeCover(_:)):
+            return menuNote?.cover != nil
         case #selector(goBack(_:)): return !focusedColumn.beneath.isEmpty
         case #selector(goForward(_:)): return !focusedColumn.ahead.isEmpty
         case #selector(toggleCollapsed(_:)): return columns.count > 1

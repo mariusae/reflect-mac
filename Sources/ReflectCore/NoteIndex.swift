@@ -26,6 +26,9 @@ public struct NoteEntry: Equatable, Sendable {
     /// Whether it is in the inbox — frontmatter `inbox: true` — to be
     /// dealt with.
     public var isInInbox = false
+    /// Its cover picture — frontmatter `cover:` — as a picture's Markdown
+    /// would give its source.
+    public var cover: String? = nil
 
     public enum Pin: Equatable, Sendable, Comparable {
         case order(Double)
@@ -203,7 +206,7 @@ public final class NoteIndex: @unchecked Sendable {
         return NoteEntry(path: path, title: title, aliases: aliases, day: day, modified: modified,
                          isPrivate: flag("private"), titleIsHeading: titleIsHeading,
                          pin: pin(frontmatter.scalar("pinned")), tags: tags(in: body), isTopic: flag("topic"),
-                         isInInbox: flag("inbox"))
+                         isInInbox: flag("inbox"), cover: NoteCover.source(frontmatter))
     }
 
     /// Reflect's reading of `pinned:`: `true` (or yes, on, 1) pins, a
@@ -452,6 +455,38 @@ public final class NoteIndex: @unchecked Sendable {
 
 /// The parts of a note's frontmatter a note's name needs: scalars, and lists
 /// written either `[a, b]` or as `- a` lines.
+/// A note's cover: a picture across the top of it, and the one its card
+/// shows when short — frontmatter `cover:`, a source as a picture's Markdown
+/// gives one, a file in the graph or an address. Prism's own; Reflect lets
+/// it be.
+public enum NoteCover {
+    public static let key = "cover"
+
+    /// The cover a note's text names, if any.
+    public static func source(in text: String) -> String? {
+        CommitMessage.splitFrontmatter(text).0.flatMap { source(Frontmatter(raw: $0)) }
+    }
+
+    static func source(_ frontmatter: Frontmatter) -> String? {
+        guard let value = frontmatter.scalar(key)?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
+        // `<path>`, as a picture's Markdown may write one with spaces.
+        return value.hasPrefix("<") && value.hasSuffix(">") ? String(value.dropFirst().dropLast()) : value
+    }
+
+    /// A note's text with its cover set — or taken off, for nil.
+    public static func setting(_ source: String?, in text: String) -> String {
+        Frontmatter.setting(key, to: source.map(quoted), in: text)
+    }
+
+    /// A value YAML reads back as written: quoted when it would not be.
+    public static func quoted(_ value: String) -> String {
+        let plain = !value.contains(": ") && !value.contains(" #") && !value.hasSuffix(":")
+            && !"!&*\"'{[|>%@`#,?-".contains(value.first ?? " ") && value == value.trimmingCharacters(in: .whitespaces)
+        if plain { return value }
+        return "\"" + value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    }
+}
+
 public struct Frontmatter {
     let lines: [Substring]
 

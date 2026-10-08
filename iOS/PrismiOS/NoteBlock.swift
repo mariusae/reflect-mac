@@ -116,6 +116,7 @@ final class NoteBlock: UIView {
 
     deinit {
         if let modeObserver { NotificationCenter.default.removeObserver(modeObserver) }
+        if let coverObserver { NotificationCenter.default.removeObserver(coverObserver) }
     }
 
     // MARK: Showing as
@@ -171,6 +172,15 @@ final class NoteBlock: UIView {
         addSubview(editor)
         editor.onChange = { [weak self] in self?.edited() }
         editor.onOpenLink = { [weak self] link in self?.onLink?(link) }
+        // A day has no cover; any other note's pictures can be one.
+        if ref.day == nil {
+            editor.onMakeCover = { [weak self] source in
+                guard let self, let store else { return }
+                save()
+                store.setCover(ref.path, source)
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            }
+        }
         editor.onCaretMove = { [weak self] in self?.onCaretMove?() }
         editor.onHeightChange = { [weak self] in
             self?.setNeedsLayout()
@@ -486,7 +496,56 @@ final class NoteBlock: UIView {
         return true
     }
 
+    // MARK: Cover
+
+    /// Its cover — frontmatter `cover:` — across the top of its card, or,
+    /// collapsed, small before its name. Not a day's.
+    private let coverView = UIImageView()
+    private var coverSource: String?
+    nonisolated(unsafe) private var coverObserver: NSObjectProtocol?
+
+    /// How tall the cover is across a card at a width: under half as tall
+    /// as wide, within bounds.
+    static func coverHeight(width: CGFloat) -> CGFloat {
+        min(max(((width - 2 * Card.inset) / 2.2).rounded(), 120), 260)
+    }
+
+    /// Where the header starts: under the cover, when one is across the top.
+    private func top(_ width: CGFloat) -> CGFloat {
+        guard coverSource != nil, mode != .collapsed else { return Card.top }
+        return Self.coverHeight(width: width) + Card.top
+    }
+
+    /// The cover as the note on disk says, its picture as it comes in.
+    private func updateCover() {
+        let source = ref.day == nil ? NoteCover.source(in: savedText) : nil
+        if source != coverSource {
+            coverSource = source
+            estimate = nil
+            setNeedsLayout()
+            onHeightChange?()
+        }
+        if coverView.superview == nil {
+            coverView.contentMode = .scaleAspectFill
+            coverView.clipsToBounds = true
+            coverView.layer.cornerCurve = .continuous
+            coverView.backgroundColor = Ink.shelf
+            insertSubview(coverView, aboveSubview: card)
+        }
+        if source != nil, coverObserver == nil {
+            coverObserver = NotificationCenter.default.addObserver(forName: .prismImageLoaded, object: nil, queue: .main) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let self, let loaded = note.object as? String, loaded == self.coverSource else { return }
+                    self.coverView.image = PhoneImages.lookup(loaded)
+                }
+            }
+        }
+        coverView.isHidden = source == nil
+        coverView.image = source.flatMap { PhoneImages.lookup($0) }
+    }
+
     private func styleHeader() {
+        updateCover()
         let title = NSMutableAttributedString(attributedString: Card.header(name: name, meta: nil, size: storedMetrics.size))
         metaLabel.text = Card.meta(for: ref.path, store: store)
         metaLabel.sizeToFit()
@@ -597,17 +656,17 @@ final class NoteBlock: UIView {
         guard width > Self.minimumWidth else { return 0 }
         switch mode {
         case .collapsed:
-            return Card.top + headerHeight(width: width) - Card.gap + Card.bottom
+            return top(width) + headerHeight(width: width) - Card.gap + Card.bottom
         case .summary:
             let summary = summaryView?.height(width: width - 2 * Self.side) ?? 0
-            return Card.top + headerHeight(width: width) + (summary > 0 ? summary + 4 : -Card.gap) + Card.bottom
+            return top(width) + headerHeight(width: width) + (summary > 0 ? summary + 4 : -Card.gap) + Card.bottom
         case .full, .view:
             break
         }
-        guard isLive else { return Card.top + headerHeight(width: width) + estimatedHeight(width: width) + Card.bottom }
+        guard isLive else { return top(width) + headerHeight(width: width) + estimatedHeight(width: width) + Card.bottom }
         let editorWidth = width - 2 * Self.side + storedMetrics.indent
         let editorHeight = conflict.map { $0.height(width: width - 2 * Self.side) + 8 } ?? editor.rowsHeight(width: editorWidth)
-        return Card.top + headerHeight(width: width) + editorHeight + Card.bottom
+        return top(width) + headerHeight(width: width) + editorHeight + Card.bottom
     }
 
     override func layoutSubviews() {
@@ -615,15 +674,32 @@ final class NoteBlock: UIView {
         guard bounds.width > Self.minimumWidth else { return }
         card.frame = Card.frame(in: bounds)
         let indent = storedMetrics.indent
-        var y: CGFloat = Card.top
+        let top = top(bounds.width)
+        var y: CGFloat = top
+        // The cover across the card's top; collapsed, small before the name.
+        let lineHeight = ceil(Typeface.current.heading(storedMetrics.size, weight: .bold).lineHeight)
+        var nameX = Self.side
+        if coverSource != nil {
+            if mode == .collapsed {
+                let side = round(lineHeight * 1.5)
+                coverView.frame = CGRect(x: Self.side, y: top + ((lineHeight - side) / 2).rounded(), width: side, height: side)
+                coverView.layer.cornerRadius = 7
+                coverView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+                nameX += side + 10
+            } else {
+                coverView.frame = CGRect(x: card.frame.minX, y: card.frame.minY, width: card.frame.width, height: Self.coverHeight(width: bounds.width))
+                coverView.layer.cornerRadius = Card.radius
+                coverView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            }
+        }
         if !header.isHidden {
-            let size = headerSize(width: bounds.width)
-            header.frame = CGRect(x: Self.side, y: y, width: size.width, height: size.height)
+            let size = headerSize(width: bounds.width - (nameX - Self.side))
+            header.frame = CGRect(x: nameX, y: y, width: size.width, height: size.height)
             y += headerHeight(width: bounds.width)
         }
         // The ⋯ at the header's end, on its first line's middle; the inbox's
         // Done hanging in the margin before the name, as a task's box does.
-        let firstLine = Card.top + ceil(Typeface.current.heading(storedMetrics.size, weight: .bold).lineHeight) / 2
+        let firstLine = top + lineHeight / 2
         // The ⋯ only on the card being typed in; held, any card's header has it.
         menuButton.isHidden = noteMenu == nil || header.isHidden || !(isLive && editor.isFirstResponder)
         menuButton.frame = CGRect(x: bounds.width - Self.side - 8, y: firstLine - 18, width: 36, height: 36)

@@ -145,6 +145,22 @@ final class PrismStore {
         revision += 1
     }
 
+    /// A note's cover — a picture's source — set, or taken off for nil.
+    func setCover(_ path: String, _ source: String?) {
+        let text = text(path)
+        let updated = NoteCover.setting(source, in: text)
+        guard updated != text else { return }
+        write(updated, path: path)
+    }
+
+    /// A picture kept in the graph's `assets/`, as pasted ones are, and made
+    /// a note's cover.
+    func setCover(_ path: String, picture data: Data, extension ext: String) throws {
+        guard let graph else { return }
+        let added = try Assets.add(data, named: Assets.pastedName(extension: ext), to: graph.root)
+        setCover(path, added)
+    }
+
     /// Sets or takes away a frontmatter key of a note — `inbox`, `topic`,
     /// `pinned` — and has everything showing it follow.
     func setFrontmatter(_ path: String, _ key: String, _ value: String?) {

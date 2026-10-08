@@ -72,8 +72,9 @@ final class CardSummaryView: UIView {
     }
 
     func show(_ summary: NoteSummary) {
-        source = summary.picture
-        picture.image = summary.picture.flatMap { PhoneImages.lookup($0) }
+        // The cover is across the card's top: not again beside its words.
+        source = summary.isCover ? nil : summary.picture
+        picture.image = source.flatMap { PhoneImages.lookup($0) }
         headline.text = summary.headline
         snippet.text = summary.snippet.isEmpty ? nil : summary.snippet
         measured = nil

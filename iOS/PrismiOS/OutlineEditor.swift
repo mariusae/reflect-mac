@@ -2202,18 +2202,25 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         pictureMenu.presentEditMenu(with: configuration)
     }
 
-    /// The file a picture's Markdown shows, in the graph.
-    private func pictureFile(_ span: NSRange) -> URL? {
+    /// The source a picture's Markdown gives — a carousel's, its first's.
+    private func pictureSource(_ span: NSRange) -> String? {
         guard NSMaxRange(span) <= textStorage.length else { return nil }
         let markdown = textStorage.mutableString.substring(with: span)
-        guard let open = markdown.range(of: "]("), let close = markdown.range(of: ")", options: .backwards),
-              open.upperBound <= close.lowerBound else { return nil }
+        guard let open = markdown.range(of: "]("),
+              let close = markdown.range(of: ")", range: open.upperBound..<markdown.endIndex) else { return nil }
         var source = String(markdown[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespaces)
         // `![](path "title")` and `![](<path>)` alike.
         if let space = source.firstIndex(of: " ") { source = String(source[..<space]) }
-        source = source.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
-        return PhoneImages.url(for: source).flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+        return source.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
     }
+
+    /// The file a picture's Markdown shows, in the graph.
+    private func pictureFile(_ span: NSRange) -> URL? {
+        pictureSource(span).flatMap(PhoneImages.url(for:)).flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+    }
+
+    /// Told when a picture in the note is chosen as its cover.
+    var onMakeCover: ((String) -> Void)?
 
     private func copyPicture(_ file: URL) {
         guard let data = try? Data(contentsOf: file) else { return }
@@ -2528,10 +2535,14 @@ extension OutlineEditor: UIEditMenuInteractionDelegate {
         let span = NSRangeFromString(id as String)
         guard let file = pictureFile(span) else { return nil }
         let rect = pictureFrame(span) ?? .zero
-        return UIMenu(children: [
+        var actions = [
             UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in self?.copyPicture(file) },
             UIAction(title: "Share…", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in self?.sharePicture(file, from: rect) },
-        ])
+        ]
+        if let onMakeCover, let source = pictureSource(span) {
+            actions.append(UIAction(title: "Make Cover", image: UIImage(systemName: "photo.artframe")) { _ in onMakeCover(source) })
+        }
+        return UIMenu(children: actions)
     }
 
     func editMenuInteraction(_ interaction: UIEditMenuInteraction, targetRectFor configuration: UIEditMenuConfiguration) -> CGRect {

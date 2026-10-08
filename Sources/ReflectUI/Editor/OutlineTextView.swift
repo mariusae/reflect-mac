@@ -21,6 +21,8 @@ package final class OutlineTextView: NSTextView {
     package enum Edge { case top, bottom }
 
     package weak var navigator: OutlineTextViewNavigator?
+    /// Told when a picture in the note is chosen as its cover.
+    package var onMakeCover: ((String) -> Void)?
     package let styler: OutlineStyler
     package var metrics: OutlineMetrics {
         didSet {
@@ -1023,6 +1025,11 @@ package final class OutlineTextView: NSTextView {
             menu.addItem(.separator())
             menu.addItem(item("Copy Image") { [weak self] in self?.copyPicture(source, file: file) })
             menu.addItem(item("Copy Image Address") { Self.copy(string: source) })
+        }
+        // A picture, not a post's or a video's card: the note's cover.
+        if isEditable, images?.isCard(source) != true, let onMakeCover {
+            menu.addItem(.separator())
+            menu.addItem(item("Make Cover") { onMakeCover(source) })
         }
         if isEditable {
             menu.addItem(.separator())

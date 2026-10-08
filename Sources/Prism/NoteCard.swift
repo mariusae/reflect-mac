@@ -18,6 +18,10 @@ final class NoteCardBlock: NSView, ColumnBlock {
     private let metrics: OutlineMetrics
     private let images: ImageStore
     private var pictureSource: String?
+    /// Its cover: across the top of it in summary, small before its name
+    /// collapsed.
+    private let cover = CoverBanner()
+    private var coverSource: String?
     /// Clicked: the note alone — with ⌘, in the column beside.
     var onOpen: ((_ newColumn: Bool) -> Void)?
     /// Its picture came in: taller now.
@@ -35,14 +39,28 @@ final class NoteCardBlock: NSView, ColumnBlock {
         addSubview(card)
         let typography = metrics.typography
         title.stringValue = ref.day.map(Self.dayName) ?? name
-        title.font = typography.headingFont(size: round(metrics.fontSize * 1.45), weight: .bold)
-        title.textColor = ref.day == .today ? .controlAccentColor : Ink.text
+        // As a note's own header has it: at the text's size, bold.
+        title.font = typography.headingFont(size: metrics.fontSize, weight: .bold)
+        title.textColor = Ink.text
         title.lineBreakMode = .byTruncatingTail
         self.when.stringValue = when ?? ""
-        self.when.font = .systemFont(ofSize: round(metrics.fontSize * 0.85))
+        self.when.font = Typography.font(typography.bodyFamily, face: typography.bodyFace, size: round(metrics.fontSize * 0.88))
         self.when.textColor = Ink.secondary
         self.when.alignment = .right
         for view in [title, self.when] as [NSView] { addSubview(view) }
+        if ref.day == nil, mode != .full, let source = NoteCover.source(in: source) {
+            coverSource = source
+            cover.topOnly = mode == .summary
+            cover.radius = mode == .summary ? CardSurface.radius : 6
+            cover.image = images.image(source)
+            if cover.image == nil {
+                images.whenLoaded(source) { [weak self] in
+                    guard let self else { return }
+                    cover.image = images.image(source)
+                }
+            }
+            addSubview(cover)
+        }
         guard mode == .summary else { return }
         let summary = NoteSummary.of(source, title: name)
         headline.stringValue = summary.headline ?? ""
@@ -59,8 +77,9 @@ final class NoteCardBlock: NSView, ColumnBlock {
         picture.wantsLayer = true
         picture.layer?.cornerRadius = 8
         picture.layer?.masksToBounds = true
-        pictureSource = summary.picture
-        if let source = summary.picture {
+        // The cover is its picture, at its top: not again beside its words.
+        pictureSource = summary.isCover ? nil : summary.picture
+        if let source = pictureSource {
             picture.image = images.image(source)
             if picture.image == nil {
                 images.whenLoaded(source) { [weak self] in
@@ -100,16 +119,35 @@ final class NoteCardBlock: NSView, ColumnBlock {
         let x = column.minX + metrics.indent - 2
         let inner = column.maxX - x
         var y = top
+        var titleX = x
         let titleHeight = ceil(title.intrinsicContentSize.height)
+        // In summary, the cover across the card's top, the name under it.
+        if coverSource != nil, mode == .summary {
+            let card = CardSurface.frame(column: column, in: NSRect(x: 0, y: 0, width: width, height: 0))
+            let height = (CoverBanner.height(width: card.width) * 0.8).rounded()
+            if laying { cover.frame = NSRect(x: card.minX, y: CardSurface.spacing, width: card.width, height: height) }
+            y = CardSurface.spacing + height + round(metrics.fontSize * 1.0)
+        }
+        // Collapsed, small before the name.
+        var rowHeight = titleHeight
+        if coverSource != nil, mode == .collapsed {
+            let side = round(metrics.fontSize * 2)
+            rowHeight = max(titleHeight, side)
+            if laying { cover.frame = NSRect(x: x, y: y + ((rowHeight - side) / 2).rounded(), width: side, height: side) }
+            titleX = x + side + round(metrics.fontSize * 0.6)
+        }
+        let titleY = y + ((rowHeight - titleHeight) / 2).rounded()
         if laying {
             card.frame = CardSurface.frame(column: column, in: bounds)
             let whenSize = when.intrinsicContentSize
             let whenWidth = ceil(whenSize.width) + 4
-            when.frame = NSRect(x: column.maxX - whenWidth, y: y + round((titleHeight - whenSize.height) / 2) + 1, width: whenWidth,
+            // On the name's baseline.
+            let rise = (title.font?.ascender ?? 0) - (when.font?.ascender ?? 0)
+            when.frame = NSRect(x: column.maxX - whenWidth, y: (titleY + rise).rounded(), width: whenWidth,
                                 height: ceil(whenSize.height))
-            title.frame = NSRect(x: x, y: y, width: max(40, inner - whenWidth - 12), height: titleHeight)
+            title.frame = NSRect(x: titleX, y: titleY, width: max(40, column.maxX - titleX - whenWidth - 12), height: titleHeight)
         }
-        y += titleHeight
+        y += rowHeight
         guard mode == .summary else { return y + bottom }
         if picture.image != nil {
             y += round(metrics.fontSize * 0.7)
