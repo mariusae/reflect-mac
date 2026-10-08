@@ -15,6 +15,21 @@ struct Place: Equatable {
     var edit: RecentEdits.Edit? = nil
     /// A row of the note open, by index: Move to Heading's.
     var row: Int? = nil
+    /// Its cover, shown small before its name.
+    var cover: String? = nil
+
+    /// A cover's picture, for the lists' thumbnails: the window's store's.
+    @MainActor static var coverImage: ((String) -> NSImage?)?
+
+    /// A thumbnail of a cover — or nothing, keeping its room — before a name.
+    @MainActor static func thumbnail(_ cover: String?) -> CoverBanner {
+        let view = CoverBanner()
+        view.topOnly = false
+        view.radius = 4
+        view.image = cover.flatMap { coverImage?($0) }
+        view.isHidden = cover == nil
+        return view
+    }
 }
 
 /// The notes to hand, on a card that slides out from the window's left
@@ -103,8 +118,10 @@ final class Sidebar: NSView {
             ]))
             list.addSubview(header)
             entries.append(header)
+            // Room for a thumbnail in each row, when any has a cover.
+            let thumbnails = section.places.contains { $0.cover != nil }
             for place in section.places {
-                let row = SidebarRow(place: place, face: face, selected: place.path == current)
+                let row = SidebarRow(place: place, face: face, selected: place.path == current, thumbnail: thumbnails)
                 row.onClick = { [weak self] in self?.onOpen?(place) }
                 list.addSubview(row)
                 entries.append(row)
@@ -142,13 +159,17 @@ final class SidebarRow: NSView {
     private let label: NSTextField
     private let badges = NoteBadges()
     private let selected: Bool
+    /// Its cover, small before the name; nil with no room kept for one.
+    private let thumbnail: CoverBanner?
     /// Whether the pointer is on it: the sidebar says, as it moves.
     var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
 
-    init(place: Place, face: Typeface, selected: Bool) {
+    init(place: Place, face: Typeface, selected: Bool, thumbnail: Bool = false) {
         self.selected = selected
         label = NSTextField(labelWithString: place.title)
+        self.thumbnail = thumbnail ? Place.thumbnail(place.cover) : nil
         super.init(frame: .zero)
+        if let thumbnail = self.thumbnail { addSubview(thumbnail) }
         label.font = face.font(size: 13.5, weight: selected ? .medium : .regular)
         label.textColor = selected ? Ink.text : Ink.secondary
         label.lineBreakMode = .byTruncatingTail
@@ -167,7 +188,13 @@ final class SidebarRow: NSView {
         let height = label.intrinsicContentSize.height
         let marks = badges.intrinsicContentSize
         let room = marks.width > 0 ? marks.width + 8 : 0
-        label.frame = NSRect(x: 10, y: floor((bounds.height - height) / 2), width: bounds.width - 20 - room, height: height)
+        var x: CGFloat = 10
+        if let thumbnail {
+            let side: CGFloat = 18
+            thumbnail.frame = NSRect(x: x, y: floor((bounds.height - side) / 2), width: side, height: side)
+            x += side + 8
+        }
+        label.frame = NSRect(x: x, y: floor((bounds.height - height) / 2), width: bounds.width - x - 10 - room, height: height)
         badges.frame = NSRect(x: bounds.width - 10 - marks.width, y: floor((bounds.height - marks.height) / 2),
                               width: marks.width, height: marks.height)
     }

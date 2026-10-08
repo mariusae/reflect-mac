@@ -7,6 +7,8 @@ final class HoldMenu: UIView {
     struct Entry {
         var title: String
         var symbol: String
+        /// A picture in place of the symbol: its note's cover.
+        var image: UIImage? = nil
         var action: () -> Void
     }
 
@@ -56,7 +58,7 @@ final class HoldMenu: UIView {
         for (i, entry) in entries.enumerated() {
             let row = UIView(frame: CGRect(x: Self.inset, y: Self.headerHeight + CGFloat(i) * Self.rowHeight,
                                            width: Self.width - 2 * Self.inset, height: Self.rowHeight))
-            let icon = UIImageView(image: UIImage(systemName: entry.symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 16)))
+            let icon = UIImageView(image: entry.image ?? UIImage(systemName: entry.symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 16)))
             icon.tintColor = Ink.text
             icon.contentMode = .center
             icon.frame = CGRect(x: 8, y: 0, width: 28, height: Self.rowHeight)

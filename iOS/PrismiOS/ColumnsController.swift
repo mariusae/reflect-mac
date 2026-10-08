@@ -597,7 +597,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             .prefix(10)
         return recent.reversed().map { entry in
             HoldMenu.Entry(title: entry.title.isEmpty ? (entry.path as NSString).lastPathComponent : entry.title,
-                           symbol: "doc.text") { [weak self] in
+                           symbol: "doc.text", image: entry.cover.flatMap { PhoneImages.thumbnail($0, side: 24) }) { [weak self] in
                 self?.openInColumn(.note(entry.path))
             }
         }

@@ -17,6 +17,8 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
         var title: String
         var detail: String
         var symbol: String
+        /// Its note's cover, shown small in place of the symbol.
+        var cover: String? = nil
     }
 
     private let store: PrismStore
@@ -37,9 +39,24 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    nonisolated(unsafe) private var coverObserver: NSObjectProtocol?
+
+    deinit {
+        if let coverObserver { NotificationCenter.default.removeObserver(coverObserver) }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = Ink.paper
+        // A cover come in: the rows showing it, shown again.
+        coverObserver = NotificationCenter.default.addObserver(forName: .prismImageLoaded, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let source = note.object as? String else { return }
+                let items = self.items
+                let rows = (self.table.indexPathsForVisibleRows ?? []).filter { items.indices.contains($0.row) && items[$0.row].cover == source }
+                if !rows.isEmpty { self.table.reloadRows(at: rows, with: .none) }
+            }
+        }
         if embedded {
             // Its field the bottom bar's.
             title = "Search"
@@ -113,7 +130,7 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
         for match in store.index?.matches(query, limit: 30) ?? [] {
             items.append(Item(place: .note(match.entry.path), title: match.entry.title,
                               detail: match.alias.map { "as \($0)" } ?? relative.localizedString(for: match.entry.modified, relativeTo: Date()),
-                              symbol: match.entry.isTopic ? "number" : "doc.text"))
+                              symbol: match.entry.isTopic ? "number" : "doc.text", cover: match.entry.cover))
         }
         // Last, the words looked for in every note.
         if !query.isEmpty {
@@ -142,6 +159,8 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
 
     // MARK: The list
 
+    private static let thumbnailSide: CGFloat = 32
+
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { items.count }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -150,8 +169,11 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
         var content = UIListContentConfiguration.subtitleCell()
         content.text = item.title
         content.secondaryText = item.detail.isEmpty ? nil : item.detail
-        content.image = UIImage(systemName: item.symbol)
+        content.image = item.cover.flatMap { PhoneImages.thumbnail($0, side: Self.thumbnailSide) } ?? UIImage(systemName: item.symbol)
         content.imageProperties.tintColor = Ink.secondary
+        // Symbols and covers alike in the same room, the names in line.
+        content.imageProperties.reservedLayoutSize = CGSize(width: Self.thumbnailSide, height: Self.thumbnailSide)
+        content.imageProperties.maximumSize = CGSize(width: Self.thumbnailSide, height: Self.thumbnailSide)
         content.textProperties.font = Typeface.current.body(17, weight: indexPath.row == 0 ? .semibold : .regular)
         content.textProperties.color = Ink.text
         content.secondaryTextProperties.color = Ink.secondary

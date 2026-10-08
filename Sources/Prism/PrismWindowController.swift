@@ -84,6 +84,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         self.graph = graph
         index = NoteIndex(root: graph.root)
         images = ImageStore(root: graph.root)
+        Place.coverImage = { [images] in images.image($0) }
         let defaults = UserDefaults.standard
         face = defaults.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)) ?? .lato
 
@@ -1916,10 +1917,10 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
                   flags: NoteFlags(index.entry(GraphPaths.dailyPath(for: day))))
         }
         // Among the pinned, their pins go without saying.
-        let pinned = index.pinned.map { Place(title: $0.title, path: $0.path, flags: NoteFlags($0).subtracting(.pinned)) }
+        let pinned = index.pinned.map { Place(title: $0.title, path: $0.path, flags: NoteFlags($0).subtracting(.pinned), cover: $0.cover) }
         let pinnedPaths = Set(pinned.map(\.path))
         let recent = index.all.filter { $0.day == nil && !$0.path.hasPrefix(GraphPaths.weeklyDirectory + "/") && !pinnedPaths.contains($0.path) }
-            .sorted { $0.modified > $1.modified }.prefix(12).map { Place(title: $0.title, path: $0.path, flags: NoteFlags($0)) }
+            .sorted { $0.modified > $1.modified }.prefix(12).map { Place(title: $0.title, path: $0.path, flags: NoteFlags($0), cover: $0.cover) }
         sidebar.show([("Days", dayPlaces), ("Pinned", pinned), ("Recent", Array(recent))],
                      current: active.flatMap(location(of:)), face: face)
     }
@@ -1943,7 +1944,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         }
         places += index.matches(trimmed, limit: 20).map {
             Place(title: $0.entry.title, path: $0.entry.path, detail: $0.alias.map { "as \($0)" } ?? relative($0.entry.modified),
-                  flags: NoteFlags($0.entry))
+                  flags: NoteFlags($0.entry), cover: $0.entry.cover)
         }
         return places
     }

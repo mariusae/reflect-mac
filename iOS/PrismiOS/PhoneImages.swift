@@ -50,6 +50,26 @@ enum PhoneImages {
         return nil
     }
 
+    nonisolated(unsafe) private static let thumbnails = NSCache<NSString, UIImage>()
+
+    /// A picture cut square about its middle, a side in points across — a
+    /// cover's, in a list — when it is in; else nil, and it is read, and
+    /// `.prismImageLoaded` says when.
+    static func thumbnail(_ source: String, side: CGFloat) -> UIImage? {
+        let key = "\(source)@\(side)" as NSString
+        if let thumbnail = thumbnails.object(forKey: key) { return thumbnail }
+        guard let image = image(source), image.size.width > 0, image.size.height > 0 else { return nil }
+        let scale = max(side / image.size.width, side / image.size.height)
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let square = CGSize(width: side, height: side)
+        let thumbnail = UIGraphicsImageRenderer(size: square).image { _ in
+            UIBezierPath(roundedRect: CGRect(origin: .zero, size: square), cornerRadius: side * 0.2).addClip()
+            image.draw(in: CGRect(x: (side - size.width) / 2, y: (side - size.height) / 2, width: size.width, height: size.height))
+        }
+        thumbnails.setObject(thumbnail, forKey: key)
+        return thumbnail
+    }
+
     /// Where a picture is: a file in the graph, not a page on the web.
     static func url(for source: String) -> URL? {
         guard let root, !source.contains("://"), !source.isEmpty else { return nil }

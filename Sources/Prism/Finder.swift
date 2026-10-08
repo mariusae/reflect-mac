@@ -1,4 +1,5 @@
 import AppKit
+import ReflectUI
 import PrismCore
 
 /// ⌘O: a note found by typing some of its name, over the page.
@@ -86,7 +87,7 @@ final class Finder: NSView, NSTextFieldDelegate {
         selection = 0
         rows.forEach { $0.removeFromSuperview() }
         rows = places.enumerated().map { index, place in
-            let row = FinderRow(place: place, face: face)
+            let row = FinderRow(place: place, face: face, thumbnail: places.contains { $0.cover != nil })
             row.onHover = { [weak self] in self?.hovered(index) }
             row.onClick = { [weak self] newColumn in self?.choose(index, newColumn: newColumn) }
             card.addSubview(row)
@@ -182,12 +183,16 @@ final class FinderRow: NSView {
     private let detail: NSTextField
     private let trail: NSTextField?
     private let badges = NoteBadges()
+    /// Its cover, small before the name; nil with no room kept for one.
+    private let thumbnail: CoverBanner?
 
-    init(place: Place, face: Typeface) {
+    init(place: Place, face: Typeface, thumbnail: Bool = false) {
         title = NSTextField(labelWithString: place.title)
         detail = NSTextField(labelWithString: place.detail ?? "")
         trail = place.trail.map { NSTextField(labelWithString: $0) }
+        self.thumbnail = thumbnail ? Place.thumbnail(place.cover) : nil
         super.init(frame: .zero)
+        if let thumbnail = self.thumbnail { addSubview(thumbnail) }
         if let trail {
             trail.font = face.font(size: 11.5)
             trail.textColor = Ink.faint
@@ -216,13 +221,19 @@ final class FinderRow: NSView {
         let h = title.intrinsicContentSize.height
         let marks = badges.intrinsicContentSize
         let room = marks.width > 0 ? marks.width + 10 : 0
+        var x: CGFloat = 14
+        if let thumbnail {
+            let side: CGFloat = 26
+            thumbnail.frame = NSRect(x: x, y: floor((bounds.height - side) / 2), width: side, height: side)
+            x += side + 10
+        }
         // The flags just after the name, however long it is.
-        let titleWidth = min(ceil(title.attributedStringValue.size().width) + 4, bounds.width - 28 - detailWidth - 12 - room)
+        let titleWidth = min(ceil(title.attributedStringValue.size().width) + 4, bounds.width - x - 14 - detailWidth - 12 - room)
         // The path to a row over it, its own words under.
         let trailHeight = trail.map { ceil($0.intrinsicContentSize.height) } ?? 0
         let titleY = trail == nil ? floor((bounds.height - h) / 2) : floor((bounds.height - h - trailHeight) / 2)
-        title.frame = NSRect(x: 14, y: titleY, width: titleWidth, height: h)
-        trail?.frame = NSRect(x: 14, y: title.frame.maxY, width: bounds.width - 28 - detailWidth - 12, height: trailHeight)
+        title.frame = NSRect(x: x, y: titleY, width: titleWidth, height: h)
+        trail?.frame = NSRect(x: x, y: title.frame.maxY, width: bounds.width - x - 14 - detailWidth - 12, height: trailHeight)
         badges.frame = NSRect(x: title.frame.maxX + 6, y: floor((bounds.height - marks.height) / 2), width: marks.width, height: marks.height)
         let dh = detail.intrinsicContentSize.height
         detail.frame = NSRect(x: bounds.width - 14 - detailWidth, y: floor((bounds.height - dh) / 2), width: detailWidth, height: dh)
