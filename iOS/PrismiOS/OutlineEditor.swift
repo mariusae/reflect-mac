@@ -1,6 +1,7 @@
 import UIKit
 import UIKit.UIGestureRecognizerSubclass
 import UniformTypeIdentifiers
+import QuickLook
 import ReflectCore
 import PrismCore
 
@@ -2063,10 +2064,19 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
                 if point.x < carousel.frame.minX + edge { return turn(carousel.box, span: carousel.span, by: -1) }
                 if point.x > carousel.frame.maxX - edge { return turn(carousel.box, span: carousel.span, by: 1) }
             }
-            // The caret after it, the picture still shown: its Markdown is
-            // for the caret to go into, not for a tap.
-            if !isFirstResponder { becomeFirstResponder() }
-            selectedRange = NSRange(location: NSMaxRange(span), length: 0)
+            // Anywhere else, the picture on its own — a carousel's all, at
+            // the one it shows — to zoom into and share.
+            if let carousel = carousel(at: point) {
+                let files = carousel.box.sources.compactMap(PhoneImages.url(for:))
+                    .filter { FileManager.default.fileExists(atPath: $0.path) }
+                viewPictures(files, at: PhoneCarousel.index(carousel.box), from: carousel.frame)
+            } else if let file = pictureFile(span) {
+                viewPictures([file], at: 0, from: pictureFrame(span) ?? CGRect(origin: point, size: .zero))
+            } else {
+                // Not a file here — one from the web — its Markdown, to edit.
+                if !isFirstResponder { becomeFirstResponder() }
+                selectedRange = NSRange(location: NSMaxRange(span), length: 0)
+            }
         case nil:
             break
         }
@@ -2215,6 +2225,27 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         // `![](path "title")` and `![](<path>)` alike.
         if let space = source.firstIndex(of: " ") { source = String(source[..<space]) }
         return source.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
+    }
+
+    // MARK: Pictures seen
+
+    /// The viewer's pictures, kept while it shows them: it holds its source loosely.
+    private var viewing: PictureViewer?
+
+    /// Pictures in Quick Look over the app, from the one at `index`: to
+    /// zoom into and share.
+    private func viewPictures(_ files: [URL], at index: Int, from frame: CGRect) {
+        guard !files.isEmpty else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let viewer = PictureViewer(files: files, from: frame, in: self)
+        viewing = viewer
+        let preview = QLPreviewController()
+        preview.dataSource = viewer
+        preview.delegate = viewer
+        preview.currentPreviewItemIndex = min(max(index, 0), files.count - 1)
+        var presenter = window?.rootViewController
+        while let next = presenter?.presentedViewController { presenter = next }
+        presenter?.present(preview, animated: true)
     }
 
     /// The file a picture's Markdown shows, in the graph.
@@ -2625,5 +2656,38 @@ enum ProgressRing {
         UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
             draw(progress, in: CGRect(x: 0, y: 0, width: side, height: side), lineWidth: 1.8)
         }
+    }
+}
+
+/// The pictures Quick Look shows, and where in the note they grow from and
+/// go back to.
+final class PictureViewer: NSObject, QLPreviewControllerDataSource, QLPreviewControllerDelegate {
+    let files: [URL]
+    let frame: CGRect
+    weak var view: UIView?
+
+    init(files: [URL], from frame: CGRect, in view: UIView) {
+        self.files = files
+        self.frame = frame
+        self.view = view
+    }
+
+    func numberOfPreviewItems(in controller: QLPreviewController) -> Int { files.count }
+
+    func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+        files[index] as NSURL
+    }
+
+    /// Grown from the picture in the note, and gone back into it.
+    func previewController(_ controller: QLPreviewController, frameFor item: QLPreviewItem,
+                           inSourceView view: AutoreleasingUnsafeMutablePointer<UIView?>) -> CGRect {
+        view.pointee = self.view
+        return frame
+    }
+
+    /// Not marked up here: the picture is the note's, and a copy would go
+    /// nowhere. Sharing it can.
+    func previewController(_ controller: QLPreviewController, editingModeFor previewItem: QLPreviewItem) -> QLPreviewItemEditingMode {
+        .disabled
     }
 }
