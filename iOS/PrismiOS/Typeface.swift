@@ -101,7 +101,10 @@ enum Typeface: String, CaseIterable, Identifiable {
               font.familyName == monoFamily else {
             return .monospacedSystemFont(ofSize: size, weight: .regular)
         }
-        return font
+        // With the stylistic sets it is set in turned on.
+        let features = CodeFeatures.settings(family: monoFamily)
+        guard !features.isEmpty else { return font }
+        return UIFont(descriptor: font.fontDescriptor.addingAttributes([.featureSettings: features]), size: size)
     }
 
     private func font(_ family: String?, size: CGFloat, weight: UIFont.Weight, italic: Bool = false) -> UIFont {
