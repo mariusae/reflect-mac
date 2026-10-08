@@ -2,6 +2,7 @@ import SwiftUI
 import AuthenticationServices
 import UIKit
 import PhotosUI
+import SafariServices
 import ReflectCore
 import PrismCore
 import ReflectGit2
@@ -349,8 +350,26 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
                 push(.note(path), from: sheet)
             }
         } else if let url = URL(string: link), url.scheme != nil {
-            UIApplication.shared.open(url)
+            openWeb(url)
         }
+    }
+
+    /// A page of the web, in Safari's own view over the app — its reader,
+    /// sharing, and a button to go on in Safari itself. Mail, a call, an
+    /// app's own address: to whatever opens it.
+    func openWeb(_ url: URL) {
+        guard ["http", "https"].contains(url.scheme?.lowercased()) else {
+            UIApplication.shared.open(url)
+            return
+        }
+        let configuration = SFSafariViewController.Configuration()
+        configuration.barCollapsingEnabled = true
+        let safari = SFSafariViewController(url: url, configuration: configuration)
+        safari.preferredControlTintColor = Ink.text
+        safari.dismissButtonStyle = .close
+        var presenter: UIViewController = self
+        while let next = presenter.presentedViewController { presenter = next }
+        presenter.present(safari, animated: true)
     }
 
     /// Everything typed, in every tab, written.
