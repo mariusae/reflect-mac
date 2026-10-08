@@ -449,10 +449,19 @@ final class NoteBlock: UIView {
         load()
     }
 
+    /// The note is deleted: what is typed in it is never written.
+    private var isDiscarded = false
+
+    func discard() {
+        saveTimer?.invalidate()
+        dirty = false
+        isDiscarded = true
+    }
+
     /// Writes the note, when it changed: a day not written in, left blank, stays unwritten.
     func save() {
         saveTimer?.invalidate()
-        guard isLive else { return }
+        guard isLive, !isDiscarded else { return }
         guard dirty, let store, conflict == nil else { return }
         dirty = false
         // The folds with the note: kept as it is written, not each keystroke.

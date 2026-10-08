@@ -178,7 +178,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
     /// picture, then quits. `PRISM_NOTE` is the note to go to (a graph
     /// path), `PRISM_FACE`, `PRISM_SIZE` and `PRISM_LINE` (line height, in ems) the type, `PRISM_DARK=1` the
     /// dark appearance; `PRISM_TYPE` text typed at the note's end (a newline
-    /// for Return), `PRISM_SELECT` the first such text in the note selected, `PRISM_FOLLOW` `[[titles]]` followed
+    /// for Return, a carriage return for ⇧Return), `PRISM_SELECT` the first such text in the note selected, `PRISM_FOLLOW` `[[titles]]` followed
     /// as plain clicks (`|` between), `PRISM_HEADER` a note whose header in the timeline is clicked, `PRISM_BACK=1` Back, `PRISM_SWITCH` ⌘E's cards
     /// opened and moved so many, `PRISM_SHEETS=1` the stacks printed, `PRISM_DRAG`
     /// and `PRISM_DRAGSHOW` (`column:index|top:fraction`) a sheet dragged there, `PRISM_COLLAPSE` a note
@@ -241,6 +241,8 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         if let text = environment["PRISM_SELECT"] {
             controller.selectForScript(text, in: environment["PRISM_NOTE"] ?? GraphPaths.dailyPath(for: .today))
         }
+        // `PRISM_TRASH=<path>`: a note moved to the Trash, as from the Note menu, unasked.
+        if let path = environment["PRISM_TRASH"] { controller.trash(path) }
         if let path = environment["PRISM_COLLAPSE"] { controller.collapseAllForScript(in: path) }
         for title in (environment["PRISM_FOLLOW"] ?? "").split(separator: "|") { controller.followForScript(String(title)) }
         if let path = environment["PRISM_HEADER"] { controller.openAloneForScript(path) }
@@ -467,6 +469,8 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             .separator(),
             item("Copy Link", #selector(PrismWindowController.copyNoteLink(_:))),
             item("Show in Finder", #selector(PrismWindowController.revealNoteInFinder(_:))),
+            .separator(),
+            item("Move to Trash…", #selector(PrismWindowController.trashNote(_:)), "\u{8}", [.command, .shift]),
         ])
         submenu("Column", [
             item("Timeline", #selector(PrismWindowController.showTimeline(_:)), "t", [.command, .option]),

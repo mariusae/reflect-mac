@@ -210,3 +210,32 @@ private func shape(_ rows: [Row]) -> String {
         #expect(cycled("# Title\n", .task) == "# Title\n")
     }
 }
+
+@Suite struct ContinuationTests {
+    /// A row's lines after its first, as ⇧Return makes them, written so each
+    /// reads back as the same row: a quote's with `>`, a bullet's indented.
+    @Test func quoteAndBulletLinesRoundTrip() {
+        for row in [Row(kind: .quote, text: "first line\nsecond line"), Row(kind: .bullet, text: "first\nsecond"),
+                    Row(kind: .bullet, depth: 1, text: "nested\nmore")] {
+            var rows = [Row(kind: .bullet, text: "top")]
+            if row.depth == 0 { rows = [] }
+            rows.append(row)
+            let text = OutlineMarkdown.serialize(Outline(rows: rows))
+            let back = OutlineMarkdown.parse(text).rows
+            #expect(back.last?.text == row.text, "\(text)")
+            #expect(back.last?.kind == row.kind)
+            #expect(back.count == rows.count)
+        }
+    }
+
+    /// A quote's lines each start `>`, and read back as the one quote.
+    @Test func quoteLinesKeepTheirMarks() {
+        let quote = OutlineMarkdown.serialize(Outline(rows: [Row(kind: .quote, text: "first line\nsecond line")]))
+        #expect(quote == "> first line\n> second line\n")
+        for source in ["> a\n> b\n", "> a\nlazy\n> b\n", "> a\n>\n> b\n", "> a\n>b\n", "- x\n  > a\n  > b\n", "> a\n\n> b\n"] {
+            #expect(OutlineMarkdown.roundTrips(source), "\(source)")
+        }
+        #expect(OutlineMarkdown.parse("> a\n> b\n").rows.count == 1)
+        #expect(OutlineMarkdown.parse("> a\n\n> b\n").rows.count == 2)
+    }
+}

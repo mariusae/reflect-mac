@@ -360,6 +360,11 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     /// The notes shown whole: the timeline's days, a note on its own, the inbox's.
     private var noteBlocks: [NoteBlock] { blocks.compactMap { $0 as? NoteBlock } }
 
+    /// A note deleted: the cards showing it never write it again.
+    func discard(_ path: String) {
+        noteBlocks.filter { $0.ref.path == path }.forEach { $0.discard() }
+    }
+
     /// Whether a note has done items to move below the rest.
     func canMoveDoneToBottom(in path: String) -> Bool {
         var rows = noteBlocks.first(where: { $0.ref.path == path })?.liveEditor?.rows ?? OutlineMarkdown.parse(store.text(path)).rows

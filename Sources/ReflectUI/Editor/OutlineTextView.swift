@@ -775,6 +775,11 @@ package final class OutlineTextView: NSTextView {
 
     package override func keyDown(with event: NSEvent) {
         LinkCard.shared.hide()
+        // ⇧Return: the row goes on, on a line of its own — a new row is Return's.
+        if [36, 76].contains(event.keyCode), event.modifierFlags.intersection([.shift, .command, .option, .control]) == .shift {
+            insertLineBreak(nil)
+            return
+        }
         super.keyDown(with: event)
     }
 

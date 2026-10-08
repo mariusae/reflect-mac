@@ -82,6 +82,12 @@ public enum OutlineMarkdown {
             let indent = OutlineMarkdown.indentation(line)
             let content = String(line.drop(while: { $0 == " " || $0 == "\t" }))
 
+            // `>` straight after a quote, where it starts: the quote's next line.
+            if pendingGap.isEmpty, let last = rows.last, last.kind == .quote, content.hasPrefix(">"),
+               indent == lastContentColumn {
+                appendQuoteLine(content)
+                return
+            }
             // A line straight after text, that starts nothing new, goes on
             // with that text — even when it is not indented to match.
             if pendingGap.isEmpty, let last = rows.last, last.continues,
@@ -150,6 +156,25 @@ public enum OutlineMarkdown {
             }
         }
 
+        /// A quote's next line, written with its `>`: in the text without
+        /// it. How it was written is kept — `> ` the usual, nil; a `>` with
+        /// no space after, `quoteBare` — and a line without one, lazily
+        /// going on, by its indent, as `appendContinuation` keeps it.
+        private mutating func appendQuoteLine(_ content: String) {
+            var row = rows.removeLast()
+            var indents = row.continuationIndents ?? Array(repeating: nil, count: row.lineCount - 1)
+            let rest = content.dropFirst()
+            if rest.hasPrefix(" ") {
+                row.text += "\n" + rest.dropFirst()
+                indents.append(nil)
+            } else {
+                row.text += "\n" + rest
+                indents.append(OutlineMarkdown.quoteBare)
+            }
+            row.continuationIndents = indents.allSatisfy({ $0 == nil }) ? nil : indents
+            rows.append(row)
+        }
+
         private mutating func appendContinuation(_ line: String, indent: Int) {
             var row = rows.removeLast()
             var indents = row.continuationIndents ?? Array(repeating: nil, count: row.lineCount - 1)
@@ -162,8 +187,9 @@ public enum OutlineMarkdown {
                 let strip = min(indent, lastContentColumn)
                 row.text += "\n" + line.dropFirst(OutlineMarkdown.prefixLength(line, columns: strip))
                 // Indented less than usual (a lazy continuation) is recorded;
-                // more than usual keeps the extra in the text.
-                indents.append(indent < lastContentColumn ? indent : nil)
+                // more than usual keeps the extra in the text. A quote's line
+                // without its `>` is always recorded: its usual has one.
+                indents.append(indent < lastContentColumn || row.kind == .quote ? strip : nil)
             }
             row.continuationIndents = indents.allSatisfy({ $0 == nil }) ? nil : indents
             rows.append(row)
@@ -171,6 +197,10 @@ public enum OutlineMarkdown {
     }
 
     // MARK: Writing
+
+    /// A quote's line written `>` with no space after it, among a row's
+    /// `continuationIndents`.
+    static let quoteBare = -1
 
     public static func serialize(_ outline: Outline) -> String {
         var lines: [String] = []
@@ -224,6 +254,12 @@ public enum OutlineMarkdown {
             let rest = row.text.components(separatedBy: "\n").dropFirst()
             let written = row.continuationIndents ?? []
             for (offset, line) in rest.enumerated() {
+                // A quote's lines each with its `>`, as they were written.
+                if row.kind == .quote, offset >= written.count || written[offset] == nil || written[offset] == Self.quoteBare {
+                    let bare = offset < written.count && written[offset] == Self.quoteBare
+                    lines.append(pad + ">" + (bare || line.isEmpty ? "" : " ") + line)
+                    continue
+                }
                 if offset < written.count, let written = written[offset] {
                     lines.append(String(repeating: " ", count: written) + line)
                 } else if line.isEmpty {

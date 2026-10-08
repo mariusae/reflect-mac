@@ -120,6 +120,28 @@ final class PrismStore {
         }
     }
 
+    /// A note deleted: its file out of the graph — kept in the graph's
+    /// history, once synced — and gone from other devices at their next sync.
+    func delete(_ path: String) {
+        guard let graph else { return }
+        do {
+            try FileManager.default.removeItem(at: graph.url(for: path))
+        } catch {
+            syncError = error.localizedDescription
+            return
+        }
+        let index = self.index
+        Self.indexing.async {
+            index?.refresh(path)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.changed = [path]
+                self.revision += 1
+                self.written()
+            }
+        }
+    }
+
     /// Where notes written are read into the index again, one at a time.
     private static let indexing = DispatchQueue(label: "PrismStore.indexing", qos: .userInitiated)
 

@@ -540,7 +540,45 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
                 }
             }))
         }
+        // Last, set apart: what cannot be undone here.
+        if day == nil {
+            items.append(UIMenu(options: .displayInline, children: [
+                UIAction(title: "Delete Note…", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
+                    self?.confirmDelete(path, title: entry?.title ?? (path as NSString).lastPathComponent)
+                },
+            ]))
+        }
         return UIMenu(options: .displayInline, children: items)
+    }
+
+    // MARK: Deleting
+
+    /// Asks, then deletes a note: its file out of the graph, every card of
+    /// it let go unwritten, every sheet of it alone off its stack.
+    private func confirmDelete(_ path: String, title: String) {
+        let alert = UIAlertController(title: "Delete “\(title)”?",
+                                      message: "It stays in the graph’s history, and your other devices lose it when this iPhone next syncs.",
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { [weak self] _ in self?.delete(path) })
+        var presenter: UIViewController = self
+        while let next = presenter.presentedViewController { presenter = next }
+        presenter.present(alert, animated: true)
+    }
+
+    private func delete(_ path: String) {
+        for column in columns {
+            for case let sheet as SheetController in column.viewControllers { sheet.discard(path) }
+        }
+        store.delete(path)
+        for column in columns {
+            let kept = column.viewControllers.enumerated().filter { index, controller in
+                index == 0 || (controller as? SheetController)?.kind != .note(path)
+            }.map(\.element)
+            if kept.count != column.viewControllers.count { column.setViewControllers(kept, animated: column === selectedNavigation) }
+        }
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        layoutChanged()
     }
 
     // MARK: Covers

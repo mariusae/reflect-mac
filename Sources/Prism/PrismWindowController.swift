@@ -1833,6 +1833,10 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         item("Backlinks", #selector(showBacklinks(_:)))
         item("Copy Link", #selector(copyNoteLink(_:)))
         item("Reveal in Finder", #selector(revealNoteInFinder(_:)))
+        if view.ref.day == nil {
+            menu.addItem(.separator())
+            item("Move to Trash…", #selector(trashNote(_:)))
+        }
         // Among others, how its card shows it.
         if columns.contains(where: { $0.listsNotes && $0.views.contains(view) }) {
             menu.addItem(.separator())
@@ -1891,6 +1895,59 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     @objc func removeCover(_ sender: Any?) {
         guard let note = menuNote, note.cover != nil else { return NSSound.beep() }
         setFrontmatter(note.path, NoteCover.key, nil)
+    }
+
+    // MARK: Deleting
+
+    /// Note ▸ Move to Trash…: the note the keyboard is in, asked first. Its
+    /// file goes to the Trash — taken back out from there — and from the
+    /// graph, so from other devices once this Mac syncs. A day is not.
+    @objc func trashNote(_ sender: Any?) {
+        guard let note = menuNote, note.day == nil, graph.exists(path: note.path), let window else { return NSSound.beep() }
+        let alert = NSAlert()
+        alert.messageText = "Move “\(note.title)” to the Trash?"
+        alert.informativeText = "You can take it back out of the Trash. Your other devices lose it when this Mac next syncs."
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard response == .alertFirstButtonReturn else { return }
+                self?.trash(note.path)
+            }
+        }
+    }
+
+    /// A note to the Trash: no longer written by anything showing it, its
+    /// sheets gone from every stack — the one on top for the one beneath —
+    /// and everything listing it caught up.
+    func trash(_ path: String) {
+        save()
+        let ref = NoteRef(path: path)
+        for column in columns {
+            column.views.filter { $0.ref.path == path }.forEach { $0.discard() }
+        }
+        do {
+            try FileManager.default.trashItem(at: graph.url(for: path), resultingItemURL: nil)
+        } catch {
+            Log.shared.error("files", "Could not move \(path) to the Trash", detail: error.localizedDescription)
+            NSAlert(error: error).runModal()
+            return
+        }
+        Log.shared.info("files", "Moved \(path) to the Trash")
+        for column in columns {
+            column.beneath.removeAll { $0.kind == .note(ref) }
+            column.ahead.removeAll { $0.kind == .note(ref) }
+            guard column.kind == .note(ref) else { continue }
+            if !column.beneath.isEmpty {
+                pop(column)
+            } else {
+                openSheet(.timeline, at: .day(.today), on: column, pushing: false)
+            }
+        }
+        notesChanged([path])
+        sync.noteChanged()
+        saveLayout()
     }
 
     /// Puts a `[[link]]` to the note on the pasteboard.
@@ -2384,6 +2441,8 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             return menuNote != nil
         case #selector(copyNoteLink(_:)), #selector(revealNoteInFinder(_:)):
             return menuNote != nil
+        case #selector(trashNote(_:)):
+            return menuNote.map { $0.day == nil && graph.exists(path: $0.path) } ?? false
         case #selector(addCover(_:)):
             item.title = menuNote?.cover != nil ? "Change Cover…" : "Add Cover…"
             return menuNote.map { $0.day == nil } ?? false
@@ -2418,7 +2477,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         editor.enter(from: .bottom, x: .greatestFiniteMagnitude, scrolling: false)
         for (i, line) in text.components(separatedBy: "\n").enumerated() {
             if i > 0 { editor.insertNewline(nil) }
-            if !line.isEmpty { editor.insertText(line, replacementRange: editor.selectedRange()) }
+            // A carriage return: ⇧Return, the row going on.
+            for (j, part) in line.components(separatedBy: "\r").enumerated() {
+                if j > 0 { editor.insertLineBreak(nil) }
+                if !part.isEmpty { editor.insertText(part, replacementRange: editor.selectedRange()) }
+            }
         }
     }
 
