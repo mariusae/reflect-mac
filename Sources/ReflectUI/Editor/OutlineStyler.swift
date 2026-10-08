@@ -648,7 +648,9 @@ package final class HiddenMarkupGlyphs: NSObject, NSLayoutManagerDelegate {
         if characters.length > 0, let slot = storage.attribute(.outlineTimeSlot, at: NSMaxRange(characters) - 1, effectiveRange: nil) as? TimeSlot,
            slot.footHeight > 0, (storage.string as NSString).character(at: NSMaxRange(characters) - 1) == 0x0a {
             lineFragmentRect.pointee.size.height += slot.footHeight
-            lineFragmentUsedRect.pointee.size.height = lineFragmentRect.pointee.maxY - lineFragmentUsedRect.pointee.minY
+            // Its text where it was: the room is under it, and a row with
+            // nothing typed puts its caret by the foot of what is used.
+            lineFragmentUsedRect.pointee.size.height += slot.footHeight
             changed = true
         }
         return changed

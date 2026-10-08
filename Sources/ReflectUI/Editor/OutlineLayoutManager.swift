@@ -311,7 +311,7 @@ package final class OutlineLayoutManager: NSLayoutManager {
     /// a row with nothing typed yet, or only hidden markup and pictures —
     /// has its baseline worked out from the type: as far above the foot of
     /// its text as the font descends, where the line's height multiple puts
-    /// its extra space above.
+    /// its extra space above — the room for a timeline under it left out.
     package func baseline(ofLineAt glyph: Int, font: NSFont) -> CGFloat {
         guard numberOfGlyphs > 0 else { return font.ascender }
         let glyph = min(glyph, numberOfGlyphs - 1)
@@ -338,7 +338,8 @@ package final class OutlineLayoutManager: NSLayoutManager {
                 as? NSParagraphStyle)?.lineHeightMultiple ?? 1
             return used.minY + defaultLineHeight(for: font) * max(multiple, 1) - descent
         }
-        return used.maxY - descent
+        // Not counting the room under a time block's last row for the timeline.
+        return used.maxY - timelineFoot(atGlyph: glyph) - descent
     }
 
     /// The picture at a point in the text view, if any.
