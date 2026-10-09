@@ -8,8 +8,13 @@ import PrismCore
 /// clicked is gone to; the arrows, or a swipe, go a month along.
 final class CalendarView: NSView {
     var onChoose: ((Day) -> Void)?
+    /// A week's number clicked: its note.
+    var onChooseWeek: ((Week) -> Void)?
     private var month: NoteCalendar.Month
     private let marks: [Day: NoteCalendar.Mark]
+    /// The weeks with a note: their numbers in the weeks' ochre, the rest faint.
+    private let notedWeeks: Set<Week>
+    private var hoveredWeek: Week?
     private let face: Typeface
     private var hovered: Day?
     private let previous = NSButton()
@@ -17,13 +22,16 @@ final class CalendarView: NSView {
 
     override var isFlipped: Bool { true }
 
-    static let size = NSSize(width: 308, height: 318)
+    static let size = NSSize(width: 338, height: 318)
     private static let cell: CGFloat = 40
+    /// The column of week numbers, before the days.
+    private static let weekColumn: CGFloat = 30
     private static let top: CGFloat = 76
 
-    init(month: NoteCalendar.Month, marks: [Day: NoteCalendar.Mark], face: Typeface) {
+    init(month: NoteCalendar.Month, marks: [Day: NoteCalendar.Mark], weeks: Set<Week> = [], face: Typeface) {
         self.month = month
         self.marks = marks
+        self.notedWeeks = weeks
         self.face = face
         super.init(frame: NSRect(origin: .zero, size: Self.size))
         for (button, symbol, step) in [(previous, "chevron.left", -1), (next, "chevron.right", 1)] {
@@ -46,6 +54,7 @@ final class CalendarView: NSView {
     private func show(_ month: NoteCalendar.Month) {
         self.month = month
         hovered = nil
+        hoveredWeek = nil
         needsDisplay = true
     }
 
@@ -58,7 +67,16 @@ final class CalendarView: NSView {
     // MARK: Where each day is
 
     private var weeks: [[Day?]] { NoteCalendar.weeks(of: month) }
-    private var left: CGFloat { ((bounds.width - 7 * Self.cell) / 2).rounded() }
+    private var left: CGFloat { ((bounds.width - 7 * Self.cell + Self.weekColumn) / 2).rounded() }
+
+    private func weekRect(_ week: Int) -> NSRect {
+        NSRect(x: left - Self.weekColumn, y: Self.top + CGFloat(week) * Self.cell, width: Self.weekColumn, height: Self.cell)
+    }
+
+    private func week(at point: NSPoint) -> Week? {
+        for (w, row) in weeks.enumerated() where weekRect(w).contains(point) { return NoteCalendar.week(ofRow: row) }
+        return nil
+    }
 
     private func rect(week: Int, weekday: Int) -> NSRect {
         NSRect(x: left + CGFloat(weekday) * Self.cell, y: Self.top + CGFloat(week) * Self.cell, width: Self.cell, height: Self.cell)
@@ -77,7 +95,7 @@ final class CalendarView: NSView {
         let title = NSAttributedString(string: month.title(), attributes: [
             .font: face.font(size: 16, weight: .bold), .foregroundColor: Ink.text,
         ])
-        title.draw(at: NSPoint(x: left + 8, y: 18))
+        title.draw(at: NSPoint(x: left - Self.weekColumn + 8, y: 18))
         let weekdayFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
         for (i, symbol) in NoteCalendar.weekdaySymbols().enumerated() {
             let text = NSAttributedString(string: symbol, attributes: [.font: weekdayFont, .foregroundColor: Ink.secondary])
@@ -86,6 +104,27 @@ final class CalendarView: NSView {
         }
         let today = Day.today
         for (w, week) in weeks.enumerated() {
+            // The week's number: in the weeks' ochre, faint with no note, a
+            // dot under it with one.
+            if let number = NoteCalendar.week(ofRow: week) {
+                let box = weekRect(w)
+                let center = NSPoint(x: box.midX, y: box.midY)
+                if number == hoveredWeek {
+                    Ink.hover.setFill()
+                    NSBezierPath(ovalIn: NSRect(x: center.x - 14, y: center.y - 14, width: 28, height: 28)).fill()
+                }
+                let has = notedWeeks.contains(number)
+                let label = NSAttributedString(string: "\(number.week)", attributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+                    .foregroundColor: has || number == .current ? Ink.week : Ink.week.withAlphaComponent(0.4),
+                ])
+                let size = label.size()
+                label.draw(at: NSPoint(x: (center.x - size.width / 2).rounded(), y: (center.y - size.height / 2).rounded()))
+                if has {
+                    Ink.week.setFill()
+                    NSBezierPath(ovalIn: NSRect(x: center.x - 2, y: center.y + 9, width: 4, height: 4)).fill()
+                }
+            }
             for (d, day) in week.enumerated() {
                 guard let day else { continue }
                 drawDay(day, in: rect(week: w, weekday: d), today: today)
@@ -131,19 +170,27 @@ final class CalendarView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
-        let day = day(at: convert(event.locationInWindow, from: nil))
-        guard day != hovered else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let day = day(at: point), week = week(at: point)
+        guard day != hovered || week != hoveredWeek else { return }
         hovered = day
+        hoveredWeek = week
         needsDisplay = true
     }
 
     override func mouseExited(with event: NSEvent) {
         hovered = nil
+        hoveredWeek = nil
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard let day = day(at: convert(event.locationInWindow, from: nil)) else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        if let week = week(at: point) {
+            onChooseWeek?(week)
+            return
+        }
+        guard let day = day(at: point) else { return }
         onChoose?(day)
     }
 

@@ -7,15 +7,17 @@ import PrismCore
 /// tapped is gone to; a swipe across, or the arrows, go a month along.
 final class CalendarController: UIViewController {
     var onChoose: ((Day) -> Void)?
+    /// A week's number tapped: its note.
+    var onChooseWeek: ((Week) -> Void)?
     private let marks: [Day: NoteCalendar.Mark]
     private let grid: CalendarGrid
     private let monthTitle = UILabel()
     private let earlier = UIButton(type: .system)
     private let later = UIButton(type: .system)
 
-    init(month: NoteCalendar.Month, marks: [Day: NoteCalendar.Mark]) {
+    init(month: NoteCalendar.Month, marks: [Day: NoteCalendar.Mark], weeks: Set<Week> = []) {
         self.marks = marks
-        grid = CalendarGrid(month: month, marks: marks)
+        grid = CalendarGrid(month: month, marks: marks, weeks: weeks)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -39,6 +41,10 @@ final class CalendarController: UIViewController {
         grid.onChoose = { [weak self] day in
             UISelectionFeedbackGenerator().selectionChanged()
             self?.onChoose?(day)
+        }
+        grid.onChooseWeek = { [weak self] week in
+            UISelectionFeedbackGenerator().selectionChanged()
+            self?.onChooseWeek?(week)
         }
         view.addSubview(grid)
         for direction in [UISwipeGestureRecognizer.Direction.left, .right] {
@@ -91,12 +97,18 @@ final class CalendarController: UIViewController {
 private final class CalendarGrid: UIView {
     var month: NoteCalendar.Month { didSet { setNeedsDisplay() } }
     var onChoose: ((Day) -> Void)?
+    var onChooseWeek: ((Week) -> Void)?
     private let marks: [Day: NoteCalendar.Mark]
+    /// The weeks with a note: their numbers in ink, the rest faint.
+    private let weeks: Set<Week>
     private static let weekdayRow: CGFloat = 26
+    /// The column of week numbers, before the days.
+    private static let weekColumn: CGFloat = 30
 
-    init(month: NoteCalendar.Month, marks: [Day: NoteCalendar.Mark]) {
+    init(month: NoteCalendar.Month, marks: [Day: NoteCalendar.Mark], weeks: Set<Week>) {
         self.month = month
         self.marks = marks
+        self.weeks = weeks
         super.init(frame: .zero)
         isOpaque = false
         contentMode = .redraw
@@ -106,19 +118,29 @@ private final class CalendarGrid: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    private var cell: CGFloat { bounds.width / 7 }
+    private var cell: CGFloat { (bounds.width - Self.weekColumn) / 7 }
 
     /// Six weeks' room, whatever the month: the sheet stays still.
-    func height(width: CGFloat) -> CGFloat { Self.weekdayRow + 6 * min(width / 7, 52) }
+    func height(width: CGFloat) -> CGFloat { Self.weekdayRow + 6 * min((width - Self.weekColumn) / 7, 52) }
 
     private func rect(week: Int, weekday: Int) -> CGRect {
         let row = min(cell, 52)
-        return CGRect(x: CGFloat(weekday) * cell, y: Self.weekdayRow + CGFloat(week) * row, width: cell, height: row)
+        return CGRect(x: Self.weekColumn + CGFloat(weekday) * cell, y: Self.weekdayRow + CGFloat(week) * row, width: cell, height: row)
+    }
+
+    /// Where a week's number is.
+    private func weekRect(_ week: Int) -> CGRect {
+        let row = min(cell, 52)
+        return CGRect(x: 0, y: Self.weekdayRow + CGFloat(week) * row, width: Self.weekColumn, height: row)
     }
 
     @objc private func tapped(_ gesture: UITapGestureRecognizer) {
         let point = gesture.location(in: self)
         for (w, week) in NoteCalendar.weeks(of: month).enumerated() {
+            if weekRect(w).insetBy(dx: -6, dy: 0).contains(point) {
+                if let found = NoteCalendar.week(ofRow: week) { onChooseWeek?(found) }
+                return
+            }
             for (d, day) in week.enumerated() where rect(week: w, weekday: d).contains(point) {
                 if let day { onChoose?(day) }
                 return
@@ -131,10 +153,26 @@ private final class CalendarGrid: UIView {
         for (i, symbol) in NoteCalendar.weekdaySymbols().enumerated() {
             let text = NSAttributedString(string: symbol, attributes: [.font: weekdayFont, .foregroundColor: Ink.secondary])
             let size = text.size()
-            text.draw(at: CGPoint(x: CGFloat(i) * cell + (cell - size.width) / 2, y: 2))
+            text.draw(at: CGPoint(x: Self.weekColumn + CGFloat(i) * cell + (cell - size.width) / 2, y: 2))
         }
         let today = Day.today
         for (w, week) in NoteCalendar.weeks(of: month).enumerated() {
+            // The week's number: in the weeks' ochre, faint with no note, a
+            // dot under it with one.
+            if let number = NoteCalendar.week(ofRow: week) {
+                let has = weeks.contains(number)
+                let box = weekRect(w)
+                let label = NSAttributedString(string: "\(number.week)", attributes: [
+                    .font: UIFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
+                    .foregroundColor: has || number == .current ? Ink.week : Ink.week.withAlphaComponent(0.4),
+                ])
+                let size = label.size()
+                label.draw(at: CGPoint(x: (box.midX - size.width / 2).rounded(), y: (box.midY - size.height / 2).rounded()))
+                if has {
+                    Ink.week.setFill()
+                    UIBezierPath(ovalIn: CGRect(x: box.midX - 2, y: box.midY + 9, width: 4, height: 4)).fill()
+                }
+            }
             for (d, day) in week.enumerated() {
                 guard let day else { continue }
                 drawDay(day, in: self.rect(week: w, weekday: d), today: today)

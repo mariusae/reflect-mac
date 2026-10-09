@@ -42,6 +42,18 @@ public enum NoteCalendar {
         }
     }
 
+    /// The week a row of the calendar stands for: its Monday's, or its
+    /// first day's when the row has no Monday in the month.
+    public static func week(ofRow row: [Day?]) -> Week? {
+        let days = row.compactMap { $0 }
+        return (days.first { Week($0).monday == $0 } ?? days.first).map(Week.init)
+    }
+
+    /// The weeks with a note.
+    public static func weeksWithNotes(index: NoteIndex) -> Set<Week> {
+        Set(index.all.compactMap { GraphPaths.week(fromWeeklyPath: $0.path) })
+    }
+
     /// The month's weeks, each seven days from the calendar's first weekday,
     /// nil before the first and after the last.
     public static func weeks(of month: Month, calendar: Calendar = .current) -> [[Day?]] {

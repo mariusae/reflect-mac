@@ -18,7 +18,10 @@ public enum Timeline {
     /// the notes there are, the days `revealed` though they have none yet,
     /// and a gap for each run of days between them with neither.
     public static func entries(graph: Graph, index: NoteIndex, including ref: NoteRef? = nil, revealed: Set<Day> = []) -> [NoteRef] {
-        let weekly = index.all.compactMap { note in GraphPaths.week(fromWeeklyPath: note.path).map { (note.path, $0) } }
+        var weekly = index.all.compactMap { note in GraphPaths.week(fromWeeklyPath: note.path).map { (note.path, $0) } }
+        // This week's note, there to write in before there is one, as today's is.
+        let thisWeek = GraphPaths.weeklyPath(for: .current)
+        if !weekly.contains(where: { $0.0 == thisWeek }) { weekly.append((thisWeek, .current)) }
         return entries(days: Set(graph.dailyNoteFiles().keys), weeks: weekly.compactMap { path, week in week.monday.map { (path, $0) } },
                        including: ref, revealed: revealed)
     }

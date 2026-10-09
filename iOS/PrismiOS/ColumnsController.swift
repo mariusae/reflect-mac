@@ -675,10 +675,15 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         guard let graph = store.graph, let index = store.index else { return }
         let days = columns.first?.viewControllers.first as? SheetController
         let shown = days?.place?.path.flatMap(GraphPaths.day(fromDailyPath:)) ?? .today
-        let calendar = CalendarController(month: NoteCalendar.Month(shown), marks: NoteCalendar.marks(graph: graph, index: index))
+        let calendar = CalendarController(month: NoteCalendar.Month(shown), marks: NoteCalendar.marks(graph: graph, index: index),
+                                          weeks: NoteCalendar.weeksWithNotes(index: index))
         calendar.onChoose = { [weak self, weak calendar] day in
             calendar?.dismiss(animated: true)
             self?.open(.day(day))
+        }
+        calendar.onChooseWeek = { [weak self, weak calendar] week in
+            calendar?.dismiss(animated: true)
+            self?.open(.note(GraphPaths.weeklyPath(for: week)))
         }
         if let sheet = calendar.sheetPresentationController {
             let height = calendar.preferredHeight(width: view.bounds.width)

@@ -2095,7 +2095,8 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     func showCalendar(from column: Column, at view: NSView) {
         calendarPopover?.close()
         let shown = column.current?.ref.day ?? .today
-        let calendar = CalendarView(month: NoteCalendar.Month(shown), marks: NoteCalendar.marks(graph: graph, index: index), face: face)
+        let calendar = CalendarView(month: NoteCalendar.Month(shown), marks: NoteCalendar.marks(graph: graph, index: index),
+                                    weeks: NoteCalendar.weeksWithNotes(index: index), face: face)
         let popover = NSPopover()
         popover.behavior = .transient
         popover.contentSize = CalendarView.size
@@ -2107,6 +2108,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             guard let self, let column else { return }
             self.goTo(day, in: column)
         }
+        calendar.onChooseWeek = { [weak self, weak popover, weak column] week in
+            popover?.close()
+            guard let self, let column else { return }
+            open(GraphPaths.weeklyPath(for: week), from: column)
+        }
         popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
         calendarPopover = popover
         view.window?.makeFirstResponder(calendar)
@@ -2115,7 +2121,8 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     /// The calendar, drawn to a picture: for a script.
     func calendarSnapshotForScript(to url: URL, dark: Bool) {
         let month = ProcessInfo.processInfo.environment["PRISM_CALENDAR_MONTH"].flatMap { Day($0 + "-01") }.map(NoteCalendar.Month.init) ?? NoteCalendar.Month(.today)
-        let calendar = CalendarView(month: month, marks: NoteCalendar.marks(graph: graph, index: index), face: face)
+        let calendar = CalendarView(month: month, marks: NoteCalendar.marks(graph: graph, index: index),
+                                    weeks: NoteCalendar.weeksWithNotes(index: index), face: face)
         calendar.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let holder = NSView(frame: calendar.bounds)
         holder.wantsLayer = true
