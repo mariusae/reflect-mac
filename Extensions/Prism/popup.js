@@ -122,7 +122,7 @@ async function load() {
     // A page the extension cannot read into: its address and title only.
     page = null;
   }
-  page ??= { url: tab.url, title: tab.title ?? "", description: "", highlights: [], selection: "" };
+  page ??= { url: tab.url, title: tab.title ?? "", description: "", image: "", highlights: [], selection: "" };
   await takeScreenshot();
   show("capture");
   render();
@@ -144,6 +144,7 @@ async function save() {
       description: page.description,
       highlights,
       screenshot: to === "note" && $("screenshot").checked ? shot : null,
+      image: page.image ?? "",
       to,
     });
     button.textContent = "Saved";

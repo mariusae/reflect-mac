@@ -15,7 +15,7 @@ import ReflectCore
 ///
 ///     GET  /ping      the app, and the graph it writes to
 ///     POST /pair      {"browser"} → {"token"}, once allowed
-///     POST /capture   {"url", "title", "description", "highlights", "screenshot", "to"} → {"path", "title"}
+///     POST /capture   {"url", "title", "description", "highlights", "screenshot", "image", "to"} → {"path", "title"}
 ///                     — `to` "today" for a bullet at the top of today, else a note of its own
 ///     POST /open      {"path"}: the note shown, and the app brought forward
 @MainActor
@@ -178,13 +178,15 @@ package final class CaptureServer {
         var page = WebCapture.Page(url: url, title: body["title"] as? String ?? "",
                                    description: body["description"] as? String ?? "",
                                    highlights: body["highlights"] as? [String] ?? [])
+        // `"image"`: the page's own picture, its cover's makings.
+        page.image = (body["image"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         // `"to": "today"`: a bullet at the top of today, not a note of its own.
         page.destination = (body["to"] as? String).flatMap(WebCapture.Page.Destination.init(rawValue:)) ?? .note
         // A data URL: `data:image/png;base64,…`.
         let screenshot = (body["screenshot"] as? String).flatMap { dataURL -> Data? in
             guard let comma = dataURL.firstIndex(of: ",") else { return nil }
             return Data(base64Encoded: String(dataURL[dataURL.index(after: comma)...]))
-        }
+        }.flatMap { $0.isEmpty ? nil : $0 }
         do {
             guard let saved = try onCapture?(page, screenshot) else { throw CocoaError(.fileWriteUnknown) }
             Log.shared.info("capture", "Captured “\(saved.title)”", detail: url)

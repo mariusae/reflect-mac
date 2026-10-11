@@ -17,6 +17,9 @@ public enum WebCapture {
         public var highlights: [String]
         /// The screenshot, once saved: its source in the graph.
         public var screenshot: String?
+        /// The picture the page gives itself for previews — `og:image` —
+        /// as an address: what its note's cover is made from.
+        public var image: String?
         /// Where it goes: a note of its own, linked from the day; or a
         /// bullet linking to it at the top of the day's note.
         public var destination: Destination = .note
@@ -232,6 +235,14 @@ public enum WebCapture {
     }
 
     // MARK: Saving
+
+    /// The note a page was captured into before, if any.
+    public static func existingNote(for url: String, in graph: Graph, index: NoteIndex) -> String? {
+        let marker = "id: \"\(id(for: url))\""
+        return index.all.first { entry in
+            entry.path.hasPrefix(GraphPaths.notesDirectory + "/") && (index.body(entry.path) ?? graph.read(path: entry.path) ?? "").contains(marker)
+        }?.path
+    }
 
     /// Saves a capture into a graph: the page's note — its own, when it was
     /// captured before, found by its id — and the link from the day's.

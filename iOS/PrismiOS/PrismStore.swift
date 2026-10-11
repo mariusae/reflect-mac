@@ -255,12 +255,15 @@ final class PrismStore {
         var paths: [String] = []
         for (item, file) in pending {
             var page = WebCapture.Page(url: item.url, title: item.title, description: item.description, highlights: item.highlights)
-            if page.title.isEmpty || page.description.isEmpty, let read = await Self.readPage(item.url) {
+            page.image = item.image
+            let toDay = item.destination == "today"
+            if page.title.isEmpty || page.description.isEmpty || (page.image == nil && !toDay), let read = await Self.readPage(item.url) {
                 if page.title.isEmpty { page.title = read.title }
                 if page.description.isEmpty { page.description = read.description }
+                if page.image == nil { page.image = read.image }
             }
             let day = Day(item.shared)
-            let toDay = item.destination == "today"
+            let isNew = !toDay && WebCapture.existingNote(for: page.url, in: graph, index: index) == nil
             let saved = await Task.detached(priority: .userInitiated) {
                 toDay ? try? WebCapture.saveToDay(page, in: graph, index: index, on: day)
                     : try? WebCapture.save(page, in: graph, index: index, on: day)
@@ -268,14 +271,19 @@ final class PrismStore {
             guard let saved else { continue }
             paths += [saved, GraphPaths.dailyPath(for: day)]
             ShareQueue.remove(file)
+            // A new note's cover: the page's own picture, when it is a good one.
+            if isNew, let cover = await CaptureCover.choose(image: page.image, title: page.title, screenshot: nil, in: graph.root),
+               NoteCover.source(in: text(saved)) == nil {
+                write(NoteCover.setting(cover, in: text(saved)), path: saved)
+            }
         }
         guard !paths.isEmpty else { return }
         noteChanged(paths)
         written()
     }
 
-    /// A page's title and description, as its HTML gives them.
-    private nonisolated static func readPage(_ address: String) async -> (title: String, description: String)? {
+    /// A page's title, description and picture, as its HTML gives them.
+    private nonisolated static func readPage(_ address: String) async -> (title: String, description: String, image: String?)? {
         guard let url = URL(string: address) else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 8)
         request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
@@ -306,9 +314,12 @@ final class PrismStore {
             return decoded
         }
         let description = meta("og:description") ?? meta("description") ?? ""
+        // The page's picture, made whole against its address.
+        let image = (meta("og:image") ?? meta("og:image:url") ?? meta("twitter:image"))
+            .flatMap { URL(string: $0.replacingOccurrences(of: "&amp;", with: "&"), relativeTo: url)?.absoluteString }
         let found = title
         return await MainActor.run {
-            (decode(found).trimmingCharacters(in: .whitespacesAndNewlines), decode(description).trimmingCharacters(in: .whitespacesAndNewlines))
+            (decode(found).trimmingCharacters(in: .whitespacesAndNewlines), decode(description).trimmingCharacters(in: .whitespacesAndNewlines), image)
         }
     }
 

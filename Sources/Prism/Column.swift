@@ -179,6 +179,8 @@ final class Column: NSView, OutlineTextViewNavigator {
     var onOpen: ((URL, Column, _ newColumn: Bool) -> Void)?
     /// A note to open, from here — a backlink's — and whether in a column of its own.
     var onOpenPath: ((String, Column, _ newColumn: Bool) -> Void)?
+    /// A note opened from what links here: at the link, marked a moment.
+    var onOpenBacklink: ((_ path: String, _ link: String, Column, _ newColumn: Bool) -> Void)?
     /// It was scrolled.
     var onScroll: ((Column) -> Void)?
     /// A note in it was written.
@@ -727,6 +729,12 @@ final class Column: NSView, OutlineTextViewNavigator {
     private var rules: [NSView] = []
     /// Each note's flags — inbox, pinned, private, topic — by its name.
     private var badges: [NoteRef: NoteBadges] = [:]
+    /// What links to each note, bunched at its card's foot.
+    private var backlinkStacks: [NoteRef: BacklinkStack] = [:]
+    /// The notes linking to a note, as cards — nil while being looked for.
+    var backlinkCards: ((NoteRef) -> [BacklinkStack.Card]?)?
+    /// The backlinks' own sheet, for a note: all of them.
+    var onShowBacklinks: ((NoteRef, Column) -> Void)?
     /// Each listed note's ⋯, at the right of its name: its own menu.
     private var menuButtons: [NoteRef: NSButton] = [:]
     /// Told when a note's ⋯ is clicked: its menu, to show from the button.
@@ -1025,6 +1033,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             let size = badge.intrinsicContentSize
             badge.frame = NSRect(x: right - size.width, y: round(nameMiddle(of: view) - size.height / 2), width: size.width, height: size.height)
         }
+        placeBacklinkStacks(notes)
         // A note's when, on its first line, clear of the buttons there.
         for view in notes {
             let buttons = (menuButtons[view.ref] != nil ? menuSide : 0) + (openButtons[view.ref] != nil ? menuSide : 0)
@@ -1032,6 +1041,58 @@ final class Column: NSView, OutlineTextViewNavigator {
             view.trailingReserve = buttons > 0 ? buttons + 8 : 0
         }
     }
+
+    /// What links to each note, bunched at its card's foot on the right —
+    /// not in the backlinks' own sheet, which lists them already.
+    private func placeBacklinkStacks(_ notes: [DayView]) {
+        var wanted: [NoteRef: [BacklinkStack.Card]] = [:]
+        if !isBacklinks {
+            for view in notes { if let cards = backlinkCards?(view.ref), !cards.isEmpty { wanted[view.ref] = cards } }
+        }
+        for (ref, stack) in backlinkStacks where wanted[ref] == nil {
+            stack.removeFromSuperview()
+            backlinkStacks[ref] = nil
+        }
+        for view in notes {
+            guard let cards = wanted[view.ref] else {
+                view.footRoom = 0
+                continue
+            }
+            view.footRoom = BacklinkStack.bunch.height + 6
+            let stack = backlinkStacks[view.ref] ?? {
+                let stack = BacklinkStack()
+                let ref = view.ref
+                stack.onOpen = { [weak self] card, newColumn in
+                    guard let self else { return }
+                    onOpenBacklink?(card.path, card.link, self, newColumn)
+                }
+                stack.onShowAll = { [weak self] in
+                    guard let self else { return }
+                    onShowBacklinks?(ref, self)
+                }
+                stack.onSpread = { [weak self] in self?.placeBadges() }
+                backlinkStacks[view.ref] = stack
+                return stack
+            }()
+            // Over the notes, the next card's included, when dealt out.
+            if stack.superview !== document || document.subviews.last !== stack {
+                stack.removeFromSuperview()
+                document.addSubview(stack)
+            }
+            stack.cards = cards
+            stack.face = face
+            let column = min(metrics.columnWidth, view.frame.width - 48)
+            stack.widest = column + 2 * CardSurface.outset - 8
+            let right = view.frame.minX + ((view.frame.width - column) / 2).rounded() + column + CardSurface.outset - 4
+            let foot = view.frame.maxY - CardSurface.spacing - 2
+            let size = stack.size
+            stack.frame = NSRect(x: right - size.width, y: foot - size.height, width: size.width, height: size.height)
+        }
+    }
+
+    private var isBacklinks: Bool { if case .backlinks = kind { true } else { false } }
+
+    func spreadBacklinksForScript() { backlinkStacks.values.forEach { $0.spreadForScript() } }
 
     // MARK: The timeline
 
@@ -1243,7 +1304,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             }
             block.onOpen = { [weak self] newColumn in
                 guard let self else { return }
-                onOpenPath?(source.path, self, newColumn)
+                onOpenBacklink?(source.path, source.contexts.first?.link ?? "", self, newColumn)
             }
             return block
         }

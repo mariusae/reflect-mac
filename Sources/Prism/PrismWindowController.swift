@@ -210,7 +210,16 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         column.onAddSheet = { [weak self] column, choice in self?.addSheet(choice, on: column) }
         column.onShowCalendar = { [weak self] column, view in self?.showCalendar(from: column, at: view) }
         column.onFan = { [weak self] _, _ in self?.showHeading() }
+        column.backlinkCards = { [weak self] ref in self?.backlinkCards(ref) }
+        column.onShowBacklinks = { [weak self] ref, column in
+            guard let self else { return }
+            openSheet(.backlinks(ref), on: column)
+            findBacklinks(ref, in: column)
+        }
         column.onOpenPath = { [weak self] path, column, newColumn in self?.open(path, newColumn: newColumn, from: column) }
+        column.onOpenBacklink = { [weak self] path, link, column, newColumn in
+            self?.openBacklink(path, at: link, newColumn: newColumn, from: column)
+        }
         column.onScroll = { [weak self] _ in self?.saveLayout() }
         column.onViewMade = { [weak self] view in self?.noteShown(view) }
         column.onViewGone = { [weak self] view in self?.noteLeft(view) }
@@ -1563,6 +1572,49 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         return (index.entry(path)?.title ?? (path as NSString).lastPathComponent, nil)
     }
 
+    // MARK: What links to each note, at its foot
+
+    /// The cards of what links to each note, by path; looked for off the
+    /// main thread, and again — the old ones shown meanwhile — once notes
+    /// change.
+    private var backlinkCards: [String: [BacklinkStack.Card]] = [:]
+    private var freshBacklinks: Set<String> = []
+    private var lookingForBacklinks: Set<String> = []
+
+    /// What links to a note, as cards: as last found — nil, the first
+    /// time — and looked for again when not fresh.
+    private func backlinkCards(_ ref: NoteRef) -> [BacklinkStack.Card]? {
+        let known = backlinkCards[ref.path]
+        guard !freshBacklinks.contains(ref.path), lookingForBacklinks.insert(ref.path).inserted else { return known }
+        let index = index
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let sources = index.backlinks(to: ref.path)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.lookingForBacklinks.remove(ref.path)
+                self.freshBacklinks.insert(ref.path)
+                let cards = sources.map { source in
+                    let words = source.contexts.first?.rows.map(\.text).joined(separator: " ") ?? ""
+                    let snippet = InlineMarkup.plainText(words).replacingOccurrences(of: "\n", with: " ")
+                        .trimmingCharacters(in: .whitespaces)
+                    return BacklinkStack.Card(path: source.path, title: self.backlinkName(source.path).title, snippet: snippet,
+                                              link: source.contexts.first?.link ?? "")
+                }
+                guard cards != self.backlinkCards[ref.path] else { return }
+                self.backlinkCards[ref.path] = cards
+                self.columns.forEach { $0.relayout() }
+            }
+        }
+        return known
+    }
+
+    func spreadBacklinksForScript() { columns.forEach { $0.spreadBacklinksForScript() } }
+
+    /// Notes changed: what links to each is looked for again, as it is shown.
+    private func forgetBacklinkCards() {
+        freshBacklinks = []
+    }
+
     /// Looks for what links to a note, off the main thread, and shows it.
     private func findBacklinks(_ ref: NoteRef, in column: Column) {
         let name = backlinkName(ref.path).title
@@ -1637,6 +1689,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     private func notesChanged(_ paths: Set<String>) {
         // A sync touching many at once: the whole graph read again.
         if paths.count > 40 { index.scan() } else { paths.forEach(index.refresh) }
+        forgetBacklinkCards()
         let entries = timelineEntries()
         for column in columns {
             column.reloadFromDisk(paths)
@@ -2172,9 +2225,20 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
                 + Assets.pastedName(extension: "png").replacingOccurrences(of: "pasted-", with: "")
             page.screenshot = try Assets.add(screenshot, named: name, to: graph.root)
         }
+        let isNew = WebCapture.existingNote(for: page.url, in: graph, index: index) == nil
         let path = try WebCapture.save(page, in: graph, index: index)
         notesChanged([path, GraphPaths.dailyPath(for: .today)])
         sync.noteChanged()
+        // A new note's cover — the page's own picture, else its screenshot —
+        // once fetched: the note saved meanwhile, the browser not kept waiting.
+        if isNew {
+            let root = graph.root
+            Task { [weak self] in
+                guard let cover = await CaptureCover.choose(image: page.image, title: page.title, screenshot: page.screenshot, in: root),
+                      let self, graph.exists(path: path), NoteCover.source(in: graph.read(path: path) ?? "") == nil else { return }
+                setFrontmatter(path, NoteCover.key, NoteCover.quoted(cover))
+            }
+        }
         return (path, index.entry(path)?.title ?? WebCapture.title(page.title, url: page.url))
     }
 
@@ -2390,6 +2454,25 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             guard let editor = self?.window?.firstResponder as? OutlineTextView else { return print("caret: none") }
             let row = editor.rowIndex(at: editor.selectedRange().location)
             print("caret: row \(row) “\(editor.rows[row].text)”")
+        }
+    }
+
+    /// A note opened from what links to another: the row with the link —
+    /// its folds opened — shown, the caret at its end, marked a moment.
+    func openBacklink(_ path: String, at link: String, newColumn: Bool = false, from column: Column? = nil) {
+        open(path, newColumn: newColumn, from: column)
+        guard !link.isEmpty else { return }
+        let ref = NoteRef(path: path)
+        let rows = Row.unfold(OutlineMarkdown.parse(graph.read(path: path) ?? "").rows)
+        guard let target = rows.firstIndex(where: { $0.text.contains(link) }) else { return }
+        // Once laid out where it was gone to.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let view = columns.lazy.compactMap({ $0.view(for: ref) }).first else { return }
+            let editor = view.editor
+            guard let row = editor.showRow(unfolded: target) else { return }
+            window?.makeFirstResponder(editor)
+            editor.editText(inRow: row)
+            editor.showFindIndicator(for: editor.paragraphRanges[row])
         }
     }
 

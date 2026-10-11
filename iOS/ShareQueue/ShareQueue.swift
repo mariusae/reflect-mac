@@ -18,6 +18,8 @@ enum ShareQueue {
         /// "today": a bullet at the top of the day's note, linking to it;
         /// else, as before, a note of its own linked from the day.
         var destination: String? = nil
+        /// The page's own picture for previews, its note's cover's makings.
+        var image: String? = nil
     }
 
     /// The last choice of where pages go, for the next share.

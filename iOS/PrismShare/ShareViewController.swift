@@ -117,6 +117,7 @@ final class ShareViewController: UIViewController {
                     let selection = (page["selection"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                     found = .init(url: url, title: page["title"] as? String ?? "", description: page["description"] as? String ?? "",
                                   highlights: selection.isEmpty ? [] : [selection], shared: Date())
+                    found?.image = (page["image"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                     break
                 }
                 // Any other app: an address, its title if the item has one.

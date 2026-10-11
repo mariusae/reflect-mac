@@ -311,6 +311,13 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             guard let self, let sheet else { return }
             push(kind, from: sheet)
         }
+        sheet.onOpenAt = { [weak self, weak sheet] path, row in
+            guard let self, let sheet else { return }
+            sheet.saveAll()
+            let opened = makeSheet(.note(path))
+            opened.mark(unfoldedRow: row)
+            sheet.navigationController?.pushViewController(opened, animated: true)
+        }
         sheet.onLink = { [weak self, weak sheet] link in
             guard let self, let sheet else { return }
             follow(link, from: sheet)

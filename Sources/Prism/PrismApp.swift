@@ -243,6 +243,14 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         }
         // `PRISM_TRASH=<path>`: a note moved to the Trash, as from the Note menu, unasked.
         if let path = environment["PRISM_TRASH"] { controller.trash(path) }
+        // `PRISM_OPEN_BACKLINK=<path>|<link>`: a note opened from what links to another, at the link.
+        if let spec = environment["PRISM_OPEN_BACKLINK"], let bar = spec.firstIndex(of: "|") {
+            controller.openBacklink(String(spec[..<bar]), at: String(spec[spec.index(after: bar)...]))
+        }
+        // `PRISM_BACKLINK_FAN=1`: every note's stack of what links to it, dealt out, a moment after it is found.
+        if environment["PRISM_BACKLINK_FAN"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { controller.spreadBacklinksForScript() }
+        }
         if let path = environment["PRISM_COLLAPSE"] { controller.collapseAllForScript(in: path) }
         for title in (environment["PRISM_FOLLOW"] ?? "").split(separator: "|") { controller.followForScript(String(title)) }
         if let path = environment["PRISM_HEADER"] { controller.openAloneForScript(path) }

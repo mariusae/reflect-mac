@@ -25,12 +25,17 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     /// one note alone, always whole.
     var listsNotes: Bool { if case .note = kind { false } else { true } }
     let scroll = UIScrollView()
+    /// A swipe left over a note: what links to it.
+    fileprivate let backlinkSwipe = UIPanGestureRecognizer()
     private let content = UIView()
     private let scrubber = ScrubberView()
     private(set) var blocks: [SheetBlock] = []
     private var metrics: PhoneMetrics
     /// Asked to open a note — alone, on this column's stack — or a link.
     var onOpen: ((SheetKind) -> Void)?
+    /// A note opened at a row — by its place among all the note's rows —
+    /// shown and marked a moment.
+    var onOpenAt: ((String, Int) -> Void)?
     var onLink: ((String) -> Void)?
     /// Asked for the sheet's menu, and for a new note.
     var menu: ((SheetController) -> UIMenu)?
@@ -184,6 +189,11 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             }
         }, for: .valueChanged)
         scroll.refreshControl = refresh
+        // Swiped left over a note: what links to it.
+        backlinkSwipe.maximumNumberOfTouches = 1
+        backlinkSwipe.addTarget(self, action: #selector(swipedToBacklinks(_:)))
+        backlinkSwipe.delegate = self
+        scroll.addGestureRecognizer(backlinkSwipe)
         // The menu at the right of a tab's first sheet; deeper, Back on the
         // left and the note's ⋯. Search is the bottom bar's.
         let menuItems = UIMenu(children: [
@@ -253,8 +263,36 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         }
     }
 
+    // MARK: A row marked
+
+    /// A row to show and mark once the sheet is up, by its place among all
+    /// its note's rows.
+    private var pendingMark: Int?
+
+    func mark(unfoldedRow row: Int) {
+        pendingMark = row
+        if view.window != nil { DispatchQueue.main.async { self.markPending() } }
+    }
+
+    private func markPending() {
+        guard let row = pendingMark, case .note(let path) = kind,
+              let block = noteBlocks.first(where: { $0.ref.path == path }) else { return }
+        pendingMark = nil
+        relayout()
+        let editor = block.editor
+        guard let index = editor.row(unfolded: row) else { return }
+        // A third of the way down the screen, then marked.
+        let rect = scroll.convert(editor.rowRect(index), from: editor)
+        let visible = scroll.bounds.inset(by: scroll.adjustedContentInset)
+        let top = -scroll.adjustedContentInset.top
+        let bottom = max(top, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+        let y = min(max(rect.minY - visible.height / 3 - scroll.adjustedContentInset.top, top), bottom)
+        UIView.animate(withDuration: 0.3) { self.scroll.contentOffset.y = y } completion: { _ in editor.flashRow(index) }
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        if pendingMark != nil { markPending() }
         if StallWatch.enabled { StallWatch.mark("viewDidAppear \(kind)") }
         disappearing = false
         if case .search(let query) = kind, query.isEmpty {
@@ -500,7 +538,12 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             }
             if let slices = block as? SliceBlock {
                 let path = slices.path
-                slices.onOpen = { [weak self] in self?.onOpen?(.note(path)) }
+                // What links here, opened: at the link, when it says where.
+                let start = slices.slices.first?.start
+                slices.onOpen = { [weak self] in
+                    guard let self else { return }
+                    if case .backlinks = kind, let start { onOpenAt?(path, start) } else { onOpen?(.note(path)) }
+                }
                 slices.onLink = { [weak self] link in self?.onLink?(link) }
             }
             content.addSubview(block)
@@ -1099,6 +1142,51 @@ extension PhoneState {
     static var size: CGFloat {
         get { UserDefaults.standard.object(forKey: "TextSize") as? CGFloat ?? 16 }
         set { UserDefaults.standard.set(newValue, forKey: "TextSize") }
+    }
+}
+
+// MARK: Backlinks, swiped to
+
+extension SheetController: UIGestureRecognizerDelegate {
+    /// The note under a point in the sheet, by its path — not the backlinks'
+    /// own sheet's, which lists them already.
+    fileprivate func notePath(at point: CGPoint) -> String? {
+        if case .backlinks = kind { return nil }
+        let inContent = scroll.convert(point, to: content)
+        guard let block = blocks.first(where: { $0.frame.contains(inContent) }) else { return nil }
+        return (block as? NoteBlock)?.ref.path
+    }
+
+    @objc fileprivate func swipedToBacklinks(_ gesture: UIPanGestureRecognizer) {
+        guard gesture.state == .ended else { return }
+        // Far enough, or fast enough, across.
+        guard gesture.translation(in: scroll).x < -50 || gesture.velocity(in: scroll).x < -500,
+              let path = notePath(at: gesture.location(in: scroll)) else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
+        saveAll()
+        onOpen?(.backlinks(path))
+    }
+
+    /// Begun moving left more than down, over a note — not one being typed
+    /// in, whose rows a swipe moves in and out, nor on a carousel, which a
+    /// swipe turns.
+    func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+        guard gesture === backlinkSwipe, let pan = gesture as? UIPanGestureRecognizer else { return true }
+        let velocity = pan.velocity(in: scroll)
+        guard velocity.x < 0, -velocity.x > abs(velocity.y) * 1.5 else { return false }
+        let point = pan.location(in: scroll)
+        guard notePath(at: point) != nil else { return false }
+        let inContent = scroll.convert(point, to: content)
+        if let block = blocks.first(where: { $0.frame.contains(inContent) }) as? NoteBlock {
+            let editor = block.editor
+            if editor.isFirstResponder || editor.hasCarousel(at: scroll.convert(point, to: editor)) { return false }
+        }
+        return true
+    }
+
+    /// Alongside the scrolling: a swipe across is not a scroll down.
+    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        gesture === backlinkSwipe && other === scroll.panGestureRecognizer
     }
 }
 

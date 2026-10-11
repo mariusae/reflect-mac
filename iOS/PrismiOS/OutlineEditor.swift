@@ -1440,6 +1440,28 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// A row just added, not typed — dictated — marked a moment: its words
     /// under the accent's tint, fading, so the eye finds what came in.
+    /// Where a row shown is, by its place among all the note's rows: a row
+    /// folded away, the one it is folded in.
+    func row(unfolded target: Int) -> Int? {
+        var place = 0
+        for (index, row) in rows.enumerated() {
+            let inside = Row.unfold(row.folded).count
+            if target >= place, target <= place + inside { return index }
+            place += 1 + inside
+        }
+        return nil
+    }
+
+    /// Where a row is drawn, in the editor.
+    func rowRect(_ index: Int) -> CGRect {
+        let ranges = paragraphRanges
+        guard ranges.indices.contains(index) else { return .zero }
+        layoutIfNeeded()
+        let glyphs = outlineLayout.glyphRange(forCharacterRange: ranges[index], actualCharacterRange: nil)
+        return outlineLayout.boundingRect(forGlyphRange: glyphs, in: textContainer)
+            .offsetBy(dx: textContainerInset.left, dy: textContainerInset.top)
+    }
+
     func flashRow(_ index: Int) {
         let ranges = paragraphRanges
         guard ranges.indices.contains(index), ranges[index].length > 1 else { return }
@@ -2035,12 +2057,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             && other !== markerTap && other !== pictureHold && other !== rowHold && other !== blockHold && other !== linkHold
     }
 
-    /// A carousel's swipes follow only a touch that starts on one: nothing
-    /// else waits on them.
-    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        guard let swipe = gesture as? UISwipeGestureRecognizer, carouselSwipes.contains(swipe) else { return true }
-        return carousel(at: touch.location(in: self)) != nil
-    }
+
 
     func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
         gesture is UISwipeGestureRecognizer || gesture === dragScroll || other === dragScroll
@@ -2383,6 +2400,9 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         else { return nil }
         return (found.box, found.span, found.frame.offsetBy(dx: textContainerInset.left, dy: textContainerInset.top))
     }
+
+    /// Whether a carousel is at a point in the editor.
+    func hasCarousel(at point: CGPoint) -> Bool { carousel(at: point) != nil }
 
     @objc private func swipedCarousel(_ gesture: UISwipeGestureRecognizer) {
         guard let carousel = carousel(at: gesture.location(in: self)) else { return }

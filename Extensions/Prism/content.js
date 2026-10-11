@@ -90,6 +90,11 @@
       url: location.href,
       title: meta("og:title") || document.title || location.hostname,
       description: meta("og:description") || meta("description") || meta("twitter:description"),
+      // The page's picture for previews, made whole against the page's address.
+      image: (() => {
+        const found = meta("og:image") || meta("og:image:url") || meta("twitter:image") || meta("twitter:image:src");
+        try { return found ? new URL(found, location.href).href : ""; } catch { return ""; }
+      })(),
       highlights: highlights.map((h) => h.text),
       selection: window.getSelection()?.toString().trim() ?? "",
     };
