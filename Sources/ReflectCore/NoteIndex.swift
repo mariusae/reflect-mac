@@ -167,8 +167,43 @@ public final class NoteIndex: @unchecked Sendable {
         guard let data = try? Data(contentsOf: url),
               // Text, not something else saved under a note's name.
               let source = String(data: data, encoding: .utf8), !source.contains("\u{0}") else { return nil }
-        let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+        let written = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+        lock.lock()
+        fileTimes[path] = written
+        let modified = lastChanged(path, written: written)
+        lock.unlock()
         return (Self.entry(path: path, source: source, modified: modified), (source, source.lowercased()))
+    }
+
+    // MARK: When each note last changed
+
+    /// When each note last changed by the graph's history — its last
+    /// commit's time — as last given; its file's own time, when written.
+    private var history: [String: Date] = [:]
+    private var uncommitted: Set<String> = []
+    private var historyGiven: Date = .distantPast
+    private var fileTimes: [String: Date] = [:]
+
+    /// When a note last changed: by the history, unless it has changed
+    /// since — not yet committed, or written after the history was given —
+    /// or the history has none for it. A file's own time is when it was
+    /// written to disk, which a clone or a sync sets to then. Held: the lock.
+    private func lastChanged(_ path: String, written: Date) -> Date {
+        guard let committed = history[path], !uncommitted.contains(path), written <= historyGiven else { return written }
+        return committed
+    }
+
+    /// The history's times, and the files changed since HEAD: every note's
+    /// last change taken again from them.
+    public func useHistory(_ times: [String: Date], uncommitted: Set<String>) {
+        lock.lock()
+        history = times
+        self.uncommitted = uncommitted
+        historyGiven = Date()
+        for (path, entry) in entries {
+            entries[path]?.modified = lastChanged(path, written: fileTimes[path] ?? entry.modified)
+        }
+        lock.unlock()
     }
 
     /// A note's name and the names it answers to, from its text.

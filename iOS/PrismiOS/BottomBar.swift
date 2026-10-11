@@ -1,45 +1,55 @@
 import UIKit
 
-/// The bar along the bottom: the views, three to a glass pill at the left;
-/// at the right, in a pill of their own, a + to write in today and a
-/// magnifier to search. Searching, the views gather to a circle showing
-/// the one left — tapped, back to it — and the right pill, its + gone,
-/// opens out into a field.
+/// The bar along the bottom, as Safari's: back in a glass circle at the
+/// left; in the middle, a glass pill — the menu at its start, the name of
+/// what is shown, and what links to it where Safari has reload; a + to
+/// write in today in a circle at the right. The name tapped opens the pill
+/// out into a field to search, an ✕ beside it to close it again; scrolled
+/// down, it all gathers to a small pill of the name alone.
 final class BottomBar: UIView, UITextFieldDelegate {
-    struct Item {
-        var title: String
-        var symbol: String
-    }
-
-    var onSelect: ((Int) -> Void)?
-    /// A view's tab held: its more — the days', a calendar.
-    var onHold: ((Int) -> Void)?
+    /// Home: today, in the days.
+    var onHome: (() -> Void)?
+    /// The menu at the pill's start: the views, the note's own, the app's.
+    var menu: (() -> UIMenu)?
     var onWrite: (() -> Void)?
     /// The + held: speaking begun; let go, ended — `cancelled` when slid away.
     var onDictateBegin: (() -> Void)?
     var onDictateEnd: ((_ cancelled: Bool) -> Void)?
+    /// The name tapped: searching.
     var onSearch: (() -> Void)?
-    /// The notes written in last, for the magnifier held: the most recent last.
-    var recents: (() -> [HoldMenu.Entry])?
     var onLeaveSearch: (() -> Void)?
     var onQuery: ((String) -> Void)?
     var onSubmit: (() -> Void)?
+    /// What can be held to deal out things to choose among: home, for the
+    /// other views; the name, for those written in last; what links here
+    /// — that one at a touch.
+    enum Held { case home, title, backlinks }
+    /// Something held: its notes dealt out (`.began`), the thumb followed
+    /// (`.changed`), let go (`.ended`, or `.cancelled`) — in the window.
+    var onHold: ((Held, UIGestureRecognizer.State, CGPoint) -> Void)?
 
-    static let height: CGFloat = 62
+    /// Safari's: the circles and the pill as tall, the margins and gaps its.
+    static let height: CGFloat = 48
     static let margin: CGFloat = 21
+    static let side: CGFloat = 33
     static let gap: CGFloat = 8
+    /// Gathered: the pill this tall, this much lower.
+    static let smallHeight: CGFloat = 32
+    static let smallDrop: CGFloat = 10
 
-    private var items: [Item]
     private let container = UIVisualEffectView(effect: UIGlassContainerEffect())
+    private let homeGlass = BottomBar.glass()
+    private let homeButton = UIButton(type: .system)
     private let pill = BottomBar.glass()
-    /// Write and search, together; searching, the field.
-    private let actions = BottomBar.glass()
-    private var buttons: [UIButton] = []
-    private let selection = UIView()
-    /// The view left, in the pill gathered to a circle while searching.
-    private let gathered = UIButton(type: .system)
+    private let menuButton = UIButton(type: .system)
+    private let title = ShortLabel()
+    private let titleButton = UIButton(type: .custom)
+    /// The name, gathered small: its own, faded in as the other fades out.
+    private let smallTitle = ShortLabel()
+    private let backlinksButton = UIButton(type: .system)
+    private let plusGlass = BottomBar.glass()
     private let writeButton = UIButton(type: .system)
-    private let searchButton = UIButton(type: .system)
+    private let closeButton = UIButton(type: .system)
     private let magnifier = UIImageView()
     let field = UITextField()
     /// Over the bar while dictating: what is heard, as it is.
@@ -47,80 +57,89 @@ final class BottomBar: UIView, UITextFieldDelegate {
     private let heard = UILabel()
 
     private(set) var isSearching = false
-    var selected = 0 {
-        didSet {
-            guard selected != oldValue else { return }
-            styleButtons()
-            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.85, initialSpringVelocity: 0) { self.placeSelection() }
-        }
-    }
+    private(set) var isSmall = false
+    private(set) var backlinkCount = 0
 
-    init(items: [Item]) {
-        self.items = items
+    init() {
         super.init(frame: .zero)
         addSubview(container)
-        for glass in [pill, actions] { container.contentView.addSubview(glass) }
+        for glass in [homeGlass, pill, plusGlass] { container.contentView.addSubview(glass) }
+        let symbol = UIImage.SymbolConfiguration(pointSize: 19, weight: .medium)
 
-        selection.backgroundColor = Ink.dynamic(UIColor.black.withAlphaComponent(0.07), UIColor.white.withAlphaComponent(0.12))
-        selection.isUserInteractionEnabled = false
-        pill.contentView.addSubview(selection)
-        for (i, item) in items.enumerated() {
-            var configuration = UIButton.Configuration.plain()
-            configuration.imagePlacement = .top
-            configuration.imagePadding = 3
-            configuration.contentInsets = .zero
-            configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 21, weight: .semibold)
-            configuration.image = UIImage(systemName: item.symbol + ".fill") ?? UIImage(systemName: item.symbol)
-            configuration.attributedTitle = AttributedString(item.title, attributes: AttributeContainer([
-                .font: UIFont.systemFont(ofSize: 11, weight: .semibold),
-            ]))
-            let button = UIButton(configuration: configuration)
-            button.tintColor = Ink.text
-            button.accessibilityLabel = item.title
-            button.addAction(UIAction { [weak self] _ in self?.onSelect?(i) }, for: .touchUpInside)
-            let hold = UILongPressGestureRecognizer(target: self, action: #selector(heldTab(_:)))
-            hold.minimumPressDuration = 0.4
-            button.addGestureRecognizer(hold)
-            pill.contentView.addSubview(button)
-            buttons.append(button)
-        }
-        gathered.tintColor = Ink.text
-        gathered.alpha = 0
-        gathered.accessibilityLabel = "Back"
-        gathered.addAction(UIAction { [weak self] _ in self?.onLeaveSearch?() }, for: .touchUpInside)
-        pill.contentView.addSubview(gathered)
+        // Home, to today; back is a swipe from the edge.
+        homeButton.setImage(UIImage(systemName: "house", withConfiguration: symbol), for: .normal)
+        homeButton.tintColor = Ink.text
+        homeButton.accessibilityLabel = "Today"
+        homeButton.addAction(UIAction { [weak self] _ in self?.onHome?() }, for: .touchUpInside)
+        // Held: the other views — the inbox, the pinned notes, the tasks.
+        let homeHold = UILongPressGestureRecognizer(target: self, action: #selector(held(_:)))
+        homeHold.minimumPressDuration = 0.35
+        homeHold.allowableMovement = .greatestFiniteMagnitude
+        homeButton.addGestureRecognizer(homeHold)
+        holds[homeHold] = .home
+        homeGlass.contentView.addSubview(homeButton)
 
-        let symbol = UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)
-        writeButton.setImage(UIImage(systemName: "plus", withConfiguration: symbol), for: .normal)
-        writeButton.tintColor = Ink.text
-        writeButton.accessibilityLabel = "Write Today"
-        writeButton.addAction(UIAction { [weak self] _ in self?.onWrite?() }, for: .touchUpInside)
-        // Held: speaking, written into today.
-        let hold = UILongPressGestureRecognizer(target: self, action: #selector(held(_:)))
-        hold.minimumPressDuration = 0.35
-        writeButton.addGestureRecognizer(hold)
-        heard.numberOfLines = 3
-        heard.font = .systemFont(ofSize: 17)
-        heard.textColor = Ink.text
-        bubble.contentView.addSubview(heard)
-        bubble.alpha = 0
-        bubble.cornerConfiguration = .uniformCorners(radius: 22)
-        addSubview(bubble)
-        actions.contentView.addSubview(writeButton)
+        menuButton.setImage(NoteChip.standIn, for: .normal)
+        menuButton.backgroundColor = NoteChip.standInGround
+        menuButton.tintColor = Ink.secondary
+        menuButton.accessibilityLabel = "Menu"
+        // The note's cover in its place, when it has one: round, as the top's was.
+        menuButton.clipsToBounds = true
+        menuButton.imageView?.contentMode = .scaleAspectFill
+        menuButton.showsMenuAsPrimaryAction = true
+        menuButton.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] done in
+            done(self?.menu?().children ?? [])
+        }])
+        pill.contentView.addSubview(menuButton)
 
-        searchButton.setImage(UIImage(systemName: "magnifyingglass", withConfiguration: symbol), for: .normal)
-        searchButton.tintColor = Ink.text
-        searchButton.accessibilityLabel = "Search"
-        searchButton.addAction(UIAction { [weak self] _ in self?.onSearch?() }, for: .touchUpInside)
-        // Held, the notes written in last, the latest under the thumb.
-        searchHold.minimumPressDuration = 0.35
-        searchButton.addGestureRecognizer(searchHold)
-        actions.contentView.addSubview(searchButton)
-        magnifier.image = UIImage(systemName: "magnifyingglass", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .medium))
-        magnifier.tintColor = Ink.text
+        title.font = Typeface.current.heading(16, weight: .semibold)
+        title.textColor = Ink.text
+        title.textAlignment = .center
+        title.lineBreakMode = .byTruncatingTail
+        title.isAccessibilityElement = false
+        pill.contentView.addSubview(title)
+        // Over the name, to be touched: a control, as the glass passes touches to one.
+        titleButton.addAction(UIAction { [weak self] _ in self?.tappedTitle() }, for: .touchUpInside)
+        titleButton.accessibilityHint = "Search"
+        let titleHold = UILongPressGestureRecognizer(target: self, action: #selector(held(_:)))
+        titleHold.minimumPressDuration = 0.35
+        titleHold.allowableMovement = .greatestFiniteMagnitude
+        titleButton.addGestureRecognizer(titleHold)
+        holds[titleHold] = .title
+        smallTitle.font = Typeface.current.heading(14, weight: .semibold)
+        smallTitle.textColor = Ink.text
+        smallTitle.textAlignment = .center
+        smallTitle.lineBreakMode = .byTruncatingTail
+        smallTitle.alpha = 0
+        smallTitle.isAccessibilityElement = false
+        pill.contentView.addSubview(smallTitle)
+        pill.contentView.addSubview(titleButton)
+        // Gathered small, the pill tapped anywhere: out again.
+        let expand = UITapGestureRecognizer(target: self, action: #selector(tappedSmall))
+        pill.addGestureRecognizer(expand)
+        smallTap = expand
+
+        var linksStyle = UIButton.Configuration.plain()
+        linksStyle.image = UIImage(systemName: "arrow.turn.up.left", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold))
+        linksStyle.imagePadding = 4
+        linksStyle.contentInsets = .zero
+        backlinksButton.configuration = linksStyle
+        backlinksButton.tintColor = Ink.text
+        backlinksButton.accessibilityLabel = "Linked Here"
+        // Touched: the cards dealt out at once, the thumb followed, let go on one.
+        let linksHold = UILongPressGestureRecognizer(target: self, action: #selector(held(_:)))
+        linksHold.minimumPressDuration = 0
+        linksHold.allowableMovement = .greatestFiniteMagnitude
+        backlinksButton.addGestureRecognizer(linksHold)
+        holds[linksHold] = .backlinks
+        backlinksButton.alpha = 0
+        pill.contentView.addSubview(backlinksButton)
+
+        magnifier.image = UIImage(systemName: "magnifyingglass", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .medium))
+        magnifier.tintColor = Ink.secondary
         magnifier.contentMode = .center
         magnifier.alpha = 0
-        actions.contentView.addSubview(magnifier)
+        pill.contentView.addSubview(magnifier)
         field.placeholder = "Search"
         field.borderStyle = .none
         field.backgroundColor = .clear
@@ -132,8 +151,31 @@ final class BottomBar: UIView, UITextFieldDelegate {
         field.delegate = self
         field.alpha = 0
         field.addAction(UIAction { [weak self] _ in self?.onQuery?(self?.field.text ?? "") }, for: .editingChanged)
-        actions.contentView.addSubview(field)
-        styleButtons()
+        pill.contentView.addSubview(field)
+
+        writeButton.setImage(UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 21, weight: .medium)), for: .normal)
+        writeButton.tintColor = Ink.text
+        writeButton.accessibilityLabel = "Write in Today"
+        writeButton.addAction(UIAction { [weak self] _ in self?.onWrite?() }, for: .touchUpInside)
+        let hold = UILongPressGestureRecognizer(target: self, action: #selector(heldPlus(_:)))
+        hold.minimumPressDuration = 0.35
+        writeButton.addGestureRecognizer(hold)
+        plusGlass.contentView.addSubview(writeButton)
+        closeButton.setImage(UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)),
+                             for: .normal)
+        closeButton.tintColor = Ink.text
+        closeButton.accessibilityLabel = "Close Search"
+        closeButton.addAction(UIAction { [weak self] _ in self?.onLeaveSearch?() }, for: .touchUpInside)
+        closeButton.alpha = 0
+        plusGlass.contentView.addSubview(closeButton)
+
+        heard.numberOfLines = 3
+        heard.font = .systemFont(ofSize: 17)
+        heard.textColor = Ink.text
+        bubble.contentView.addSubview(heard)
+        bubble.alpha = 0
+        bubble.cornerConfiguration = .uniformCorners(radius: 22)
+        addSubview(bubble)
     }
 
     @available(*, unavailable)
@@ -147,64 +189,107 @@ final class BottomBar: UIView, UITextFieldDelegate {
         return view
     }
 
-    private func styleButtons() {
-        for (i, button) in buttons.enumerated() {
-            button.tintColor = i == selected ? Ink.text : Ink.text.withAlphaComponent(0.85)
+    // MARK: What is shown
+
+    /// The name of what is shown, in the pill.
+    func setTitle(_ names: [String], cover: UIImage? = nil) {
+        if cover !== self.cover {
+            self.cover = cover
+            setMenuFace()
         }
-        guard items.indices.contains(selected) else { return }
-        let symbol = items[selected].symbol
-        gathered.setImage(UIImage(systemName: symbol + ".fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold))
-            ?? UIImage(systemName: symbol), for: .normal)
+        guard title.names != names else { return }
+        title.names = names
+        smallTitle.names = names
+        titleButton.accessibilityLabel = names.first
+        if isSmall { setNeedsLayout() }
     }
 
-    /// A tab shown as another: its symbol and name changed in place.
-    func setItem(_ item: Item, at i: Int) {
-        guard items.indices.contains(i), buttons.indices.contains(i) else { return }
-        items[i] = item
-        let button = buttons[i]
-        var configuration = button.configuration ?? .plain()
-        configuration.image = UIImage(systemName: item.symbol + ".fill") ?? UIImage(systemName: item.symbol)
-        configuration.attributedTitle = AttributedString(item.title, attributes: AttributeContainer([
-            .font: UIFont.systemFont(ofSize: 11, weight: .semibold),
-        ]))
-        UIView.transition(with: button, duration: 0.2, options: .transitionCrossDissolve) { button.configuration = configuration }
-        button.accessibilityLabel = item.title
-        styleButtons()
+    private func tappedTitle() {
+        if isSmall { return tappedSmall() }
+        onSearch?()
     }
 
-    @objc private func heldTab(_ gesture: UILongPressGestureRecognizer) {
-        guard gesture.state == .began, let button = gesture.view as? UIButton, let i = buttons.firstIndex(of: button) else { return }
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        onHold?(i)
+    private weak var smallTap: UITapGestureRecognizer?
+
+    /// The cover before the name, as the menu's face; none, a note's mark in its stead.
+    private var cover: UIImage?
+
+    private func setMenuFace() {
+        if let cover {
+            menuButton.setImage(cover.withRenderingMode(.alwaysOriginal), for: .normal)
+            menuButton.contentHorizontalAlignment = .fill
+            menuButton.contentVerticalAlignment = .fill
+            menuButton.backgroundColor = .clear
+        } else {
+            menuButton.setImage(NoteChip.standIn, for: .normal)
+            menuButton.backgroundColor = NoteChip.standInGround
+            menuButton.contentHorizontalAlignment = .center
+            menuButton.contentVerticalAlignment = .center
+        }
+        setNeedsLayout()
     }
 
-    // MARK: Recent notes
+    /// Gathered small, the name tapped: straight to searching, as Safari's.
+    @objc private func tappedSmall() {
+        guard isSmall else { return }
+        onSearch?()
+    }
 
-    private lazy var searchHold = UILongPressGestureRecognizer(target: self, action: #selector(heldSearch(_:)))
-    private var recentMenu: HoldMenu?
+    // MARK: Gathered small
 
-    /// One press: held, the menu; slid, a note; lifted, opened.
-    @objc private func heldSearch(_ gesture: UILongPressGestureRecognizer) {
-        guard let window else { return }
-        let point = gesture.location(in: window)
-        switch gesture.state {
-        case .began:
-            let entries = recents?() ?? []
-            guard !entries.isEmpty else { return }
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            let menu = HoldMenu(title: "Recent", entries: entries)
-            menu.show(in: window, at: point)
-            recentMenu = menu
-        case .changed:
-            recentMenu?.track(point)
-        case .ended:
-            recentMenu?.finish(at: point)
-            recentMenu = nil
-        case .cancelled, .failed:
-            recentMenu?.finish(at: nil)
-            recentMenu = nil
-        default:
-            break
+    /// Gathered to a small pill of the name alone, low — as Safari's is
+    /// scrolled down — or out again.
+    func setSmall(_ small: Bool, animated: Bool = true) {
+        guard small != isSmall, !isSearching || !small else { return }
+        isSmall = small
+        let change = {
+            self.place()
+            self.layoutIfNeeded()
+        }
+        guard animated else { return change() }
+        UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0,
+                       options: [.beginFromCurrentState, .allowUserInteraction], animations: change)
+    }
+
+    // MARK: What links here
+
+    private var holds: [UIGestureRecognizer: Held] = [:]
+
+    @objc private func held(_ gesture: UILongPressGestureRecognizer) {
+        guard let window, let what = holds[gesture], !isSearching else { return }
+        if gesture.state == .began { UIImpactFeedbackGenerator(style: what == .backlinks ? .light : .medium).impactOccurred() }
+        onHold?(what, gesture.state, gesture.location(in: window))
+    }
+
+    /// Where something held is, in the bar: what its notes are dealt from.
+    func frame(of what: Held) -> CGRect {
+        switch what {
+        case .home: homeGlass.frame
+        case .title: pill.frame
+        case .backlinks: backlinksFrame
+        }
+    }
+
+    /// The pill, in the bar: the column the notes are dealt into.
+    var pillFrame: CGRect { pill.frame }
+
+    /// Where its button is, in the bar: what its cards are dealt from.
+    var backlinksFrame: CGRect { pill.convert(backlinksButton.frame, to: self) }
+
+    /// How many notes link to what is shown: their count where Safari has
+    /// reload, or — none — nothing there.
+    func showBacklinks(_ count: Int) {
+        guard count != backlinkCount else { return }
+        backlinkCount = count
+        if count > 0 {
+            backlinksButton.configuration?.attributedTitle = AttributedString("\(count)", attributes: AttributeContainer([
+                .font: UIFont.monospacedDigitSystemFont(ofSize: 15, weight: .semibold),
+            ]))
+            backlinksButton.accessibilityValue = count == 1 ? "1 note" : "\(count) notes"
+        }
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState]) {
+            self.place()
+            self.layoutIfNeeded()
         }
     }
 
@@ -212,19 +297,19 @@ final class BottomBar: UIView, UITextFieldDelegate {
 
     private(set) var isDictating = false
 
-    @objc private func held(_ gesture: UILongPressGestureRecognizer) {
+    @objc private func heldPlus(_ gesture: UILongPressGestureRecognizer) {
         switch gesture.state {
         case .began:
             isDictating = true
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            writeButton.setImage(UIImage(systemName: "mic.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)), for: .normal)
+            writeButton.setImage(UIImage(systemName: "mic.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 21, weight: .medium)), for: .normal)
             writeButton.tintColor = .systemRed
             showHeard(nil)
             onDictateBegin?()
         case .ended, .cancelled, .failed:
             guard isDictating else { return }
             isDictating = false
-            writeButton.setImage(UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)), for: .normal)
+            writeButton.setImage(UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 21, weight: .medium)), for: .normal)
             writeButton.tintColor = Ink.text
             // Slid well away from the +, then let go: not kept.
             let point = gesture.location(in: self)
@@ -236,8 +321,7 @@ final class BottomBar: UIView, UITextFieldDelegate {
         }
     }
 
-    /// What is heard so far, over the bar — nil: still listening; hidden
-    /// when not dictating.
+    /// What is heard so far, over the bar — nil: still listening.
     func showHeard(_ text: String?) {
         heard.text = text?.isEmpty == false ? text : "Listening…"
         heard.textColor = text?.isEmpty == false ? Ink.text : Ink.secondary
@@ -252,20 +336,18 @@ final class BottomBar: UIView, UITextFieldDelegate {
 
     // MARK: Searching
 
-    /// Opens out into the field, or folds back: animated.
+    /// The pill opened out into the field, the ✕ in the +'s place; or back.
     func setSearching(_ searching: Bool, animated: Bool = true) {
         guard searching != isSearching else { return }
         isSearching = searching
+        if searching { isSmall = false }
         let change = {
             self.place()
             self.layoutIfNeeded()
         }
-        if animated {
-            UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0, options: [.beginFromCurrentState],
-                           animations: change)
-        } else {
-            change()
-        }
+        guard animated else { return change() }
+        UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.84, initialSpringVelocity: 0, options: [.beginFromCurrentState],
+                       animations: change)
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
@@ -277,46 +359,75 @@ final class BottomBar: UIView, UITextFieldDelegate {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        container.frame = bounds
+        // Down past the foot, for the pill gathered small and low.
+        container.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height + Self.smallDrop + 8)
         place()
     }
 
-    /// How wide the right pill is, its two buttons side by side.
-    private static let actionsWidth: CGFloat = 116
-
     private func place() {
-        let width = bounds.width, side = Self.height, margin = Self.margin, gap = Self.gap
-        if isSearching {
-            pill.frame = CGRect(x: margin, y: 0, width: side, height: side)
-            let fieldX = pill.frame.maxX + gap
-            actions.frame = CGRect(x: fieldX, y: 0, width: width - margin - fieldX, height: side)
-        } else {
-            actions.frame = CGRect(x: width - margin - Self.actionsWidth, y: 0, width: Self.actionsWidth, height: side)
-            pill.frame = CGRect(x: margin, y: 0, width: actions.frame.minX - gap - margin, height: side)
+        let width = bounds.width, h = Self.height, margin = Self.side, gap = Self.gap
+        smallTap?.isEnabled = isSmall
+        if isSmall {
+            // The name alone, small, centred, low: the circles gone into it.
+            let words = ceil(((title.names.first ?? "") as NSString).size(withAttributes: [.font: smallTitle.font as Any]).width)
+            let w = min(max(words + 40, 120), width - 2 * margin)
+            let small = CGRect(x: ((width - w) / 2).rounded(), y: h - Self.smallHeight + Self.smallDrop, width: w, height: Self.smallHeight)
+            pill.frame = small
+            homeGlass.frame = CGRect(x: small.minX, y: small.minY, width: Self.smallHeight, height: Self.smallHeight)
+            plusGlass.frame = CGRect(x: small.maxX - Self.smallHeight, y: small.minY, width: Self.smallHeight, height: Self.smallHeight)
+            homeGlass.alpha = 0
+            plusGlass.alpha = 0
+            smallTitle.frame = pill.bounds.insetBy(dx: 14, dy: 0)
+            smallTitle.alpha = 1
+            title.frame.origin.x = (pill.bounds.width - title.frame.width) / 2
+            titleButton.frame = pill.bounds
+            for view in [title, menuButton, backlinksButton, magnifier, field] as [UIView] { view.alpha = 0 }
+            placeBubble(width: width)
+            return
         }
-        // The pill's views, or the one left.
-        let inner = pill.bounds.insetBy(dx: 4, dy: 4)
-        let share = (pill.frame.width - 8) / CGFloat(max(buttons.count, 1))
-        for (i, button) in buttons.enumerated() {
-            button.frame = CGRect(x: 4 + CGFloat(i) * share, y: inner.minY, width: share, height: inner.height)
-            button.alpha = isSearching ? 0 : 1
-        }
-        placeSelection()
-        selection.alpha = isSearching ? 0 : 1
-        gathered.frame = pill.bounds
-        gathered.alpha = isSearching ? 1 : 0
-        // Write and search, each half the right pill; searching, the
-        // magnifier at the field's start.
-        let half = Self.actionsWidth / 2
-        writeButton.frame = CGRect(x: 4, y: 0, width: half - 4, height: side)
+        homeGlass.alpha = isSearching ? 0 : 1
+        plusGlass.alpha = 1
+        smallTitle.alpha = 0
+        homeGlass.frame = CGRect(x: margin, y: 0, width: h, height: h)
+        plusGlass.frame = CGRect(x: width - margin - h, y: 0, width: h, height: h)
+        homeButton.frame = homeGlass.bounds
+        writeButton.frame = plusGlass.bounds
+        closeButton.frame = plusGlass.bounds
         writeButton.alpha = isSearching ? 0 : 1
-        searchButton.frame = CGRect(x: half, y: 0, width: half - 4, height: side)
-        searchButton.alpha = isSearching ? 0 : 1
-        magnifier.frame = CGRect(x: 14, y: 0, width: 24, height: side)
+        closeButton.alpha = isSearching ? 1 : 0
+        // Searching, the pill from the margin to the ✕; else between the circles.
+        let left = isSearching ? margin : homeGlass.frame.maxX + gap
+        pill.frame = CGRect(x: left, y: 0, width: plusGlass.frame.minX - gap - left, height: h)
+        let inner = pill.bounds
+        // The round at the start — the cover, or the menu's lines — as the top's pill had.
+        let round: CGFloat = 38
+        menuButton.frame = CGRect(x: 5, y: (h - round) / 2, width: round, height: round)
+        menuButton.layer.cornerRadius = round / 2
+        menuButton.alpha = isSearching ? 0 : 1
+        let linksWidth = backlinkCount > 0 ? ceil(backlinksButton.intrinsicContentSize.width) + 20 : 0
+        backlinksButton.frame = CGRect(x: inner.width - linksWidth - 6, y: 0, width: linksWidth, height: h)
+        backlinksButton.alpha = backlinkCount > 0 && !isSearching ? 1 : 0
+        // The name centred in the pill — or, too long for that, as near it as
+        // it can be — clear of the round and of what links here, if anything does.
+        let lead = menuButton.frame.maxX + 10, trail = max(18, linksWidth + 6)
+        let room = max(0, inner.width - lead - trail)
+        let words = min(room, title.width(within: room))
+        let x = min(max((inner.width - words) / 2, lead), inner.width - trail - words)
+        title.frame = CGRect(x: x, y: 0, width: words, height: h)
+        smallTitle.frame = title.frame
+        titleButton.frame = CGRect(x: lead, y: 0, width: room, height: h)
+        titleButton.isHidden = isSearching
+        title.alpha = isSearching ? 0 : 1
+        magnifier.frame = CGRect(x: 12, y: 0, width: 24, height: h)
         magnifier.alpha = isSearching ? 1 : 0
-        field.frame = CGRect(x: 44, y: 0, width: max(0, actions.bounds.width - 56), height: side)
+        field.frame = CGRect(x: 40, y: 0, width: max(0, inner.width - 52), height: h)
         field.alpha = isSearching ? 1 : 0
-        // What is heard, over the bar, its width the bar's.
+        placeBubble(width: width)
+    }
+
+    /// What is heard, over the bar, its width the bar's.
+    private func placeBubble(width: CGFloat) {
+        let margin = Self.side, gap = Self.gap
         let heardWidth = width - 2 * margin - 36
         let textHeight = ceil(heard.sizeThatFits(CGSize(width: heardWidth, height: .greatestFiniteMagnitude)).height)
         let bubbleHeight = max(52, textHeight + 28)
@@ -324,15 +435,10 @@ final class BottomBar: UIView, UITextFieldDelegate {
         heard.frame = CGRect(x: 18, y: 14, width: heardWidth, height: bubbleHeight - 28)
     }
 
-    /// The bubble over the bar is the bar's too, to the touch.
+    /// The bubble over the bar is the bar's too, to the touch; gathered
+    /// small, only the pill.
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        super.point(inside: point, with: event) || (bubble.alpha > 0 && bubble.frame.contains(point))
-    }
-
-    private func placeSelection() {
-        guard buttons.indices.contains(selected) else { return }
-        selection.frame = buttons[selected].frame
-        selection.layer.cornerRadius = selection.frame.height / 2
-        selection.layer.cornerCurve = .continuous
+        if isSmall { return pill.frame.insetBy(dx: -8, dy: -8).contains(point) }
+        return super.point(inside: point, with: event) || (bubble.alpha > 0 && bubble.frame.contains(point))
     }
 }

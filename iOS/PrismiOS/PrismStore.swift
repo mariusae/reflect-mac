@@ -74,6 +74,19 @@ final class PrismStore {
         changed = []
         revision += 1
         prepareGit()
+        applyHistory()
+    }
+
+    /// Every note's last change taken from the graph's history, off the main
+    /// thread — a clone or a sync sets files' own times to when it wrote
+    /// them — and what shows them told.
+    private func applyHistory() {
+        guard let index else { return }
+        Task {
+            await Task.detached(priority: .utility) { ChangeHistory.apply(to: index) }.value
+            changed = []
+            revision += 1
+        }
     }
 
     /// The repository, ready to sync — without the notes read in: a push
@@ -388,6 +401,8 @@ final class PrismStore {
             if report.pulled, let index {
                 conflicted = await Task.detached(priority: .utility) { index.conflicted() }.value
             }
+            // What was committed and pulled: their last changes, by the history.
+            applyHistory()
         } catch is SyncStopped {
             // Asked to stop — the system wanted its time back — not a failure:
             // the next sync goes on from here.

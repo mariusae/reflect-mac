@@ -22,7 +22,8 @@ let package = Package(
         .target(name: "ReflectCore"),
         // The sync's steps done by libgit2, and the GitHub account it syncs
         // through: the phone's, and Prism's own graph on the Mac.
-        .target(name: "ReflectGit2", dependencies: ["ReflectCore", .product(name: "libgit2", package: "libgit2")]),
+        .target(name: "ReflectGit2", dependencies: ["ReflectCore", .product(name: "libgit2", package: "libgit2")],
+                linkerSettings: [.linkedLibrary("sqlite3")]),
         // The outline editor, and a note shown in it: shared by the apps.
         .target(name: "ReflectUI", dependencies: ["ReflectCore"]),
         .executableTarget(name: "ReflectMac", dependencies: ["ReflectCore", "ReflectUI"]),

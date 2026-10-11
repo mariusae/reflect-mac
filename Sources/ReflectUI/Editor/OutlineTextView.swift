@@ -725,7 +725,16 @@ package final class OutlineTextView: NSTextView {
                                        owner: self, userInfo: ["hover": true]))
     }
 
+    /// Whether something lies over the text where the pointer is — what a
+    /// column puts on top of its notes — whose own the pointer then is.
+    private func isCovered(_ event: NSEvent) -> Bool {
+        guard let frame = window?.contentView?.superview ?? window?.contentView,
+              let hit = frame.hitTest(frame.convert(event.locationInWindow, from: nil)) else { return false }
+        return hit !== self && !hit.isDescendant(of: self)
+    }
+
     package override func mouseMoved(with event: NSEvent) {
+        if isCovered(event) { return }
         super.mouseMoved(with: event)
         let point = convert(event.locationInWindow, from: nil)
         hover(at: point)
@@ -748,6 +757,7 @@ package final class OutlineTextView: NSTextView {
     }
 
     package override func cursorUpdate(with event: NSEvent) {
+        if isCovered(event) { return }
         let point = convert(event.locationInWindow, from: nil)
         if onPictureGrip(point) {
             NSCursor.frameResize(position: .bottomRight, directions: .all).set()

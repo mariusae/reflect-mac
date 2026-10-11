@@ -151,6 +151,8 @@ final class StackPill: NSView {
 
     private let icon = NSImageView()
     private let title = NSTextField(labelWithString: "")
+    /// The front one's glass, as the other controls float on.
+    private let glass = NSGlassEffectView()
     /// The edges of the sheets further down, up to so many.
     private static let most = 3
     /// As tall as the toolbox it sits beside.
@@ -162,6 +164,7 @@ final class StackPill: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         title.lineBreakMode = .byTruncatingTail
+        addSubview(glass)
         addSubview(icon)
         addSubview(title)
         restyle()
@@ -230,6 +233,9 @@ final class StackPill: NSView {
     override func layout() {
         super.layout()
         let front = front
+        glass.frame = front
+        glass.cornerRadius = front.height / 2
+        glass.alphaValue = isForward ? 0.6 : 1
         title.isHidden = isCompact
         icon.frame = isCompact ? NSRect(x: (front.midX - 7.5).rounded(), y: front.midY - 7, width: 15, height: 14)
             : NSRect(x: front.minX + 9, y: front.midY - 7, width: 15, height: 14)
@@ -241,7 +247,8 @@ final class StackPill: NSView {
         let front = front
         // The furthest first, each a little left of the one before it, level
         // with it: the rightmost on top.
-        for level in stride(from: behind, through: 0, by: -1) {
+        // The front one is its glass; those beneath, their edges at its left.
+        for level in stride(from: behind, through: 1, by: -1) {
             let offset = CGFloat(level) * Self.step
             let rect = front.offsetBy(dx: -offset, dy: 0).insetBy(dx: 0.5, dy: 0.5)
             let path = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)

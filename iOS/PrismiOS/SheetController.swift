@@ -573,9 +573,39 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         setBlocks(paths.map(NoteRef.init(path:)), showsHeaders: true, before: head)
         for block in noteBlocks where block.accessory == nil {
             let path = block.ref.path
-            block.setAccessory(symbol: "checkmark.circle", label: "Done") { [weak self] in self?.onFlag?(path, "inbox", nil) }
+            block.setAccessory(symbol: "checkmark.circle", label: "Done") { [weak self, weak block] in
+                guard let self, let block else { return }
+                checkOff(block, path: path)
+            }
         }
     }
+
+    /// Done with a note in the inbox: its ring filled, then the card swept
+    /// off to the side, and those after it closing up as it is taken out.
+    private func checkOff(_ block: NoteBlock, path: String) {
+        block.save()
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        block.checkAccessory()
+        UIView.animate(withDuration: 0.32, delay: 0.3, options: [.curveEaseIn]) {
+            block.transform = CGAffineTransform(translationX: -block.bounds.width * 1.1, y: 0).rotated(by: -0.04)
+            block.alpha = 0
+        } completion: { [weak self] _ in
+            guard let self else { return }
+            animatesNextLayout = true
+            onFlag?(path, "inbox", nil)
+            // Not taken out after all: back as it was.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak block] in
+                guard let block, block.superview != nil, self.noteBlocks.contains(where: { $0 === block }) else { return }
+                UIView.animate(withDuration: 0.25) {
+                    block.transform = .identity
+                    block.alpha = 1
+                }
+            }
+        }
+    }
+
+    /// The next layout eased into, not jumped to: a card just taken out.
+    private var animatesNextLayout = false
 
     // MARK: Pinned
 
@@ -786,6 +816,13 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     static let rulesBetween = false
 
     func relayout() {
+        defer {
+            // The note at the top may be another now: its name, at the top.
+            if currentNotePath != lastCurrentNote {
+                lastCurrentNote = currentNotePath
+                    onCurrentNote?()
+            }
+        }
         let width = view.bounds.width
         guard width > 0 else { return }
         let top = scroll.contentOffset.y + scroll.adjustedContentInset.top
@@ -793,9 +830,16 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         var y: CGFloat = 0
         // A hairline across between the notes of a list, as between posts.
         var rules = 0
+        let eased = animatesNextLayout
+        animatesNextLayout = false
         for (i, block) in blocks.enumerated() {
             let height = block.height(width: width)
-            block.frame = CGRect(x: 0, y: y, width: width, height: height)
+            let frame = CGRect(x: 0, y: y, width: width, height: height)
+            if eased, block.frame != frame {
+                UIView.animate(withDuration: 0.38, delay: 0, usingSpringWithDamping: 0.88, initialSpringVelocity: 0) { block.frame = frame }
+            } else {
+                block.frame = frame
+            }
             y += height
             // No rule between cards: the space above each header parts them.
             let next = blocks.indices.contains(i + 1) ? blocks[i + 1] : nil
@@ -972,7 +1016,33 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         if chromeTravel > 24 { onChromeHidden?(true) } else if chromeTravel < -12 { onChromeHidden?(false) }
     }
 
+    /// The note being read: the sheet's own, alone; among many, the one
+    /// across the middle of the screen. None for what links to a note, which lists
+    /// them already.
+    var currentNotePath: String? {
+        switch kind {
+        case .note(let path): return path
+        case .backlinks: return nil
+        default:
+            guard isViewLoaded else { return nil }
+            // The one across the middle of what shows between the top and the bar.
+            let inset = scroll.adjustedContentInset
+            let middle = scroll.contentOffset.y + inset.top + (scroll.bounds.height - inset.top - inset.bottom) / 2
+            let notes = noteBlocks
+            return (notes.last { $0.frame.minY <= middle } ?? notes.first)?.ref.path
+        }
+    }
+
+    /// Told when the note at the top changes, as the sheet scrolls.
+    var onCurrentNote: (() -> Void)?
+    private var lastCurrentNote: String?
+
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        let current = currentNotePath
+        if current != lastCurrentNote {
+            lastCurrentNote = current
+            onCurrentNote?()
+        }
         followForChrome()
         scrubber.visible = scroll.contentOffset.y / max(scroll.contentSize.height, 1)
         wakeNearby()

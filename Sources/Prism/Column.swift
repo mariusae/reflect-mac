@@ -52,6 +52,8 @@ final class Column: NSView, OutlineTextViewNavigator {
     private let fade = TopFade()
     /// Under the fold and ×, at the foot: their own small ground, over the notes.
     private let controlsGround = FootGround()
+    /// The note being read, named at the top, its menu clicked.
+    private let titlePill = TitlePill()
     /// The current note's header, kept at its card's top once scrolled away.
     private let sticky = StickyHeader()
     /// While the pointer is over the column: a sheet of each kind to add.
@@ -110,7 +112,7 @@ final class Column: NSView, OutlineTextViewNavigator {
     }
     let strip = CollapsedStrip()
     /// What a folded column hides.
-    private var unfolded: [NSView] { [scroll, sticky, scrubber, close, foldButton, grip, stackPill, controlsGround] }
+    private var unfolded: [NSView] { [scroll, sticky, scrubber, close, foldButton, grip, stackPill, controlsGround, titlePill] }
     /// Its folded strip was clicked, or hovered.
     var onUnfold: ((Column) -> Void)?
     var onStripHover: ((Column, Bool) -> Void)?
@@ -129,7 +131,8 @@ final class Column: NSView, OutlineTextViewNavigator {
     private func stackChanged() {
         stackPill.sheets = beneath
         stackPill.forward = beneath.isEmpty ? ahead.first : nil
-        stackPill.isHidden = !hasStack || switcher != nil || stackScrubber != nil || isCollapsed || isWeb
+        // The sheets beneath are the foot's stack now, left of the toolbox.
+        stackPill.isHidden = true
         if !hasStack { hideSheetList() }
         needsLayout = true
     }
@@ -221,6 +224,10 @@ final class Column: NSView, OutlineTextViewNavigator {
         addSubview(scroll)
         addSubview(sticky)
         addSubview(controlsGround)
+        titlePill.target = self
+        titlePill.action = #selector(titlePillClicked)
+        titlePill.isHidden = true
+        addSubview(titlePill)
         // No band over the top: the notes run up to the window's edge.
         addSubview(scrubber)
         // Out of sight till pointed at.
@@ -729,8 +736,8 @@ final class Column: NSView, OutlineTextViewNavigator {
     private var rules: [NSView] = []
     /// Each note's flags — inbox, pinned, private, topic — by its name.
     private var badges: [NoteRef: NoteBadges] = [:]
-    /// What links to each note, bunched at its card's foot.
-    private var backlinkStacks: [NoteRef: BacklinkStack] = [:]
+    /// What links to the note at the top, in the foot, right of the toolbox.
+    private var backlinkStack: BacklinkStack?
     /// The notes linking to a note, as cards — nil while being looked for.
     var backlinkCards: ((NoteRef) -> [BacklinkStack.Card]?)?
     /// The backlinks' own sheet, for a note: all of them.
@@ -899,6 +906,23 @@ final class Column: NSView, OutlineTextViewNavigator {
     /// The page shown, its highlights as its note now says.
     func updateWebHighlights(_ highlights: [String]) { webPage?.highlights = highlights }
 
+    @objc private func titlePillClicked() {
+        guard let view = current else { return }
+        onNoteMenu?(view, titlePill)
+    }
+
+    /// The pill as the note being read is: its name and cover; hidden with
+    /// none — on a page of the web, and what links here, which names it.
+    private func updateTitlePill() {
+        guard !isWeb, !isBacklinks, !isCollapsed, let view = current else {
+            titlePill.isHidden = true
+            return
+        }
+        titlePill.isHidden = false
+        let font = metrics.typography.headingFont(size: round(metrics.fontSize * 0.95), weight: .semibold)
+        titlePill.show(Column.name(of: view.ref).title, font: font, cover: view.coverSource.flatMap { Prism.Place.coverImage?($0) })
+    }
+
     @objc private func noteMenuClicked(_ sender: NSButton) {
         guard let path = sender.identifier?.rawValue, let view = view(for: NoteRef(path: path)) else { return }
         onNoteMenu?(view, sender)
@@ -1033,7 +1057,6 @@ final class Column: NSView, OutlineTextViewNavigator {
             let size = badge.intrinsicContentSize
             badge.frame = NSRect(x: right - size.width, y: round(nameMiddle(of: view) - size.height / 2), width: size.width, height: size.height)
         }
-        placeBacklinkStacks(notes)
         // A note's when, on its first line, clear of the buttons there.
         for view in notes {
             let buttons = (menuButtons[view.ref] != nil ? menuSide : 0) + (openButtons[view.ref] != nil ? menuSide : 0)
@@ -1042,57 +1065,127 @@ final class Column: NSView, OutlineTextViewNavigator {
         }
     }
 
-    /// What links to each note, bunched at its card's foot on the right —
-    /// not in the backlinks' own sheet, which lists them already.
-    private func placeBacklinkStacks(_ notes: [DayView]) {
-        var wanted: [NoteRef: [BacklinkStack.Card]] = [:]
-        if !isBacklinks {
-            for view in notes { if let cards = backlinkCards?(view.ref), !cards.isEmpty { wanted[view.ref] = cards } }
+    /// What links to the note at the top, bunched in the column's foot,
+    /// right of the toolbox — its height, on its middle — and dealt out
+    /// upward when hovered. Not in the backlinks' own sheet, which lists
+    /// them already, nor on a page of the web.
+    private func placeBacklinkStack() {
+        guard !isBacklinks, !isWeb, !isCollapsed, let ref = current?.ref,
+              let cards = backlinkCards?(ref), !cards.isEmpty else {
+            backlinkStack?.removeFromSuperview()
+            backlinkStack = nil
+            return
         }
-        for (ref, stack) in backlinkStacks where wanted[ref] == nil {
-            stack.removeFromSuperview()
-            backlinkStacks[ref] = nil
-        }
-        for view in notes {
-            guard let cards = wanted[view.ref] else {
-                view.footRoom = 0
-                continue
+        let stack = backlinkStack ?? {
+            let stack = BacklinkStack()
+            stack.onOpen = { [weak self] card, newColumn in
+                guard let self else { return }
+                onOpenBacklink?(card.path, card.link, self, newColumn)
             }
-            view.footRoom = BacklinkStack.bunch.height + 6
-            let stack = backlinkStacks[view.ref] ?? {
-                let stack = BacklinkStack()
-                let ref = view.ref
-                stack.onOpen = { [weak self] card, newColumn in
-                    guard let self else { return }
-                    onOpenBacklink?(card.path, card.link, self, newColumn)
-                }
-                stack.onShowAll = { [weak self] in
-                    guard let self else { return }
-                    onShowBacklinks?(ref, self)
-                }
-                stack.onSpread = { [weak self] in self?.placeBadges() }
-                backlinkStacks[view.ref] = stack
-                return stack
-            }()
-            // Over the notes, the next card's included, when dealt out.
-            if stack.superview !== document || document.subviews.last !== stack {
-                stack.removeFromSuperview()
-                document.addSubview(stack)
+            stack.onShowAll = { [weak self] in
+                guard let self, let ref = backlinkStack?.ref else { return }
+                onShowBacklinks?(ref, self)
             }
-            stack.cards = cards
-            stack.face = face
-            let column = min(metrics.columnWidth, view.frame.width - 48)
-            stack.widest = column + 2 * CardSurface.outset - 8
-            let right = view.frame.minX + ((view.frame.width - column) / 2).rounded() + column + CardSurface.outset - 4
-            let foot = view.frame.maxY - CardSurface.spacing - 2
-            let size = stack.size
-            stack.frame = NSRect(x: right - size.width, y: foot - size.height, width: size.width, height: size.height)
-        }
+            stack.onSpread = { [weak self] in self?.needsLayout = true }
+            backlinkStack = stack
+            return stack
+        }()
+        keepOver(stack)
+        stack.ref = ref
+        stack.cards = cards
+        stack.face = face
+        // Right of the toolbox, a gap off it, as far as the cards' right edge.
+        let bar = sheetBar.frame
+        let left = bar.maxX + 10
+        let right = min(bounds.width - 8, cardSpan.maxX)
+        stack.bunchHeight = bar.height
+        stack.widest = max(0, right - left)
+        let size = stack.size
+        // The front card level with the toolbox; dealt out, up from there.
+        stack.frame = NSRect(x: left - BacklinkStack.depth, y: bar.minY - BacklinkStack.depth,
+                             width: min(size.width, right - left + 2 * BacklinkStack.depth), height: size.height)
+        stack.isHidden = stack.widest < 60
     }
 
     private var isBacklinks: Bool { if case .backlinks = kind { true } else { false } }
 
-    func spreadBacklinksForScript() { backlinkStacks.values.forEach { $0.spreadForScript() } }
+    /// A stack kept over the column's content — moved only when something
+    /// else has come over it: moved, it loses the pointer, and stops dealing.
+    private func keepOver(_ stack: BacklinkStack) {
+        guard stack.superview === self, let mine = subviews.firstIndex(of: stack) else { return addSubview(stack) }
+        let covered = subviews[(mine + 1)...].contains { !($0 is BacklinkStack) && !$0.isHidden }
+        if covered {
+            stack.removeFromSuperview()
+            addSubview(stack)
+        }
+    }
+
+    /// The sheets beneath this one, bunched in the foot left of the toolbox
+    /// as what links here is at its right — the nearest in front — and
+    /// dealt out upward when hovered, each clicked gone back to. With none
+    /// beneath, the way forward, faintly.
+    private var sheetStack: BacklinkStack?
+
+    private func placeSheetStack() {
+        guard hasStack, !isWeb, !isCollapsed, switcher == nil else {
+            sheetStack?.removeFromSuperview()
+            sheetStack = nil
+            return
+        }
+        let stack = sheetStack ?? {
+            let stack = BacklinkStack()
+            stack.anchorRight = true
+            stack.onOpen = { [weak self] card, _ in
+                guard let self else { return }
+                if beneath.isEmpty { onForward?(self, card.index) } else { onRaise?(self, card.index) }
+            }
+            stack.onShowAll = { [weak self] in
+                guard let self, let first = sheetStack?.cards.last else { return }
+                if beneath.isEmpty { onForward?(self, first.index) } else { onRaise?(self, 0) }
+            }
+            stack.onSpread = { [weak self] in self?.needsLayout = true }
+            sheetStack = stack
+            return stack
+        }()
+        keepOver(stack)
+        let forward = beneath.isEmpty
+        let sheets: [(Sheet, Int)] = forward ? ahead.enumerated().map { ($1, $0) } : beneath.enumerated().reversed().map { ($1, $0) }
+        stack.cards = sheets.map { sheet, index in
+            BacklinkStack.Card(path: "", title: sheet.title, snippet: Self.kindName(sheet.kind), index: index)
+        }
+        stack.symbol = forward ? "arrow.forward" : "arrow.backward"
+        stack.faint = forward
+        stack.moreTitle = forward ? "Furthest forward…" : "Back to the first…"
+        stack.face = face
+        // Left of the toolbox, a gap off it, as far as the cards' left edge.
+        let bar = sheetBar.frame
+        let right = bar.minX - 10
+        let left = max(8, cardSpan.minX, titleBarLeft)
+        stack.bunchHeight = bar.height
+        stack.widest = max(0, right - left)
+        let size = stack.size
+        let width = min(size.width, right - left + 2 * BacklinkStack.depth)
+        stack.frame = NSRect(x: right + BacklinkStack.depth - width, y: bar.minY - BacklinkStack.depth, width: width, height: size.height)
+        stack.isHidden = stack.widest < 60
+    }
+
+    /// What a sheet is, under its name on its card.
+    private static func kindName(_ kind: Kind) -> String {
+        switch kind {
+        case .timeline: "The days"
+        case .note: "A note"
+        case .backlinks: "What links here"
+        case .inbox: "The inbox"
+        case .tasks: "The tasks"
+        case .search(let query): query.isEmpty ? "Search" : "Search for “\(query)”"
+        case .web: "A page on the web"
+        }
+    }
+
+    func spreadBacklinksForScript() {
+        backlinkStack?.spreadForScript()
+        sheetStack?.spreadForScript()
+    }
 
     // MARK: The timeline
 
@@ -1427,7 +1520,8 @@ final class Column: NSView, OutlineTextViewNavigator {
         // The top sheet: the column's notes, under the sheets beneath — and
         // under its title bar, not behind it.
         let card = bounds
-        scroll.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - (isWeb ? 0 : StickyHeader.height)))
+        // Up to the window's top: the notes go on under the floating controls.
+        scroll.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
         // A page on the web, over the foot's row of controls.
         webPage?.frame = NSRect(x: 0, y: Self.footHeight, width: bounds.width, height: max(0, bounds.height - Self.footHeight))
         if webTitle.superview == nil { addSubview(webTitle) }
@@ -1452,16 +1546,27 @@ final class Column: NSView, OutlineTextViewNavigator {
         let pillLeft = max(8, cards.minX, titleBarLeft)
         // The title first: the stack gives way to it, down to its icon alone.
         let titleLeft = max(cards.minX + CardSurface.outset + metrics.indent - 2, titleBarLeft)
-        let titleNeeds = sticky.shown == nil ? 0 : sticky.naturalWidth + 16
+        let titleNeeds: CGFloat = titlePill.isHidden ? 0 : titlePill.fittingWidth(within: 220) + 16
         let room = groundLeft - 8 - max(pillLeft, titleLeft + titleNeeds)
-        let pillWidth = hasStack && !isWeb
-            ? max(stackPill.compactWidth, stackPill.fittingWidth(within: max(0, min(240, room)))) : 0
+        _ = room
+        let pillWidth: CGFloat = 0
         // No room even for its icon: left out, till there is.
         stackPill.alphaValue = groundLeft - 8 - pillLeft < stackPill.compactWidth ? 0 : 1
         stackPill.frame = NSRect(x: groundLeft - 8 - pillWidth, y: (topMiddle - pillHeight / 2).rounded(), width: pillWidth, height: pillHeight)
         let bar = sheetBar.fittingSize
         sheetBar.frame = NSRect(x: max(8, ((bounds.width - bar.width) / 2).rounded()), y: (Self.footMiddle - bar.height / 2).rounded(),
                                 width: bar.width, height: bar.height)
+        placeBacklinkStack()
+        placeSheetStack()
+        // The note's name, centred over the cards, clear of what is either side.
+        updateTitlePill()
+        let leftEdge = max(8, titleBarLeft, cards.minX) + 6
+        let rightEdge = (stackPill.alphaValue > 0 && pillWidth > 0 ? stackPill.frame.minX : groundLeft) - 10
+        let titleWidth = titlePill.fittingWidth(within: max(0, min(360, rightEdge - leftEdge)))
+        var titleX = (cards.midX - titleWidth / 2).rounded()
+        titleX = min(max(titleX, leftEdge), rightEdge - titleWidth)
+        titlePill.frame = NSRect(x: titleX, y: (topMiddle - TitlePill.height / 2).rounded(), width: titleWidth, height: TitlePill.height)
+        if titleWidth < 60 { titlePill.isHidden = true }
         grip.frame = NSRect(x: 56, y: bounds.height - 12, width: max(0, bounds.width - 112), height: 12)
         // The title bar across the column, the notes under it; its words
         // short of the controls at its right.
@@ -1502,9 +1607,9 @@ final class Column: NSView, OutlineTextViewNavigator {
             sticky.show(name: nil, when: nil, titleFont: titleFont, whenFont: whenFont)
             return
         }
-        let before = sticky.shown
-        sticky.show(name: head.title, when: head.when, titleFont: titleFont, whenFont: whenFont)
-        if sticky.shown != before { needsLayout = true }
+        // The title pill names it now: the bar says nothing of its own.
+        _ = head
+        if sticky.shown != nil { sticky.show(name: nil, when: nil, titleFont: titleFont, whenFont: whenFont) }
         sticky.onClick = { [weak self, weak block] in
             guard let self, let block else { return }
             scroll(toY: block.frame.minY, animated: true)
@@ -1543,7 +1648,7 @@ final class Column: NSView, OutlineTextViewNavigator {
         // Only blocks this has placed: a new one's frame says nothing yet.
         let laidOut = blocks.filter { placed.contains(ObjectIdentifier($0)) && $0.frame.height > 0 }
         let anchor = (laidOut.last { $0.frame.minY <= top } ?? laidOut.first).map { ($0, top - $0.frame.minY) }
-        var y: CGFloat = isTimeline ? 10 : 22
+        var y: CGFloat = (isTimeline ? 10 : 22) + band
         // The notes across the whole column: the scrubber lies over them,
         // when it is wanted.
         let inset: CGFloat = 0
@@ -1632,25 +1737,31 @@ final class Column: NSView, OutlineTextViewNavigator {
         // The note at the top keeps how far into it it was read — on its
         // own or among the days — to open there again, wherever it is opened.
         if settled, let view = current {
-            SessionState.shared.setOffset(graph.root, view.ref, Double(scroll.contentView.bounds.minY - view.frame.minY))
+            SessionState.shared.setOffset(graph.root, view.ref, Double(scroll.contentView.bounds.minY + band - view.frame.minY))
         }
         onScroll?(self)
+        // What links to the note now at the top, and its name.
+        if backlinkStack?.ref != current?.ref { needsLayout = true }
     }
+
+    /// The room at the top the floating controls take: the notes start
+    /// under it, and scroll on up under them.
+    private var band: CGFloat { isWeb ? 0 : StickyHeader.height }
 
     /// The note at the top of the column.
     var current: DayView? {
-        let top = scroll.contentView.bounds.minY + 60
+        let top = scroll.contentView.bounds.minY + band + 60
         return views.last { $0.frame.minY <= top } ?? views.first
     }
 
     /// Whether the note at the top has its name scrolled out of sight.
     var currentNameHidden: Bool {
         guard let current else { return false }
-        return current.frame.minY + 40 < scroll.contentView.bounds.minY
+        return current.frame.minY + 40 < scroll.contentView.bounds.minY + band
     }
 
     func scroll(toY y: CGFloat, animated: Bool) {
-        let target = NSPoint(x: 0, y: max(0, min(y - 12, document.frame.height - scroll.contentSize.height)))
+        let target = NSPoint(x: 0, y: max(0, min(y - 12 - band, document.frame.height - scroll.contentSize.height)))
         if animated {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.25
@@ -1672,7 +1783,7 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     var place: Place? {
         guard let current else { return nil }
-        return Place(ref: current.ref, offset: scroll.contentView.bounds.minY - current.frame.minY)
+        return Place(ref: current.ref, offset: scroll.contentView.bounds.minY + band - current.frame.minY)
     }
 
     /// Scrolls back to a place, when its note is shown — the keyboard put in
@@ -1680,7 +1791,7 @@ final class Column: NSView, OutlineTextViewNavigator {
     func restore(_ place: Place, key: NoteRef? = nil) {
         relayout()
         if let view = view(for: place.ref) {
-            let y = max(0, min(view.frame.minY + place.offset, document.frame.height - scroll.contentSize.height))
+            let y = max(0, min(view.frame.minY + place.offset - band, document.frame.height - scroll.contentSize.height))
             scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
             scroll.reflectScrolledClipView(scroll.contentView)
         }
@@ -2131,33 +2242,21 @@ final class FootGround: NSView {
     override func mouseMoved(with event: NSEvent) { NSCursor.arrow.set() }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
 
+    /// Liquid glass, as the window's own controls float on.
+    private let glass = NSGlassEffectView()
+
     override init(frame: NSRect) {
         super.init(frame: frame)
-        wantsLayer = true
+        addSubview(glass)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    override var wantsUpdateLayer: Bool { true }
-    override func updateLayer() {
-        layer?.cornerRadius = bounds.height / 2
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            // As the stack beside it is drawn: the paper, a faint ink rim.
-            layer?.backgroundColor = Ink.paper.cgColor
-            layer?.borderColor = Ink.text.withAlphaComponent(0.14).cgColor
-            layer?.borderWidth = 1
-        }
-    }
-
-    override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(newSize)
-        needsDisplay = true
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        needsDisplay = true
+    override func layout() {
+        super.layout()
+        glass.frame = bounds
+        glass.cornerRadius = bounds.height / 2
     }
 
     /// Clicks between its buttons are not the text's under it.
@@ -2201,10 +2300,9 @@ final class StickyHeader: NSView {
 
     override var wantsUpdateLayer: Bool { true }
     override func updateLayer() {
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = Ink.page.cgColor
-            rule.layer?.backgroundColor = Ink.rule.cgColor
-        }
+        // No bar: the controls float over the page, each on its glass.
+        layer?.backgroundColor = NSColor.clear.cgColor
+        rule.isHidden = true
     }
 
     /// In the title bar: dragging it moves the window, as a title bar does.

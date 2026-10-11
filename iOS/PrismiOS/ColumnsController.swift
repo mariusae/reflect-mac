@@ -12,10 +12,10 @@ import ReflectGit2
 /// swipe from the edge pops it. Among them, a button to write in today; at
 /// their right, apart, search — which, tapped, opens out into a field, the
 /// tabs gathered into one button at its left to go back by.
-final class ColumnsController: UITabBarController, UITabBarControllerDelegate, UINavigationControllerDelegate {
+final class ColumnsController: UITabBarController, UITabBarControllerDelegate, UINavigationControllerDelegate, UIGestureRecognizerDelegate {
     let store: PrismStore
     /// The bar along the bottom, in the system's tab bar's place.
-    private lazy var bar = BottomBar(items: Self.tabs.indices.map { BottomBar.Item(title: tab($0).title, symbol: tab($0).symbol) })
+    private lazy var bar = BottomBar()
     private var barToBottom: NSLayoutConstraint?
     /// How far the keyboard reaches up the screen, from its foot.
     private var keyboardHeight: CGFloat = 0
@@ -32,7 +32,6 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     static let tabs: [(kind: SheetKind, title: String, symbol: String)] = [
         (.timeline, "Days", "house"),
         (.inbox, "Inbox", "tray"),
-        (.tasks, "Tasks", "checkmark.circle"),
     ]
     /// The inbox's tab, held, shows the pinned notes instead — and, held
     /// again, the inbox. Kept from one launch to the next.
@@ -71,6 +70,9 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             let navigation = UINavigationController(rootViewController: makeSheet(tab.kind, around: tab.kind == .timeline ? .day(.today) : nil))
             navigation.delegate = self
             styleBar(navigation)
+            // No bar at the top: the name, back, and the menus are the bottom's.
+            navigation.setNavigationBarHidden(true, animated: false)
+            navigation.interactivePopGestureRecognizer?.delegate = self
             return navigation
         }
         columnTabs = zip(Self.tabs.indices.map(tab), columns).map { tab, navigation in
@@ -96,6 +98,10 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         }
         observe()
         observeSync()
+        // A cover read: in the bar.
+        NotificationCenter.default.addObserver(forName: .prismImageLoaded, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateBar() }
+        }
         openForScript()
         // The tab left showing chosen before any is laid out: the others'
         // sheets not built at launch at all.
@@ -103,6 +109,10 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             pendingPage = nil
             select(column: page)
         }
+        // A note chosen from the app's icon: opened now, or when chosen.
+        QuickActions.onPending = { [weak self] in self?.openQuickAction() }
+        DispatchQueue.main.async { [weak self] in self?.openQuickAction() }
+        refreshQuickActions()
     }
 
     /// `-PrismOpen <kind>` — `search:<query>`, `backlinks:<path>`,
@@ -135,6 +145,10 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
                 for column in self.columns {
                     for case let sheet as SheetController in column.viewControllers { sheet.notesChanged(changed) }
                 }
+                // What links where may have changed with them: counted again.
+                self.backlinkCards = [:]
+                self.updateBacklinks()
+                self.refreshQuickActions()
                 self.observe()
             }
         }
@@ -172,7 +186,93 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         if bar.isSearching { leaveSearch(back: false) }
         selectedTab = columnTabs[column]
         lastColumn = column
-        bar.selected = column
+        updateBacklinks()
+        updateBar()
+    }
+
+    /// The edge swiped from: back, where there is somewhere to go back to.
+    func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+        (selectedNavigation?.viewControllers.count ?? 0) > 1
+    }
+
+    /// Home: the days, back to their first sheet, at today.
+    private func goHome() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if bar.isSearching { leaveSearch(back: false) }
+        let days = columns[0]
+        select(column: 0)
+        if days.viewControllers.count > 1 { days.popToRootViewController(animated: true) }
+        (days.viewControllers.first as? SheetController)?.show(.day(.today))
+        setChromeHidden(false)
+        layoutChanged()
+    }
+
+    /// The bar as the sheet shown is: its name and cover.
+    func updateBar() {
+        let navigation = selectedNavigation
+        guard let sheet = navigation?.topViewController as? SheetController else { return }
+        bar.setTitle(names(of: sheet), cover: sheet.currentNotePath.flatMap(cover(of:)))
+    }
+
+    /// What a sheet is called in the bar: the note being read, or the view.
+    /// What a sheet is called, longest first: shorter ones where there is less room.
+    private func names(of sheet: SheetController) -> [String] {
+        if let path = sheet.currentNotePath { return SliceBlock.names(path, store: store) }
+        switch sheet.kind {
+        case .timeline: return ["Days"]
+        case .inbox: return ["Inbox"]
+        case .pinned: return ["Pinned"]
+        case .tasks: return ["Tasks"]
+        case .search(let query): return [query]
+        case .backlinks(let path): return SliceBlock.names(path, store: store).map { "Linked to " + $0 }
+        case .note(let path): return SliceBlock.names(path, store: store)
+        }
+    }
+
+    /// The views other than the days, for home held.
+    private func viewEntries() -> [NoteFan.Entry] {
+        [
+            NoteFan.Entry(names: ["Inbox"], cover: nil, symbol: "tray", round: true) { [weak self] in self?.showInbox(pinned: false) },
+            NoteFan.Entry(names: ["Pinned"], cover: nil, symbol: "pin", round: true) { [weak self] in self?.showInbox(pinned: true) },
+            NoteFan.Entry(names: ["Tasks"], cover: nil, symbol: "checkmark.circle", round: true) { [weak self] in self?.showTasks() },
+        ]
+    }
+
+    /// The inbox's column, showing the inbox or the pinned notes.
+    private func showInbox(pinned: Bool) {
+        if showsPinned == pinned { tabTapped(Self.inboxColumn) } else { togglePinned() }
+    }
+
+    /// The tasks, on the stack of the view shown.
+    private func showTasks() {
+        guard let sheet = selectedNavigation?.topViewController as? SheetController else { return }
+        if case .tasks = sheet.kind { return }
+        push(.tasks, from: sheet)
+    }
+
+    /// A note's cover, small and round, as the bar and the fans show it.
+    private func cover(of path: String) -> UIImage? {
+        NoteCover.source(in: store.text(path)).flatMap { PhoneImages.thumbnail($0, side: NoteChip.round) }
+    }
+
+    /// The menu in the bar's pill: where to go, what can be done to the
+    /// note shown, and the app's own.
+    private func barMenu() -> UIMenu {
+        let views: [UIMenuElement] = [
+            UIAction(title: "Days", image: UIImage(systemName: "house")) { [weak self] _ in self?.tabTapped(0) },
+            UIAction(title: "Inbox", image: UIImage(systemName: "tray")) { [weak self] _ in self?.showInbox(pinned: false) },
+            UIAction(title: "Pinned", image: UIImage(systemName: "pin")) { [weak self] _ in self?.showInbox(pinned: true) },
+            UIAction(title: "Tasks", image: UIImage(systemName: "checkmark.circle")) { [weak self] _ in self?.showTasks() },
+            UIAction(title: "Calendar", image: UIImage(systemName: "calendar")) { [weak self] _ in self?.showCalendar() },
+        ]
+        var sections: [UIMenuElement] = [UIMenu(options: .displayInline, children: views)]
+        guard let sheet = selectedNavigation?.topViewController as? SheetController else { return UIMenu(children: sections) }
+        if let path = sheet.currentNotePath {
+            sections.append(UIMenu(title: SliceBlock.name(path, store: store), options: .displayInline,
+                                   children: noteMenu(path, from: sheet).children))
+        }
+        sections.append(contentsOf: menu(for: sheet).children)
+        return UIMenu(children: sections)
     }
 
     // MARK: The bar
@@ -192,13 +292,8 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             toBottom,
         ])
         barToBottom = toBottom
-        bar.onSelect = { [weak self] column in self?.tabTapped(column) }
-        bar.onHold = { [weak self] column in
-            guard let self else { return }
-            if column == Self.inboxColumn { return togglePinned() }
-            guard Self.tabs[column].kind == .timeline else { return }
-            showCalendar()
-        }
+        bar.onHome = { [weak self] in self?.goHome() }
+        bar.menu = { [weak self] in self?.barMenu() ?? UIMenu() }
         bar.onWrite = { [weak self] in
             guard let self else { return }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -207,7 +302,8 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         bar.onDictateBegin = { [weak self] in self?.beginDictation() }
         bar.onDictateEnd = { [weak self] cancelled in self?.endDictation(cancelled: cancelled) }
         bar.onSearch = { [weak self] in self?.showSearch() }
-        bar.recents = { [weak self] in self?.recentNotes() ?? [] }
+        bar.onHold = { [weak self] what, state, point in self?.held(what, state, at: point) }
+
         bar.onLeaveSearch = { [weak self] in self?.leaveSearch(back: true) }
         bar.onQuery = { [weak self] text in self?.finder.search(text) }
         bar.onSubmit = { [weak self] in self?.finder.searchEverything() }
@@ -256,7 +352,6 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         showsPinned.toggle()
         UserDefaults.standard.set(showsPinned, forKey: "InboxShowsPinned")
         let tab = tab(Self.inboxColumn)
-        bar.setItem(BottomBar.Item(title: tab.title, symbol: tab.symbol), at: Self.inboxColumn)
         columnTabs[Self.inboxColumn].title = tab.title
         let navigation = columns[Self.inboxColumn]
         UIView.transition(with: navigation.view, duration: 0.25, options: .transitionCrossDissolve) {
@@ -288,16 +383,8 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     func setChromeHidden(_ hidden: Bool) {
         guard hidden != chromeHidden else { return }
         chromeHidden = hidden
-        let bar = selectedNavigation?.navigationBar
-        let bottom = self.bar
-        let drop = BottomBar.height + BottomBar.margin + 20
-        UIView.animate(withDuration: 0.28, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut]) {
-            bottom.transform = hidden ? CGAffineTransform(translationX: 0, y: drop) : .identity
-            bottom.alpha = hidden ? 0 : 1
-            bar?.alpha = hidden ? 0 : 1
-        }
-        bar?.isUserInteractionEnabled = !hidden
-        bottom.isUserInteractionEnabled = !hidden
+        // Gathered to the name alone, small and low, as Safari's.
+        bar.setSmall(hidden)
     }
 
     private var selectedNavigation: UINavigationController? { columns.indices.contains(selectedColumn) ? columns[selectedColumn] : nil }
@@ -329,6 +416,11 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         }
         sheet.onChromeHidden = { [weak self] hidden in self?.setChromeHidden(hidden) }
         sheet.menu = { [weak self] sheet in self?.menu(for: sheet) ?? UIMenu() }
+        sheet.onCurrentNote = { [weak self, weak sheet] in
+            guard let self, let sheet, sheet === selectedNavigation?.topViewController else { return }
+            updateBacklinks()
+            updateBar()
+        }
         sheet.noteMenu = { [weak self] sheet, path in self?.noteMenu(path, from: sheet) ?? UIMenu() }
         sheet.onStateChange = { [weak self] in self?.layoutChanged() }
         sheet.onFind = { [weak self, weak sheet] in
@@ -409,12 +501,11 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
 
     // MARK: The menu
 
-    /// The ≡ menu on a tab's first sheet, and the ⋯ menu on a note: what can
-    /// be done to the note, then the sync — now, how it went — and the notes
-    /// two devices wrote at once.
+    /// The ≡ menu on a tab's first sheet, and the ⋯ menu on a note: the
+    /// app's — new note, tasks, the sync, the notes two devices wrote at
+    /// once, settings. What can be done to the note is its title pill's.
     func menu(for sheet: SheetController) -> UIMenu {
         var sections: [UIMenuElement] = []
-        if case .note(let path) = sheet.kind { sections.append(noteMenu(path, from: sheet)) }
         var sync: [UIMenuElement] = store.isSyncing ? [
             UIAction(title: "Syncing…", image: UIImage(systemName: "arrow.triangle.2.circlepath"), attributes: .disabled) { _ in },
         ] : [
@@ -614,9 +705,10 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         guard let searchTab, !bar.isSearching else { return }
         selectedNavigation?.topViewController.flatMap { $0 as? SheetController }?.saveAll()
         lastColumn = selectedColumn
+        // Opened out from small or full alike, in one movement.
+        bar.setSearching(true)
         setChromeHidden(false)
         selectedTab = searchTab
-        bar.setSearching(true)
         placeBar()
         UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0) { self.view.layoutIfNeeded() }
         bar.field.becomeFirstResponder()
@@ -630,6 +722,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         placeBar()
         UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0) { self.view.layoutIfNeeded() }
         if back { select(column: lastColumn) }
+        updateBacklinks()
     }
 
     /// Something found: a day in the days tab, the rest on the stack of the
@@ -653,15 +746,31 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
 
     /// The notes written in last — not the days, which the days tab has —
     /// to go to, oldest first: the latest at the menu's foot, under the thumb.
-    private func recentNotes() -> [HoldMenu.Entry] {
+    /// The note the icon's quick action chose, opened.
+    private func openQuickAction() {
+        guard let path = QuickActions.pending else { return }
+        QuickActions.pending = nil
+        if bar.isSearching { leaveSearch(back: false) }
+        presentedViewController?.dismiss(animated: false)
+        openInColumn(.note(path))
+    }
+
+    /// The icon's notes, as the latest are now.
+    private func refreshQuickActions() {
+        guard let index = store.index else { return }
+        QuickActions.update(index.all
+            .filter { $0.day == nil && !$0.path.hasPrefix(GraphPaths.weeklyDirectory + "/") }
+            .sorted { $0.modified > $1.modified })
+    }
+
+    private func recentNotes() -> [NoteFan.Entry] {
         guard let index = store.index else { return [] }
         let recent = index.all
             .filter { $0.day == nil && !$0.path.hasPrefix(GraphPaths.weeklyDirectory + "/") }
             .sorted { $0.modified > $1.modified }
             .prefix(10)
-        return recent.reversed().map { entry in
-            HoldMenu.Entry(title: entry.title.isEmpty ? (entry.path as NSString).lastPathComponent : entry.title,
-                           symbol: "doc.text", image: entry.cover.flatMap { PhoneImages.thumbnail($0, side: 24) }) { [weak self] in
+        return recent.map { entry in
+            NoteFan.Entry(names: SliceBlock.names(entry.path, store: store), cover: cover(of: entry.path), path: entry.path) { [weak self] in
                 self?.openInColumn(.note(entry.path))
             }
         }
@@ -796,6 +905,106 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     func navigationController(_ navigationController: UINavigationController, didShow viewController: UIViewController, animated: Bool) {
         setChromeHidden(false)
         layoutChanged()
+        updateBacklinks()
+        updateBar()
+    }
+
+    // MARK: What links to the note shown
+
+    /// What links to each note, as cards, as last found; forgotten when notes change.
+    private var backlinkCards: [String: [BacklinkCard]] = [:]
+    private var countingBacklinks: Set<String> = []
+
+    /// The bar's pill of what links to the note shown, kept up: found off
+    /// the main thread the first time, then known.
+    func updateBacklinks() {
+        guard let sheet = selectedNavigation?.topViewController as? SheetController, !bar.isSearching,
+              let path = sheet.currentNotePath, let index = store.index else { return bar.showBacklinks(0) }
+        if let cards = backlinkCards[path] { return bar.showBacklinks(cards.count) }
+        guard countingBacklinks.insert(path).inserted else { return }
+        let store = store
+        Task {
+            let sources = await Task.detached(priority: .utility) { index.backlinks(to: path) }.value
+            countingBacklinks.remove(path)
+            backlinkCards[path] = sources.map { source in
+                let words = source.contexts.first?.rows.map(\.text).joined(separator: " ") ?? ""
+                return BacklinkCard(path: source.path, title: SliceBlock.name(source.path, store: store),
+                                        snippet: InlineMarkup.plainText(words).replacingOccurrences(of: "\n", with: " ")
+                                            .trimmingCharacters(in: .whitespaces),
+                                        link: source.contexts.first?.link ?? "")
+            }
+            updateBacklinks()
+        }
+    }
+
+    /// The fan dealt out by a hold, following the thumb till it lets go.
+    private weak var heldFan: NoteFan?
+
+    private func held(_ what: BottomBar.Held, _ state: UIGestureRecognizer.State, at point: CGPoint) {
+        let local = view.convert(point, from: nil)
+        switch state {
+        case .began:
+            heldFan = fan(what)
+        case .changed:
+            heldFan?.track(local)
+        case .ended:
+            heldFan?.release(at: local)
+            heldFan = nil
+        default:
+            heldFan?.release(at: nil)
+            heldFan = nil
+        }
+    }
+
+    /// The notes for what was held, dealt out of it along the pill.
+    private func fan(_ what: BottomBar.Held) -> NoteFan? {
+        let entries: [NoteFan.Entry]
+        switch what {
+        case .home: entries = viewEntries()
+        case .title: entries = recentNotes()
+        case .backlinks: entries = backlinkEntries()
+        }
+        guard !entries.isEmpty else { return nil }
+        // Views over the circle held; notes along the pill.
+        let column = what == .home ? bar.frame(of: .home) : bar.pillFrame
+        let fan = NoteFan(entries: entries, from: bar.convert(bar.frame(of: what), to: view),
+                          along: bar.convert(column, to: view), in: view.bounds)
+        fan.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        fan.cover = { [weak self] path in self?.cover(of: path) }
+        view.insertSubview(fan, belowSubview: bar)
+        fan.deal()
+        return fan
+    }
+
+    /// What links to the note shown, the newest nearest the thumb; past
+    /// six, the last of them all.
+    private func backlinkEntries() -> [NoteFan.Entry] {
+        guard let sheet = selectedNavigation?.topViewController as? SheetController, let path = sheet.currentNotePath,
+              let cards = backlinkCards[path], !cards.isEmpty else { return [] }
+        let most = 6
+        let shown = cards.count > most ? Array(cards.prefix(most - 1)) : cards
+        var entries = shown.map { card in
+            NoteFan.Entry(names: SliceBlock.names(card.path, store: store), cover: cover(of: card.path), path: card.path) { [weak self, weak sheet] in
+                guard let self, let sheet else { return }
+                openLinking(card, from: sheet)
+            }
+        }
+        if cards.count > shown.count {
+            entries.append(NoteFan.Entry(names: ["All \(cards.count) linking here…"], cover: nil, secondary: true) { [weak self, weak sheet] in
+                guard let self, let sheet else { return }
+                push(.backlinks(path), from: sheet)
+            })
+        }
+        return entries
+    }
+
+    /// A note opened from what links to another: at the link, marked a moment.
+    private func openLinking(_ card: BacklinkCard, from sheet: SheetController) {
+        sheet.saveAll()
+        let opened = makeSheet(.note(card.path))
+        let rows = Row.unfold(OutlineMarkdown.parse(store.text(card.path)).rows)
+        if !card.link.isEmpty, let row = rows.firstIndex(where: { $0.text.contains(card.link) }) { opened.mark(unfoldedRow: row) }
+        sheet.navigationController?.pushViewController(opened, animated: true)
     }
 
     // MARK: Kept across launches
@@ -930,4 +1139,12 @@ extension ColumnsController: PHPickerViewControllerDelegate {
         let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
         return resized.jpegData(compressionQuality: 0.85)
     }
+}
+
+/// A note that links to another, and where: the link as written, to find it again.
+struct BacklinkCard {
+    var path: String
+    var title: String
+    var snippet: String
+    var link: String
 }

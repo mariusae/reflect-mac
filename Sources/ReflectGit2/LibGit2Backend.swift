@@ -602,6 +602,75 @@ public final class LibGit2Backend: GitBackend, @unchecked Sendable {
         return paths
     }
 
+    // MARK: When each file last changed
+
+    /// When each file under the root last changed, by the time of the last
+    /// commit to change it — from HEAD back to `since` (not included), or
+    /// all of history when nil. A merge's changes are its parents' own, and
+    /// counted there. Returns HEAD too, to go on from next time.
+    public func lastChanges(since: String?) -> (head: String?, times: [String: Date]) {
+        guard let head = id(of: "HEAD") else { return (nil, [:]) }
+        var walk: OpaquePointer?
+        guard git_revwalk_new(&walk, repository) == 0, let walk else { return (Self.string(head), [:]) }
+        defer { git_revwalk_free(walk) }
+        git_revwalk_sorting(walk, GIT_SORT_TIME.rawValue)
+        var start = head
+        git_revwalk_push(walk, &start)
+        if let since, var stop = try? resolved(since) { git_revwalk_hide(walk, &stop) }
+        var times: [String: Date] = [:]
+        var oid = git_oid()
+        while git_revwalk_next(&oid, walk) == 0 {
+            var commit: OpaquePointer?
+            guard git_commit_lookup(&commit, repository, &oid) == 0, let commit else { continue }
+            defer { git_commit_free(commit) }
+            let parents = git_commit_parentcount(commit)
+            guard parents <= 1 else { continue }
+            let when = Date(timeIntervalSince1970: TimeInterval(git_commit_time(commit)))
+            var tree: OpaquePointer?
+            guard git_commit_tree(&tree, commit) == 0 else { continue }
+            defer { git_tree_free(tree) }
+            var parentTree: OpaquePointer?
+            if parents == 1 {
+                var parent: OpaquePointer?
+                if git_commit_parent(&parent, commit, 0) == 0, let parent {
+                    git_commit_tree(&parentTree, parent)
+                    git_commit_free(parent)
+                }
+            }
+            defer { if let parentTree { git_tree_free(parentTree) } }
+            var diff: OpaquePointer?
+            guard git_diff_tree_to_tree(&diff, repository, parentTree, tree, nil) == 0 else { continue }
+            defer { git_diff_free(diff) }
+            // Newest first: a file's first sighting is its last change.
+            for delta in Self.deltas(diff) {
+                for path in [delta.new, delta.old].compactMap({ $0 }) {
+                    if let path = relative(path), times[path] == nil { times[path] = when }
+                }
+            }
+        }
+        return (Self.string(head), times)
+    }
+
+    /// The files under the root changed since HEAD: edited, added, not yet
+    /// committed — whose own times are the true ones.
+    public func uncommittedPaths() -> Set<String> {
+        var options = git_status_options()
+        git_status_options_init(&options, UInt32(GIT_STATUS_OPTIONS_VERSION))
+        options.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR
+        options.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED.rawValue | GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS.rawValue
+        var list: OpaquePointer?
+        guard git_status_list_new(&list, repository, &options) == 0, let list else { return [] }
+        defer { git_status_list_free(list) }
+        var paths = Set<String>()
+        for index in 0..<git_status_list_entrycount(list) {
+            guard let entry = git_status_byindex(list, index)?.pointee else { continue }
+            for delta in [entry.head_to_index, entry.index_to_workdir].compactMap({ $0?.pointee }) {
+                if let path = relative(delta.new_file.path.map { String(cString: $0) }) { paths.insert(path) }
+            }
+        }
+        return paths
+    }
+
     // MARK: Helpers
 
     private struct Delta {

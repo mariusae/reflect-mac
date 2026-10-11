@@ -1,6 +1,7 @@
 import AppKit
 import ReflectCore
 import PrismCore
+import ReflectGit2
 import ReflectUI
 
 /// The window: columns of notes, side by side — the first the days, the
@@ -151,6 +152,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             }
         }
         index.scan()
+        applyHistory()
         refreshReview()
         watcher = GraphWatcher(root: graph.root) { [weak self] paths in
             self?.notesChanged(paths)
@@ -879,8 +881,14 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         let sidebarX = sidebarShown ? 8 : -Sidebar.width - 24
         sidebar.frame = NSRect(x: sidebarX, y: 8, width: Sidebar.width, height: bounds.height - 16)
         // After the window's buttons, on their middle.
-        if sidebarButton.superview !== page { page.addSubview(sidebarButton) }
+        if sidebarButton.superview !== page {
+            page.addSubview(sidebarGlass)
+            page.addSubview(sidebarButton)
+        }
         sidebarButton.frame = NSRect(x: buttonX, y: (bounds.height - StickyHeader.height / 2 - 12).rounded(), width: 26, height: 24)
+        // On a glass of its own, free-floating, as the columns' controls are.
+        sidebarGlass.frame = sidebarButton.frame.insetBy(dx: -5, dy: -5)
+        sidebarGlass.cornerRadius = sidebarGlass.frame.height / 2
         finder.frame = bounds
     }
 
@@ -902,6 +910,8 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             sidebar.frame = frame
         }
     }
+
+    private let sidebarGlass = NSGlassEffectView()
 
     /// Beside the window's buttons: the sidebar in and out.
     private lazy var sidebarButton: NSButton = {
@@ -1382,12 +1392,28 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     private var syncFade: Timer?
 
+    /// Every note's last change taken from the graph's history, off the
+    /// main thread; what shows when notes changed shown again after.
+    private func applyHistory() {
+        let index = index
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            ChangeHistory.apply(to: index)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.forgetBacklinkCards()
+                self.refreshSidebar()
+            }
+        }
+    }
+
     private func showSync(_ status: SyncController.Status) {
         let text: String
         switch status {
         case .idle: return
         case .syncing: text = "Syncing…"
-        case .synced: text = "Synced"
+        case .synced:
+            text = "Synced"
+            applyHistory()
         case .failed(let message): text = "Sync failed: " + message
         case .unavailable: text = "Not in a git repository"
         }
@@ -1610,9 +1636,11 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     func spreadBacklinksForScript() { columns.forEach { $0.spreadBacklinksForScript() } }
 
-    /// Notes changed: what links to each is looked for again, as it is shown.
+    /// Notes changed: what links to each is looked for again — the stacks
+    /// showing it asked again now, not when next laid out.
     private func forgetBacklinkCards() {
         freshBacklinks = []
+        columns.forEach { $0.needsLayout = true }
     }
 
     /// Looks for what links to a note, off the main thread, and shows it.

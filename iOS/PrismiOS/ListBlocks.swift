@@ -204,6 +204,21 @@ final class SliceBlock: UIView, SheetBlock {
         return store.index?.entry(path)?.title ?? (path as NSString).lastPathComponent
     }
 
+    /// What a note is called, longest first, each shorter than the last —
+    /// for the first to fit where there is little room. A day: in full; its
+    /// weekday and date, short; and within the last week, its weekday alone,
+    /// in full and short.
+    static func names(_ path: String, store: PrismStore) -> [String] {
+        guard let day = GraphPaths.day(fromDailyPath: path), let date = day.date else { return [name(path, store: store)] }
+        var names = [NoteBlock.dayTitle(day),
+                     Formats.date(day.year == Day.today.year ? "EEEMMMd" : "EEEMMMdyyyy").string(from: date)]
+        let today = Day.today
+        if day <= today, today.adding(-6) <= day {
+            names += [Formats.date("EEEE").string(from: date), Formats.date("EEE").string(from: date)]
+        }
+        return names
+    }
+
     var isTyping: Bool { editors.contains(where: \.isFirstResponder) }
 
     // MARK: Writing

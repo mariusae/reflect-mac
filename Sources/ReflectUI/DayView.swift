@@ -258,12 +258,7 @@ package final class DayView: NSView, NSTextViewDelegate {
         banner.topOnly = card != nil
         banner.radius = card == nil ? 8 : CardSurface.radius
     }
-    private var bottomPadding: CGFloat { round(metrics.fontSize * 1.6) + footRoom }
-
-    /// Room at its foot for what the column puts there: what links here.
-    package var footRoom: CGFloat = 0 {
-        didSet { if footRoom != oldValue { heightMayHaveChanged() } }
-    }
+    private var bottomPadding: CGFloat { round(metrics.fontSize * 1.6) }
 
     package override func layout() {
         super.layout()

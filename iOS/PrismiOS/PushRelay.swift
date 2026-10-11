@@ -65,6 +65,14 @@ final class PrismAppDelegate: NSObject, UIApplicationDelegate {
         return true
     }
 
+    /// Each scene with a delegate of its own: for the icon's quick actions.
+    func application(_ application: UIApplication, configurationForConnecting session: UISceneSession,
+                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: nil, sessionRole: session.role)
+        configuration.delegateClass = PrismSceneDelegate.self
+        return configuration
+    }
+
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         MainActor.assumeIsolated { PushRelay.shared.received(deviceToken) }
     }

@@ -329,6 +329,17 @@ final class NoteBlock: UIView {
         setNeedsLayout()
     }
 
+    /// The accessory's ring filled — done — with a bounce.
+    func checkAccessory() {
+        guard let accessory else { return }
+        let size = round(storedMetrics.size * 0.88)
+        accessory.setImage(UIImage(systemName: "checkmark.circle.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: size, weight: .regular)),
+                           for: .normal)
+        accessory.tintColor = Ink.text
+        accessory.isEnabled = false
+        accessory.imageView?.addSymbolEffect(.bounce.up)
+    }
+
     // MARK: Reading and writing
 
     func load() {

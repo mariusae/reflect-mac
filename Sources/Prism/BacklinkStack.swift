@@ -15,9 +15,23 @@ final class BacklinkStack: NSView {
         var snippet: String
         /// The link, as written, to find it again in its note.
         var link: String = ""
+        /// Where it is among what it stands for: a sheet's place on the stack.
+        var index: Int = 0
     }
 
     var cards: [Card] = [] { didSet { if cards != oldValue { needsDisplay = true } } }
+    /// The note they link to.
+    var ref: NoteRef?
+    /// Grown from its right edge — left of the toolbox — not its left.
+    var anchorRight = false
+    /// The front card's symbol, before its words.
+    var symbol = "arrow.turn.up.left" { didSet { needsDisplay = true } }
+    /// What the last card, past those dealt out, says: nil, all of them linking here.
+    var moreTitle: String?
+    /// Dashed and faint: what it shows is the way forward, not back.
+    var faint = false { didSet { needsDisplay = true } }
+    /// The bunch's height: the toolbox's, beside it.
+    var bunchHeight: CGFloat = 34 { didSet { if bunchHeight != oldValue { needsDisplay = true } } }
     var face: Typeface = .lato { didSet { needsDisplay = true } }
     /// The widest it may be: the card it sits on, less a margin.
     var widest: CGFloat = .greatestFiniteMagnitude { didSet { if widest != oldValue { needsDisplay = true } } }
@@ -33,13 +47,24 @@ final class BacklinkStack: NSView {
     /// The bunch's size, and a dealt-out card's, as wide as there is room.
     static let bunch = NSSize(width: 210, height: 30)
     static let card = NSSize(width: 280, height: 52)
-    private var bunchWidth: CGFloat { min(Self.bunch.width, widest - 2 * Self.depth) }
-    private var cardWidth: CGFloat { min(Self.card.width, widest - 2 * Self.depth) }
+    /// As wide as its name wants, within so much.
+    private var bunchWidth: CGFloat {
+        let words = NSAttributedString(string: frontWords, attributes: [.font: face.font(size: 13.5, weight: .medium)])
+        return min(ceil(words.size().width) + 48, 300, widest - Self.peek)
+    }
+    private var cardWidth: CGFloat { min(Self.card.width, max(widest, 220)) }
+    /// What the bunch's front says: the newest by name, and how many more.
+    private var frontWords: String {
+        guard let first = cards.first else { return "" }
+        return cards.count == 1 ? first.title : "\(first.title)  +\(cards.count - 1)"
+    }
     /// How far each card dealt out is up from the one before it.
     private static let step: CGFloat = 46
     /// The most dealt out; past them, one more to show them all.
     private static let most = 7
-    private static let depth: CGFloat = 5
+    static let depth: CGFloat = 5
+    /// How far the bunch's cards behind show past the front's right edge.
+    private static let peek: CGFloat = 2 * depth
 
     /// How far they are dealt out: 0 bunched, 1 spread.
     private var dealt: CGFloat = 0
@@ -58,7 +83,8 @@ final class BacklinkStack: NSView {
 
     /// Its size, bunched or spread: spread, as tall as its cards dealt out.
     var size: NSSize {
-        guard isSpread else { return NSSize(width: bunchWidth + 2 * Self.depth, height: Self.bunch.height + 2 * Self.depth) }
+        // Bunched, as tall as the toolbox: those behind peek out at the right.
+        guard isSpread else { return NSSize(width: bunchWidth + 2 * Self.depth + Self.peek, height: bunchHeight + 2 * Self.depth) }
         return NSSize(width: cardWidth + 2 * Self.depth,
                       height: Self.card.height + CGFloat(max(dealtCards.count - 1, 0)) * Self.step + 2 * Self.depth)
     }
@@ -72,11 +98,22 @@ final class BacklinkStack: NSView {
             isSpread = true
             onSpread?()
         }
-        guard link == nil else { return }
+        run()
+    }
+
+    /// Moving toward where it is to be, a frame at a time.
+    private func run() {
+        guard link == nil, window != nil else { return }
         let link = displayLink(target: self, selector: #selector(tick(_:)))
         link.add(to: .main, forMode: .common)
         self.link = link
         lastTick = 0
+    }
+
+    /// Put back in a window midway: on its way again.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if dealt != target { run() }
     }
 
     @objc private func tick(_ link: CADisplayLink) {
@@ -84,6 +121,7 @@ final class BacklinkStack: NSView {
         let dt = lastTick == 0 ? 1.0 / 60 : min(now - lastTick, 1.0 / 20)
         lastTick = now
         dealt += (target - dealt) * CGFloat(1 - exp(-dt * (target > dealt ? 13 : 18)))
+        window?.invalidateCursorRects(for: self)
         if abs(dealt - target) < 0.003 {
             dealt = target
             link.invalidate()
@@ -104,16 +142,20 @@ final class BacklinkStack: NSView {
 
     // MARK: Where each card is
 
-    /// A card's place, between bunched — at the foot, on the right, each
-    /// further down a little up and left — and dealt out, upward, the newest
+    /// A card's place, between bunched — level with the toolbox, each
+    /// further down a little shorter and further right, peeking out past the
+    /// one before it — and dealt out, upward, the newest
     /// at the foot. Those on top leave first.
     private func place(_ i: Int, of count: Int) -> NSRect {
+        // From the toolbox's side: the left edge stays, the cards grow right and up.
         let foot = bounds.maxY - Self.depth
-        let right = bounds.maxX - Self.depth
         let below = CGFloat(min(i, 2)) * Self.depth
-        let home = NSRect(x: right - bunchWidth + below, y: foot - Self.bunch.height - below,
-                          width: bunchWidth - 2 * below, height: Self.bunch.height)
-        let out = NSRect(x: right - cardWidth, y: foot - Self.card.height - CGFloat(i) * Self.step,
+        let left = anchorRight ? bounds.maxX - Self.depth - Self.peek - bunchWidth : Self.depth
+        let shorter = below * 0.6
+        let home = NSRect(x: left + below, y: foot - bunchHeight + shorter,
+                          width: bunchWidth, height: bunchHeight - 2 * shorter)
+        let outLeft = anchorRight ? bounds.maxX - Self.depth - cardWidth : Self.depth
+        let out = NSRect(x: outLeft, y: foot - Self.card.height - CGFloat(i) * Self.step,
                          width: cardWidth, height: Self.card.height)
         let stagger: CGFloat = 0.35 * CGFloat(i) / CGFloat(max(count - 1, 1))
         let f = max(0, min(1, (dealt - stagger) / (1 - stagger)))
@@ -131,6 +173,7 @@ final class BacklinkStack: NSView {
     // MARK: Drawing
 
     override func draw(_ dirtyRect: NSRect) {
+        if faint { NSGraphicsContext.current?.cgContext.setAlpha(0.6) }
         let all = dealtCards
         guard !all.isEmpty else { return }
         let named = dealt > 0.6
@@ -140,7 +183,9 @@ final class BacklinkStack: NSView {
             let rect = place(i, of: all.count).insetBy(dx: 0.5, dy: 0.5)
             let lifted = named && i == hovered
             let drawn = lifted ? rect.offsetBy(dx: -2, dy: 0) : rect
-            let path = NSBezierPath(roundedRect: drawn, xRadius: 9, yRadius: 9)
+            // Bunched, a capsule, as the toolbox beside it is.
+            let radius = named ? 9 : drawn.height / 2
+            let path = NSBezierPath(roundedRect: drawn, xRadius: radius, yRadius: radius)
             NSGraphicsContext.saveGraphicsState()
             let shadow = NSShadow()
             shadow.shadowColor = NSColor.black.withAlphaComponent(i == 0 || named ? 0.12 : 0.06)
@@ -163,17 +208,16 @@ final class BacklinkStack: NSView {
 
     /// The bunch's front: how many link here, and the newest by name.
     private func drawBunchFront(in rect: NSRect) {
-        let icon = NSImage(systemSymbolName: "arrow.turn.up.left", accessibilityDescription: nil)?
+        let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold).applying(.init(paletteColors: [Ink.secondary])))
-        icon?.draw(in: NSRect(x: rect.minX + 10, y: rect.midY - 6, width: 12, height: 12), from: .zero, operation: .sourceOver,
+        icon?.draw(in: NSRect(x: rect.minX + 13, y: rect.midY - 6, width: 12, height: 12), from: .zero, operation: .sourceOver,
                    fraction: 1, respectFlipped: true, hints: nil)
-        let words = cards.count == 1 ? cards[0].title : "\(cards[0].title)  +\(cards.count - 1)"
-        let text = NSAttributedString(string: words, attributes: [
-            .font: face.font(size: 12.5, weight: .medium), .foregroundColor: Ink.text,
+        let text = NSAttributedString(string: frontWords, attributes: [
+            .font: face.font(size: 13.5, weight: .medium), .foregroundColor: Ink.text,
             .paragraphStyle: Self.truncating,
         ])
         let height = ceil(text.size().height)
-        text.draw(with: NSRect(x: rect.minX + 28, y: (rect.midY - height / 2).rounded(), width: rect.width - 38, height: height),
+        text.draw(with: NSRect(x: rect.minX + 31, y: (rect.midY - height / 2).rounded(), width: rect.width - 44, height: height),
                   options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
     }
 
@@ -181,7 +225,7 @@ final class BacklinkStack: NSView {
     private func drawCard(_ card: Card?, in rect: NSRect) {
         let inner = rect.insetBy(dx: 12, dy: 8)
         guard let card else {
-            let text = NSAttributedString(string: "All \(cards.count) linking here…", attributes: [
+            let text = NSAttributedString(string: moreTitle ?? "All \(cards.count) linking here…", attributes: [
                 .font: face.font(size: 12.5, weight: .medium), .foregroundColor: Ink.secondary,
             ])
             let height = ceil(text.size().height)
@@ -212,9 +256,21 @@ final class BacklinkStack: NSView {
 
     override func updateTrackingAreas() {
         trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
-                                       owner: self))
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeInKeyWindow,
+                                                               .inVisibleRect], owner: self))
         super.updateTrackingAreas()
+    }
+
+    /// A hand over the cards: the note's text under them, its I-beam, is not
+    /// what a click there does.
+    override func cursorUpdate(with event: NSEvent) {
+        if card(at: convert(event.locationInWindow, from: nil)) != nil { NSCursor.pointingHand.set() } else { super.cursorUpdate(with: event) }
+    }
+
+    override func resetCursorRects() {
+        let all = dealtCards
+        let count = dealt > 0.01 ? all.count : min(all.count, 3)
+        for i in 0..<count { addCursorRect(place(i, of: all.count), cursor: .pointingHand) }
     }
 
     /// Only the cards are its own: the room about them, the note's.
@@ -245,13 +301,12 @@ final class BacklinkStack: NSView {
             hovered = index
             needsDisplay = true
         }
-        NSCursor.pointingHand.set()
+        if index != nil { NSCursor.pointingHand.set() }
     }
 
     override func mouseExited(with event: NSEvent) {
         hovered = nil
         spread(false)
-        NSCursor.arrow.set()
     }
 
     override func mouseDown(with event: NSEvent) {}
