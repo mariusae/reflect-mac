@@ -386,10 +386,12 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             case .link(let target), .url(let target):
                 storage.addAttributes([.foregroundColor: Ink.accent, .prismLink: target], range: content)
                 if !inHeading { storage.addAttribute(.prismPill, value: true, range: span.range) }
-                // A post's or a video's: its card under the row, once it is in.
-                if !inHeading, PhoneCards.lookup(target) != nil {
+                // A post's or a video's: its card under the row, once it is in —
+                // none for a link written `"no card"`.
+                if inHeading || span.hidesCard {
+                } else if PhoneCards.lookup(target) != nil {
                     storage.addAttribute(.prismCard, value: target, range: NSRange(location: span.range.location, length: 1))
-                } else if !inHeading, !PhoneCards.isCardLink(target),
+                } else if !PhoneCards.isCardLink(target),
                           // Any other link alone in its row: a page's, a podcast's card.
                           text.substring(with: span.range) == text.substring(with: body).trimmingCharacters(in: .whitespaces),
                           PhoneCards.rich(target, text: { if case .link = span.kind { text.substring(with: content) } else { nil } }()) != nil {
@@ -2294,6 +2296,13 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             actions.append(UIAction(title: link.title.isEmpty ? "Add Title…" : "Edit Title…", image: UIImage(systemName: "character.cursor.ibeam")) { [weak self] _ in
                 self?.askTitle(for: link)
             })
+            // Its card — a post, a video, a page — hidden or shown again.
+            let hidden = rows.indices.contains(link.row) ? LinkTitle.hidesCard(rows[link.row].text, at: link.offset) ?? false : false
+            if hidden || hasCard(link) {
+                actions.append(UIAction(title: hidden ? "Show Card" : "Hide Card", image: UIImage(systemName: hidden ? "rectangle" : "rectangle.slash")) {
+                    [weak self] _ in self?.setCard(link, hidden: !hidden)
+                })
+            }
         }
         actions.append(UIAction(title: "Open", image: UIImage(systemName: "safari")) { [weak self] _ in self?.onOpenLink?(link.address) })
         actions.append(UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { _ in UIPasteboard.general.string = link.address })
@@ -2322,6 +2331,23 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         var presenter = window?.rootViewController
         while let next = presenter?.presentedViewController { presenter = next }
         presenter?.present(alert, animated: true)
+    }
+
+    /// Whether the link shows a card under its row.
+    private func hasCard(_ link: (row: Int, offset: Int, address: String, title: String, frame: CGRect)) -> Bool {
+        guard paragraphRanges.indices.contains(link.row) else { return false }
+        let at = paragraphRanges[link.row].location + link.offset
+        return at < textStorage.length && textStorage.attribute(.prismCard, at: at, effectiveRange: nil) != nil
+    }
+
+    /// A link's card hidden — `"no card"` written after its address — or shown
+    /// again, as a change to its row: undone as one.
+    private func setCard(_ link: (row: Int, offset: Int, address: String, title: String, frame: CGRect), hidden: Bool) {
+        var all = rows
+        guard all.indices.contains(link.row), let changed = LinkTitle.settingCard(all[link.row].text, at: link.offset, hidden: hidden) else { return }
+        all[link.row].text = changed.text
+        replace(all, caret: isFirstResponder ? caret : nil, undoName: hidden ? "Hide Card" : "Show Card")
+        UISelectionFeedbackGenerator().selectionChanged()
     }
 
     /// A link's title set, as a change to its row: undone as one.

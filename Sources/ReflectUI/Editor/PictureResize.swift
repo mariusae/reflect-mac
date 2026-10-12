@@ -14,9 +14,11 @@ extension OutlineTextView {
         NSRect(x: frame.maxX - gripSide - 4, y: frame.maxY - gripSide - 4, width: gripSide, height: gripSide)
     }
 
-    /// Notes the picture under the pointer, whose grip shows.
+    /// Notes the picture under the pointer, whose grip shows — or the
+    /// link's card, whose "–" does.
     package func hoverPicture(at point: NSPoint?) {
         let hit = point.flatMap { outlineLayout.pictureFrame(at: $0, origin: textContainerOrigin) }
+        hoverCard(hit.flatMap { isLinkCard($0.box) ? $0.frame : nil }, at: point)
         let next = hit.flatMap { $0.box.isResizable ? $0.frame : nil }
         guard next != hoveredPictureFrame else { return }
         if let old = hoveredPictureFrame { setNeedsDisplay(old.insetBy(dx: -2, dy: -2)) }

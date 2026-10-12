@@ -30,6 +30,9 @@ public struct InlineSpan: Equatable, Sendable {
     public var range: NSRange
     /// The text it shows. Empty, at the span's start, for a comment.
     public var content: NSRange
+    /// A web link written `[text](address "no card")`: shown without the
+    /// card — a post, a video, a page — that would otherwise follow it.
+    public var hidesCard = false
 
     public var isImage: Bool { if case .image = kind { true } else { false } }
 
@@ -80,7 +83,8 @@ public enum InlineMarkup {
     private static let comment = try! NSRegularExpression(pattern: #"<!--.*?-->"#)
     private static let image = try! NSRegularExpression(pattern: #"!\[([^\[\]\n]*)\]\(([^)\s]*)\)(?:<!--\s*(\{[^{}\n]*\})\s*-->)?"#)
     private static let wiki = try! NSRegularExpression(pattern: #"\[\[([^\[\]|\n]+)(?:\|([^\[\]\n]*))?\]\]"#)
-    private static let link = try! NSRegularExpression(pattern: #"\[([^\[\]\n]+)\]\(([^)\s]*)\)"#)
+    /// `[text](address)`, or with a title after the address: `[text](address "title")`.
+    private static let link = try! NSRegularExpression(pattern: #"\[([^\[\]\n]+)\]\(([^)\s]*)(?:\s+"([^"\n]*)")?\)"#)
     private static let autolink = try! NSRegularExpression(pattern: #"<(https?://[^\s<>]+)>"#)
     private static let url = try! NSRegularExpression(pattern: #"\bhttps?://[^\s<>\x{2028}]+[^\s<>.,;:!?)\]'"\x{2028}]"#)
     private static let tag = try! NSRegularExpression(pattern: #"(?<=^|\s)#\p{L}[\p{L}\p{N}/_-]*"#)
@@ -136,7 +140,11 @@ public enum InlineMarkup {
             let content = label.location != NSNotFound && label.length > 0 ? label : match.range(at: 1)
             return InlineSpan(kind: .wikiLink(group(match, 1)), range: match.range, content: content)
         }
-        add(link) { InlineSpan(kind: .link(group($0, 2)), range: $0.range, content: $0.range(at: 1)) }
+        add(link) { match in
+            var span = InlineSpan(kind: .link(group(match, 2)), range: match.range, content: match.range(at: 1))
+            span.hidesCard = match.range(at: 3).location != NSNotFound && group(match, 3) == LinkTitle.noCard
+            return span
+        }
         add(autolink) { InlineSpan(kind: .link(group($0, 1)), range: $0.range, content: $0.range(at: 1)) }
         add(url) { InlineSpan(kind: .url(text.substring(with: $0.range)), range: $0.range, content: $0.range) }
         add(tag) { InlineSpan(kind: .tag, range: $0.range, content: $0.range) }

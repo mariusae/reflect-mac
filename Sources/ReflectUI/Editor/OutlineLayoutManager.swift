@@ -189,16 +189,20 @@ package final class OutlineLayoutManager: NSLayoutManager {
                     if view.hoveredPictureFrame == rect { Self.drawPictureGrip(in: rect) }
                     continue
                 }
+                let hovered = outlineView?.hoveredCardFrame == rect
                 if let tweet = store.tweet(box.source) {
                     TweetCard.draw(tweet, in: rect, images: store)
+                    if hovered { Self.drawCardHide(in: rect) }
                     continue
                 }
                 if let video = store.video(box.source) {
                     VideoCard.draw(video, in: rect, images: store)
+                    if hovered { Self.drawCardHide(in: rect) }
                     continue
                 }
                 if box.isCard, let face = store.richFace(box.source) {
                     RichCard.draw(face, in: rect, images: store)
+                    if hovered { Self.drawCardHide(in: rect) }
                     continue
                 }
                 NSGraphicsContext.saveGraphicsState()

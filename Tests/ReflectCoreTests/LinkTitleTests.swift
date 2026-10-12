@@ -31,6 +31,32 @@ import Testing
         #expect(LinkTitle.link(span, in: text)?.address == "https://en.wikipedia.org/wiki/Swift_%28language%29")
     }
 
+    @Test func hidesAndShowsACard() {
+        let titled = "See [A post](https://x.com/a/status/1) now"
+        let hidden = LinkTitle.settingCard(titled, at: 6, hidden: true)!
+        #expect(hidden.text == #"See [A post](https://x.com/a/status/1 "no card") now"#)
+        #expect(LinkTitle.hidesCard(hidden.text, at: 6) == true)
+        // Still the same link, its words and address.
+        let ns = hidden.text as NSString
+        let span = InlineMarkup.spans(in: ns, range: NSRange(location: 0, length: ns.length)).first { if case .link = $0.kind { true } else { false } }!
+        #expect(ns.substring(with: span.content) == "A post")
+        #expect(span.kind == .link("https://x.com/a/status/1"))
+        #expect(span.hidesCard)
+        #expect(LinkTitle.settingCard(hidden.text, at: 6, hidden: false)?.text == titled)
+    }
+
+    @Test func aBareAddressHiddenKeepsItsAddressAsItsWords() {
+        let hidden = LinkTitle.settingCard("https://x.com/a/status/1", at: 3, hidden: true)!
+        #expect(hidden.text == #"[https://x.com/a/status/1](https://x.com/a/status/1 "no card")"#)
+        #expect(LinkTitle.settingCard(hidden.text, at: 3, hidden: false)?.text == "https://x.com/a/status/1")
+    }
+
+    @Test func retitlingKeepsTheCardHidden() {
+        let hidden = #"[Old](https://e.com "no card")"#
+        #expect(LinkTitle.retitling(hidden, at: 2, to: "New")?.text == #"[New](https://e.com "no card")"#)
+        #expect(LinkTitle.hidesCard(#"[Old](https://e.com "other")"#, at: 2) == false)
+    }
+
     @Test func notOnALink() {
         #expect(LinkTitle.retitling("No link [[Note]] here", at: 10, to: "x") == nil)
     }

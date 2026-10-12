@@ -465,8 +465,10 @@ package enum InlineMarkdown {
                         LinkPill.mark(storage, span.range, kind: .web)
                     }
                 }
-                // A post's or a video's link shows its card below it, as a bare one does.
-                if Tweet.key(from: target) != nil || Video.id(from: target) != nil, let size = images?.naturalSize(target) {
+                // A post's or a video's link shows its card below it, as a bare one does —
+                // unless written `"no card"`.
+                if span.hidesCard {
+                } else if Tweet.key(from: target) != nil || Video.id(from: target) != nil, let size = images?.naturalSize(target) {
                     storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: size),
                                          range: NSRange(location: span.range.location, length: 1))
                 } else {

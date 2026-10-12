@@ -710,6 +710,9 @@ package final class OutlineTextView: NSTextView {
     package private(set) var hoveredRow: Int?
     /// The picture under the pointer, whose grip shows.
     package var hoveredPictureFrame: NSRect?
+    /// The link's card under the pointer — a post, a video, a page — whose
+    /// "–" shows, to hide it.
+    package var hoveredCardFrame: NSRect?
     /// The time block under the pointer — its time, or its line's end —
     /// whose end shows a grip.
     package var hoveredTimeBlock: Int? {
@@ -861,6 +864,11 @@ package final class OutlineTextView: NSTextView {
 
     package override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        // A card's "–": the card hidden.
+        if isEditable, let frame = hoveredCardFrame, Self.cardHide(in: frame).insetBy(dx: -2, dy: -2).contains(point) {
+            hideCard(at: frame)
+            return
+        }
         // A folded row's pill: opened.
         if let index = outlineLayout.foldPillHit(at: point, origin: textContainerOrigin) {
             window?.makeFirstResponder(self)
@@ -1042,6 +1050,13 @@ package final class OutlineTextView: NSTextView {
             menu.addItem(ClosureMenuItem(title: link.title.isEmpty ? "Add Title…" : "Edit Title…") { [weak self] in
                 self?.askTitle(for: link)
             })
+            // Its card — a post, a video, a page — hidden, or shown again.
+            let hidden = rows.indices.contains(link.row) ? LinkTitle.hidesCard(rows[link.row].text, at: link.offset) ?? false : false
+            if hidden || hasCard(row: link.row, offset: link.offset) {
+                menu.addItem(ClosureMenuItem(title: hidden ? "Show Card" : "Hide Card") { [weak self] in
+                    self?.setCard(row: link.row, offset: link.offset, hidden: !hidden)
+                })
+            }
             menu.addItem(.separator())
         }
         menu.addItem(ClosureMenuItem(title: "Open Link") { [weak self] in
@@ -1120,6 +1135,15 @@ package final class OutlineTextView: NSTextView {
             menu.addItem(.separator())
             menu.addItem(item("Copy Image") { [weak self] in self?.copyPicture(source, file: file) })
             menu.addItem(item("Copy Image Address") { Self.copy(string: source) })
+        }
+        // A link's card: hidden, the link alone left.
+        if isEditable, isLinkCard(picture) {
+            menu.addItem(.separator())
+            menu.addItem(item("Hide Card") { [weak self] in
+                guard let self else { return }
+                let row = rowIndex(at: location)
+                setCard(row: row, offset: location - paragraphRanges[row].location, hidden: true)
+            })
         }
         // A picture, not a post's or a video's card: the note's cover.
         if isEditable, images?.isCard(source) != true, let onMakeCover {
