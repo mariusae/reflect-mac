@@ -25,6 +25,9 @@ final class NoteBlock: UIView {
     private let metaLabel = UILabel()
     /// How far along its to-dos are, in the margin before its name.
     private let ringView = UIImageView()
+    /// In the inbox, its name not in a header — a note alone — the tray at
+    /// the right of its first line instead.
+    private let trayView = UIImageView()
     /// How the card shows the note: whole, short, or its name alone.
     private(set) var mode: CardMode = .full
     private var summaryView: CardSummaryView?
@@ -77,6 +80,10 @@ final class NoteBlock: UIView {
         addSubview(metaLabel)
         ringView.isHidden = true
         addSubview(ringView)
+        trayView.tintColor = Ink.secondary
+        trayView.contentMode = .center
+        trayView.isHidden = true
+        addSubview(trayView)
         // Listed, a note shows as it was last asked to; alone, whole.
         if showsHeader {
             mode = CardModes.mode(ref.path)
@@ -325,6 +332,31 @@ final class NoteBlock: UIView {
         addSubview(button)
         accessory = button
         // The margin the Done's now: the ring after the name.
+        styleHeader()
+        setNeedsLayout()
+    }
+
+    /// Whether a tray follows the name: in the inbox, shown elsewhere than it.
+    private var inboxMark = false
+
+    /// In the inbox, or not: its Done hanging in the margin while it is —
+    /// `marked`, a tray after its name too — gone, faded, once it isn't.
+    func setInbox(_ inInbox: Bool, marked: Bool, done: @escaping () -> Void) {
+        var changed = false
+        if inInbox, accessory == nil {
+            setAccessory(symbol: "checkmark.circle", label: "Done: Out of the Inbox", action: done)
+            changed = true
+        } else if !inInbox, let accessory {
+            self.accessory = nil
+            UIView.animate(withDuration: 0.25, animations: { accessory.alpha = 0 }) { _ in accessory.removeFromSuperview() }
+            changed = true
+        }
+        let mark = inInbox && marked
+        if mark != inboxMark {
+            inboxMark = mark
+            changed = true
+        }
+        guard changed else { return }
         styleHeader()
         setNeedsLayout()
     }
@@ -594,6 +626,16 @@ final class NoteBlock: UIView {
                 title.append(NSAttributedString(attachment: ring))
             }
         }
+        // In the inbox, shown elsewhere: a tray after the name, as the Mac's badge.
+        if inboxMark, let tray = UIImage(systemName: "tray", withConfiguration: UIImage.SymbolConfiguration(pointSize: round(storedMetrics.size * 0.7),
+                                                                                                          weight: .medium))?
+            .withTintColor(Ink.secondary, renderingMode: .alwaysOriginal) {
+            let mark = NSTextAttachment(image: tray)
+            let cap = Typeface.current.heading(storedMetrics.size, weight: .bold).capHeight
+            mark.bounds = CGRect(x: 0, y: ((cap - tray.size.height) / 2).rounded(), width: tray.size.width, height: tray.size.height)
+            title.append(NSAttributedString(string: "  "))
+            title.append(NSAttributedString(attachment: mark))
+        }
         header.setAttributedTitle(title, for: .normal)
         // The note's name, whole: in a card, the only place it shows.
         header.titleLabel?.numberOfLines = 0
@@ -735,6 +777,12 @@ final class NoteBlock: UIView {
         accessory?.frame = CGRect(x: Self.side - 28, y: firstLine - 16, width: 32, height: 32)
         // On the bullets' line down the margin, and the name's middle.
         ringView.center = CGPoint(x: Self.side - storedMetrics.indent / 2, y: firstLine)
+        trayView.isHidden = !(inboxMark && header.isHidden)
+        if !trayView.isHidden {
+            trayView.image = UIImage(systemName: "tray", withConfiguration: UIImage.SymbolConfiguration(pointSize: round(storedMetrics.size * 0.7),
+                                                                                                         weight: .medium))
+            trayView.frame = CGRect(x: bounds.width - Self.side - 24, y: firstLine - 12, width: 24, height: 24)
+        }
         ringView.isHidden = ringView.image == nil || header.isHidden || ringView.isHidden
         // The text in line with the name; the markers hang in the margin.
         let width = bounds.width - 2 * Self.side + indent

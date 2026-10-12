@@ -783,18 +783,6 @@ final class Column: NSView, OutlineTextViewNavigator {
         head.count = ordered.count
         blocks = [head] + ordered.map { ref in reuse(ref, from: &existing) }
         existing.values.forEach(letGo)
-        for (ref, handle) in handles where !wanted.contains(ref) {
-            handle.removeFromSuperview()
-            handles[ref] = nil
-        }
-        for ref in ordered where handles[ref] == nil {
-            let handle = CloseButton(symbol: "checkmark.circle", pointSize: round(metrics.fontSize * 1.05), toolTip: "Done: Remove from Inbox")
-            handle.target = self
-            handle.action = #selector(removeFromInbox(_:))
-            handle.identifier = NSUserInterfaceItemIdentifier(ref.path)
-            document.addSubview(handle)
-            handles[ref] = handle
-        }
         relayout()
         if !wasInbox {
             scroll(toY: 0, animated: false)
@@ -807,14 +795,26 @@ final class Column: NSView, OutlineTextViewNavigator {
         onRemoveFromInbox?(NoteRef(path: path))
     }
 
-    /// Each handle at the right of its note's name; a rule over each note
-    /// but the first.
+    /// Each note in the inbox — in the inbox, or anywhere else it shows —
+    /// its Done hanging before its name.
     private func placeHandles() {
         placeBadges()
-        guard kind == .inbox else { return }
         let notes = views
-        // The cards part the notes: no rules between.
-        while let rule = rules.popLast() { rule.removeFromSuperview() }
+        let due = Set(notes.map(\.ref).filter { kind == .inbox || Self.flags($0.path).contains(.inbox) })
+        for (ref, handle) in handles where !due.contains(ref) {
+            handle.removeFromSuperview()
+            handles[ref] = nil
+        }
+        for ref in due where handles[ref] == nil {
+            let handle = CloseButton(symbol: "checkmark.circle", pointSize: round(metrics.fontSize * 1.05), toolTip: "Done: Remove from Inbox")
+            handle.target = self
+            handle.action = #selector(removeFromInbox(_:))
+            handle.identifier = NSUserInterfaceItemIdentifier(ref.path)
+            document.addSubview(handle)
+            handles[ref] = handle
+        }
+        // The cards part the inbox's notes: no rules between.
+        if kind == .inbox { while let rule = rules.popLast() { rule.removeFromSuperview() } }
         // The check hangs in the margin before the name, where a task's box is.
         for view in notes {
             guard let handle = handles[view.ref] else { continue }
@@ -934,8 +934,9 @@ final class Column: NSView, OutlineTextViewNavigator {
         // Laid out at its frame first: the editor placed under its name.
         view.layoutSubtreeIfNeeded()
         if let middle = view.nameMiddle { return view.frame.minY + middle }
+        // No name over it: its first line is its name — under its cover, if it has one.
         let editor = view.editor
-        if editor.frame.minY < metrics.fontSize * 2, let layout = editor.layoutManager, layout.numberOfGlyphs > 0 {
+        if let layout = editor.layoutManager, layout.numberOfGlyphs > 0 {
             let line = layout.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil)
             return view.frame.minY + editor.frame.minY + editor.textContainerOrigin.y + line.midY
         }

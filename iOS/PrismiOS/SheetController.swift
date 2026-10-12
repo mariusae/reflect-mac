@@ -548,6 +548,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             }
             content.addSubview(block)
         }
+        updateInbox()
         relayout()
     }
 
@@ -571,9 +572,16 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         // The notes alone, no heading over them; when there are none, a word saying so.
         let head = paths.isEmpty ? [HeadBlock(title: "Inbox", kicker: "Nothing to deal with", metrics: metrics)] : []
         setBlocks(paths.map(NoteRef.init(path:)), showsHeaders: true, before: head)
-        for block in noteBlocks where block.accessory == nil {
+    }
+
+    /// Every note here that is in the inbox — in any view — with its Done
+    /// before its name; outside the inbox itself, its tray after it.
+    private func updateInbox() {
+        guard let index = store.index else { return }
+        let inInboxView = if case .inbox = kind { true } else { false }
+        for block in noteBlocks {
             let path = block.ref.path
-            block.setAccessory(symbol: "checkmark.circle", label: "Done") { [weak self, weak block] in
+            block.setInbox(index.entry(path)?.isInInbox == true, marked: !inInboxView) { [weak self, weak block] in
                 guard let self, let block else { return }
                 checkOff(block, path: path)
             }
@@ -586,6 +594,11 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         block.save()
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         block.checkAccessory()
+        // Elsewhere than the inbox, the note stays: its check and tray go.
+        guard case .inbox = kind else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in self?.onFlag?(path, "inbox", nil) }
+            return
+        }
         UIView.animate(withDuration: 0.32, delay: 0.3, options: [.curveEaseIn]) {
             block.transform = CGAffineTransform(translationX: -block.bounds.width * 1.1, y: 0).rotated(by: -0.04)
             block.alpha = 0
@@ -752,6 +765,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             return
         }
         for block in blocks { block.notesChanged(paths) }
+        defer { updateInbox() }
         switch kind {
         case .timeline:
             guard let graph = store.graph, let index = store.index else { return }
