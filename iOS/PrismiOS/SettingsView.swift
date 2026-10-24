@@ -20,7 +20,7 @@ struct SettingsView: View {
                         .listRowBackground(Color(Ink.card))
                 }
                 Section("Font") {
-                    ForEach(Typeface.allCases) { option in
+                    ForEach(Typeface.available) { option in
                         Button {
                             face = option
                         } label: {

@@ -1,3 +1,4 @@
+import CoreText
 import UIKit
 import UIKit.UIGestureRecognizerSubclass
 import UniformTypeIdentifiers
@@ -84,7 +85,7 @@ struct PhoneMetrics: Equatable {
                 [.type: kLowerCaseType, .selector: kLowerCaseSmallCapsSelector],
                 [.type: kUpperCaseType, .selector: kUpperCaseSmallCapsSelector],
             ]
-            return UIFont(descriptor: font.fontDescriptor.addingAttributes([.featureSettings: features]), size: font.pointSize)
+            return Typeface.withFeatures(font, adding: features)
         case .smallCaps, .caps:
             // Capitals, set small: as tall as the text's small letters, near enough.
             return face.heading(round(text * CGFloat(HeadingCase.capitalsScale(level: level))), weight: .bold)
@@ -507,6 +508,15 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
     }
 
     private static func adding(_ trait: UIFontDescriptor.SymbolicTraits, to font: UIFont) -> UIFont {
+        // From the family's own faces, by name: bold at the weight the face
+        // sets bold in, italic at the weight it is in.
+        let weight = ((CTFontCopyTraits(font as CTFont) as NSDictionary)[kCTFontWeightTrait] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 0
+        let italic = trait == .traitItalic || font.fontDescriptor.symbolicTraits.contains(.traitItalic)
+        let wanted = trait == .traitBold ? max(weight, Typeface.current.boldWeight.rawValue) : weight
+        if font.familyName != UIFont.systemFont(ofSize: 12).familyName,
+           let restyled = Typeface.font(family: font.familyName, weight: UIFont.Weight(wanted), italic: italic, size: font.pointSize) {
+            return restyled
+        }
         if trait == .traitBold, let family = UIFont.fontNames(forFamilyName: font.familyName).first(where: { $0.lowercased().contains("bold") }),
            !font.fontName.lowercased().contains("bold"), !font.fontDescriptor.symbolicTraits.contains(.traitItalic) {
             return UIFont(name: family, size: font.pointSize) ?? font

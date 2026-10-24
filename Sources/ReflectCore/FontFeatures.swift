@@ -1,11 +1,13 @@
 import CoreText
 import Foundation
 
-/// The OpenType features code is set with, by family: Paper Mono with its
-/// coding ligatures (`ss01`) and slashed zero.
-public enum CodeFeatures {
+/// The OpenType features a family is set with, wherever it is used: Paper
+/// Mono with its coding ligatures (`ss01`) and slashed zero; Ideal Sans with
+/// lining figures (`lnum`), level with its capitals, not its old style.
+public enum FontFeatures {
     public static let byFamily: [String: [String]] = [
         "Paper Mono": ["ss01", "zero"],
+        "Ideal Sans SSm": ["lnum"],
     ]
 
     /// A font descriptor's feature settings turning a family's features on.

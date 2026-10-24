@@ -190,16 +190,17 @@ package struct Typography: Equatable {
         guard let family else { return system }
         let faces = Face.all(in: family)
         if let face, faces.contains(where: { $0.name == face }), let font = NSFont(name: face, size: size) {
-            return monospaced ? withCodeFeatures(font) : font
+            return withFeatures(font)
         }
         guard let chosen = weight >= .semibold ? Face.bold(in: faces) : Face.regular(in: faces),
               let font = NSFont(name: chosen.name, size: size) else { return system }
-        return monospaced ? withCodeFeatures(font) : font
+        return withFeatures(font)
     }
 
-    /// A code face with the stylistic sets it is set in turned on.
-    private static func withCodeFeatures(_ font: NSFont) -> NSFont {
-        let features = CodeFeatures.settings(family: font.familyName ?? "")
+    /// A font with the features its family is set with turned on — and any
+    /// others asked for, small capitals — beside those it has.
+    package static func withFeatures(_ font: NSFont, adding more: [[NSFontDescriptor.FeatureKey: Int]] = []) -> NSFont {
+        let features: [Any] = FontFeatures.settings(family: font.familyName ?? "") + more
         guard !features.isEmpty else { return font }
         let descriptor = font.fontDescriptor.addingAttributes([.featureSettings: features])
         return NSFont(descriptor: descriptor, size: font.pointSize) ?? font

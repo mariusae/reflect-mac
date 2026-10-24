@@ -87,7 +87,15 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         images = ImageStore(root: graph.root)
         Place.coverImage = { [images] in images.image($0) }
         let defaults = UserDefaults.standard
-        face = defaults.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)) ?? .lato
+        // Ideal Sans with Operator Mono, where they are installed: taken up
+        // once, whatever was chosen before; else Lato.
+        let ideal = Typeface.available.contains(.ideal)
+        if ideal, !defaults.bool(forKey: "Typeface.idealAdopted"), ProcessInfo.processInfo.environment["PRISM_SNAP"] == nil {
+            defaults.set(true, forKey: "Typeface.idealAdopted")
+            defaults.set(Typeface.ideal.rawValue, forKey: "Typeface")
+        }
+        face = defaults.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)).flatMap { Typeface.available.contains($0) ? $0 : nil }
+            ?? (ideal ? .ideal : .lato)
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],

@@ -41,7 +41,7 @@ package struct OutlineMetrics {
                 [.typeIdentifier: kLowerCaseType, .selectorIdentifier: kLowerCaseSmallCapsSelector],
                 [.typeIdentifier: kUpperCaseType, .selectorIdentifier: kUpperCaseSmallCapsSelector],
             ]
-            return NSFont(descriptor: font.fontDescriptor.addingAttributes([.featureSettings: features]), size: font.pointSize) ?? font
+            return Typography.withFeatures(font, adding: features)
         case .smallCaps, .caps:
             // Capitals, set small: as tall as the text's small letters, near enough.
             return typography.headingFont(size: round(fontSize * HeadingCase.capitalsScale(level: level)), weight: .bold)
@@ -732,7 +732,7 @@ extension NSFont {
                     // The same weight, slanted.
                     candidates = candidates.sorted { abs($0.heaviness - current.heaviness) < abs($1.heaviness - current.heaviness) }
                 }
-                if let face = candidates.first, let font = NSFont(name: face.name, size: pointSize) { return font }
+                if let face = candidates.first, let font = NSFont(name: face.name, size: pointSize) { return Typography.withFeatures(font) }
             }
         }
         let descriptor = fontDescriptor.withSymbolicTraits(fontDescriptor.symbolicTraits.union(trait))

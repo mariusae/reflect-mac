@@ -5,7 +5,16 @@ import ReflectCore
 /// What notes are set in, as on the Mac: a face for the text, one for
 /// headings — most often the same — and a fixed-width one for code.
 enum Typeface: String, CaseIterable, Identifiable {
-    case system, lato, alegreya, mona, plex, source, literata, fraunces
+    case system, ideal, lato, alegreya, mona, plex, source, literata, fraunces
+
+    /// The faces this build has: Ideal Sans only when its fonts were there
+    /// to bundle — Hoefler's, copied from the owner's own, never fetched.
+    static let available: [Typeface] = {
+        let bundled = Bundle.main.resourceURL.map {
+            FileManager.default.fileExists(atPath: $0.appendingPathComponent("Fonts/IdealSansSSm-Book-Pro.otf").path)
+        } ?? false
+        return allCases.filter { $0 != .ideal || bundled }
+    }()
 
     var id: String { rawValue }
 
@@ -18,6 +27,7 @@ enum Typeface: String, CaseIterable, Identifiable {
         case .plex: "IBM Plex"
         case .alegreya: "Alegreya Sans"
         case .lato: "Lato"
+        case .ideal: "Ideal Sans"
         case .system: "SF Pro"
         }
     }
@@ -28,6 +38,7 @@ enum Typeface: String, CaseIterable, Identifiable {
         switch self {
         case .mona, .system, .plex: 1
         case .lato: 1
+        case .ideal: 1.02
         case .literata, .fraunces: 0.97
         case .source: 1.05
         case .alegreya: 1.12
@@ -40,6 +51,7 @@ enum Typeface: String, CaseIterable, Identifiable {
         case .mona: 1.42
         case .plex: 1.4
         case .alegreya, .lato: 1.4
+        case .ideal: 1.45
         case .system: 1.33
         case .literata, .fraunces, .source: 1.5
         }
@@ -53,6 +65,7 @@ enum Typeface: String, CaseIterable, Identifiable {
         case .plex: "IBM Plex Sans"
         case .alegreya: "Alegreya Sans"
         case .lato: "Lato"
+        case .ideal: "Ideal Sans SSm"
         case .system: nil
         }
     }
@@ -70,9 +83,39 @@ enum Typeface: String, CaseIterable, Identifiable {
         case .mona: "Monaspace Xenon"
         case .literata, .fraunces, .alegreya: "JetBrains Mono"
         case .lato: "Paper Mono"
+        case .ideal: "Operator Mono SSm"
         case .source: "Source Code Pro"
         case .plex: "IBM Plex Mono"
         case .system: nil
+        }
+    }
+
+    /// The weight bold is set in: Ideal Sans's Semibold, as on the Mac.
+    var boldWeight: UIFont.Weight { lighter(.bold) }
+
+    /// A font of a family at a weight, italic or not, picked from the
+    /// family's own faces by name — not by traits, which can land on any.
+    static func font(family: String, weight: UIFont.Weight, italic: Bool, size: CGFloat) -> UIFont? {
+        face(in: family, weight: weight, italic: italic).flatMap { UIFont(name: $0, size: size) }.map { withFeatures($0) }
+    }
+
+    /// A font with the features its family is set with turned on — Ideal
+    /// Sans's lining figures — and any others asked for, small capitals.
+    static func withFeatures(_ font: UIFont, adding more: [[UIFontDescriptor.FeatureKey: Int]] = []) -> UIFont {
+        let features: [Any] = FontFeatures.settings(family: font.familyName) + more
+        guard !features.isEmpty else { return font }
+        return UIFont(descriptor: font.fontDescriptor.addingAttributes([.featureSettings: features]), size: font.pointSize)
+    }
+
+    /// A weight as the face is set, as on the Mac: Ideal Sans's Book reads
+    /// heavy, so its text is its Light, and what would be bold its Semibold.
+    private func lighter(_ weight: UIFont.Weight) -> UIFont.Weight {
+        guard self == .ideal else { return weight }
+        switch weight {
+        case .regular: return .light
+        case .bold: return .semibold
+        case .heavy, .black: return .bold
+        default: return weight
         }
     }
 
@@ -80,11 +123,11 @@ enum Typeface: String, CaseIterable, Identifiable {
     func size(_ base: CGFloat) -> CGFloat { round(base * scale * 2) / 2 }
 
     func body(_ size: CGFloat, weight: UIFont.Weight = .regular, italic: Bool = false) -> UIFont {
-        font(family, size: size, weight: weight, italic: italic)
+        font(family, size: size, weight: lighter(weight), italic: italic)
     }
 
     func heading(_ size: CGFloat, weight: UIFont.Weight = .bold) -> UIFont {
-        var font = font(headingFamily, size: size, weight: weight)
+        var font = font(headingFamily, size: size, weight: lighter(weight))
         // Fraunces softened, its corners rounded.
         if self == .fraunces {
             let soft = "SOFT".utf8.reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
@@ -97,12 +140,14 @@ enum Typeface: String, CaseIterable, Identifiable {
     }
 
     func mono(_ size: CGFloat) -> UIFont {
-        guard let monoFamily, let font = UIFont(descriptor: UIFontDescriptor(fontAttributes: [.family: monoFamily]), size: size) as UIFont?,
-              font.familyName == monoFamily else {
+        // Its regular face, by name: asked for by family alone, the system
+        // may give any — Operator Mono's Bold.
+        guard let monoFamily, let name = Self.face(in: monoFamily, weight: .regular, italic: false),
+              let font = UIFont(name: name, size: size) else {
             return .monospacedSystemFont(ofSize: size, weight: .regular)
         }
         // With the stylistic sets it is set in turned on.
-        let features = CodeFeatures.settings(family: monoFamily)
+        let features = FontFeatures.settings(family: monoFamily)
         guard !features.isEmpty else { return font }
         return UIFont(descriptor: font.fontDescriptor.addingAttributes([.featureSettings: features]), size: size)
     }
@@ -118,12 +163,27 @@ enum Typeface: String, CaseIterable, Identifiable {
         // Black — of a family of its own, and the text fell to the system's.
         guard let name = Self.face(in: family, weight: weight, italic: italic),
               let font = UIFont(name: name, size: size) else { return .systemFont(ofSize: size, weight: weight) }
-        return font
+        return Self.withFeatures(font)
     }
 
     /// The faces of each family — name, weight, italic — as registered.
     nonisolated(unsafe) private static var faces: [String: [(name: String, weight: CGFloat, italic: Bool)]] = [:]
     private static let facesLock = NSLock()
+
+    /// A face's weight by the style its name gives — `IdealSansSSm-Semibold-Pro`
+    /// — on the system's scale: the weights some families report are their
+    /// own, Hoefler's Bold claiming a regular's 0 and its Book less.
+    private static func styleWeight(_ name: String) -> CGFloat? {
+        let parts = name.lowercased().split(separator: "-").dropFirst()
+        let style = parts.first.map { $0.replacingOccurrences(of: "italic", with: "").replacingOccurrences(of: "oblique", with: "") } ?? ""
+        let scale: [String: UIFont.Weight] = [
+            "thin": .thin, "hairline": .ultraLight, "extralight": .ultraLight, "xlight": .ultraLight, "ultralight": .ultraLight,
+            "light": .light, "book": .regular, "regular": .regular, "": .regular, "roman": .regular,
+            "medium": .medium, "semibold": .semibold, "demibold": .semibold, "bold": .bold,
+            "extrabold": .heavy, "heavy": .heavy, "black": .black,
+        ]
+        return scale[style].map { $0.rawValue }
+    }
 
     /// The face of `family` nearest `weight`, italic or not as asked when
     /// it can be.
@@ -134,7 +194,7 @@ enum Typeface: String, CaseIterable, Identifiable {
             let found = UIFont.fontNames(forFamilyName: family).compactMap { name -> (String, CGFloat, Bool)? in
                 guard let font = UIFont(name: name, size: 12) else { return nil }
                 let traits = CTFontCopyTraits(font as CTFont) as NSDictionary
-                let weight = (traits[kCTFontWeightTrait] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 0
+                let weight = styleWeight(name) ?? (traits[kCTFontWeightTrait] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 0
                 return (name, weight, font.fontDescriptor.symbolicTraits.contains(.traitItalic))
             }
             // Not yet registered: asked again next time.
@@ -146,9 +206,18 @@ enum Typeface: String, CaseIterable, Identifiable {
         return (styled.isEmpty ? all : styled).min { abs($0.weight - weight.rawValue) < abs($1.weight - weight.rawValue) }?.name
     }
 
-    /// The face chosen in Settings; else Lato, as on the Mac.
+    /// The face chosen in Settings; else Ideal Sans, as on the Mac — Lato,
+    /// where it wasn't bundled. Ideal Sans taken up once, whatever was chosen.
     static var current: Typeface {
-        get { UserDefaults.standard.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)) ?? .lato }
+        get {
+            let defaults = UserDefaults.standard
+            let fallback: Typeface = available.contains(.ideal) ? .ideal : .lato
+            if !defaults.bool(forKey: "Typeface.idealAdopted"), fallback == .ideal {
+                defaults.set(true, forKey: "Typeface.idealAdopted")
+                defaults.set(Typeface.ideal.rawValue, forKey: "Typeface")
+            }
+            return defaults.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)).flatMap { available.contains($0) ? $0 : nil } ?? fallback
+        }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "Typeface") }
     }
 
