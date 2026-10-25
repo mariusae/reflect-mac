@@ -668,7 +668,7 @@ final class NoteBlock: UIView {
     /// The text's margin; flat, a little less, as a page's.
     static var side: CGFloat { Card.flat ? 30 : 38 }
     /// Narrower than this, nothing is laid out: text at no width never ends.
-    static let minimumWidth: CGFloat = 300
+    static let minimumWidth: CGFloat = 180
 
     private func headerHeight(width: CGFloat) -> CGFloat {
         header.isHidden ? 0 : ceil(headerSize(width: width).height) + Card.gap

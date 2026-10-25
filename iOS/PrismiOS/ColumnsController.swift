@@ -28,21 +28,9 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     /// The tab shown before search: where what is found there opens.
     private var lastColumn = 0
 
-    /// The tabs, in order, with what each shows and its icon.
-    static let tabs: [(kind: SheetKind, title: String, symbol: String)] = [
-        (.timeline, "Daily", "house"),
-        (.inbox, "Inbox", "tray"),
-    ]
-    /// The inbox's tab, held, shows the pinned notes instead — and, held
-    /// again, the inbox. Kept from one launch to the next.
-    private static let inboxColumn = 1
-    private static let pinnedTab: (kind: SheetKind, title: String, symbol: String) = (.pinned, "Pinned", "pin")
-    private var showsPinned = UserDefaults.standard.bool(forKey: "InboxShowsPinned")
-
-    /// The tab at a column, as it is now.
-    private func tab(_ column: Int) -> (kind: SheetKind, title: String, symbol: String) {
-        column == Self.inboxColumn && showsPinned ? Self.pinnedTab : Self.tabs[column]
-    }
+    /// Columns, as Safari has tabs: as many as are opened, each its own
+    /// stack of sheets — Daily at its foot, or the inbox, or the pinned. The
+    /// bar swiped across goes from one to the next; past the last, a new one.
 
     init(store: PrismStore) {
         self.store = store
@@ -66,18 +54,8 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             guard let index = store?.index else { return [] }
             return LinkSuggestions.candidates(query, index: index)
         }
-        columns = Self.tabs.indices.map(tab).map { tab in
-            let navigation = UINavigationController(rootViewController: makeRoot(tab.kind))
-            navigation.delegate = self
-            styleBar(navigation)
-            // No bar at the top: the name, back, and the menus are the bottom's.
-            navigation.setNavigationBarHidden(true, animated: false)
-            navigation.interactivePopGestureRecognizer?.delegate = self
-            return navigation
-        }
-        columnTabs = zip(Self.tabs.indices.map(tab), columns).map { tab, navigation in
-            UITab(title: tab.title, image: UIImage(systemName: tab.symbol), identifier: tab.title) { _ in navigation }
-        }
+        columns = [makeColumn(.timeline)]
+        columnTabs = columns.map(makeTab)
         // Search: the finder, the field for it in the bar.
         styleBar(searchNavigation)
         finder.onChoose = { [weak self] place in self?.open(place) }
@@ -115,6 +93,78 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         refreshQuickActions()
     }
 
+    /// A column: its own stack, its root a view of what kind.
+    private func makeColumn(_ kind: SheetKind) -> UINavigationController {
+        let navigation = UINavigationController(rootViewController: makeRoot(kind))
+        navigation.delegate = self
+        styleBar(navigation)
+        // No bar at the top: the name, back, and the menus are the bottom's.
+        navigation.setNavigationBarHidden(true, animated: false)
+        navigation.interactivePopGestureRecognizer?.delegate = self
+        return navigation
+    }
+
+    private func makeTab(_ navigation: UINavigationController) -> UITab {
+        UITab(title: "Column", image: nil, identifier: UUID().uuidString) { _ in navigation }
+    }
+
+    /// A new column, after the last: Daily, at today — as a new tab Safari's start.
+    @discardableResult
+    private func addColumn(_ kind: SheetKind = .timeline) -> Int {
+        let navigation = makeColumn(kind)
+        columns.append(navigation)
+        columnTabs.append(makeTab(navigation))
+        if let searchTab { tabs = columnTabs + [searchTab] }
+        layoutChanged()
+        return columns.count - 1
+    }
+
+    /// The column shown closed — another shown in its place — when there is another.
+    private func closeColumn() {
+        guard columns.count > 1 else { return }
+        let at = selectedColumn
+        for sheet in allSheets(columns[at]) { sheet.saveAll() }
+        columns.remove(at: at)
+        columnTabs.remove(at: at)
+        if let searchTab { tabs = columnTabs + [searchTab] }
+        select(column: min(at, columns.count - 1))
+        layoutChanged()
+    }
+
+    /// The column shown, its foot what kind: Daily, the inbox, the pinned —
+    /// as a page is loaded in Safari's tab. Already so: back to its foot.
+    private func setRoot(_ kind: SheetKind) {
+        if bar.isSearching { leaveSearch(back: false) }
+        guard let navigation = selectedNavigation else { return }
+        if let host = navigation.viewControllers.first as? NoteHost, host.rootKind == kind {
+            navigation.popToRootViewController(animated: true)
+        } else {
+            for sheet in allSheets(navigation) { sheet.saveAll() }
+            UIView.transition(with: navigation.view, duration: 0.25, options: .transitionCrossDissolve) {
+                navigation.setViewControllers([self.makeRoot(kind)], animated: false)
+            }
+        }
+        setChromeHidden(false)
+        updateBar()
+        updateBacklinks()
+        layoutChanged()
+    }
+
+    /// Daily in the column shown — made its foot, if it was not — at its foot.
+    @discardableResult
+    private func dailyHere() -> DayPager? {
+        if bar.isSearching { leaveSearch(back: false) }
+        guard let navigation = selectedNavigation else { return nil }
+        if !(navigation.viewControllers.first is DayPager) {
+            for sheet in allSheets(navigation) { sheet.saveAll() }
+            navigation.setViewControllers([makeRoot(.timeline)], animated: false)
+        } else if navigation.viewControllers.count > 1 {
+            navigation.popToRootViewController(animated: false)
+        }
+        updateBar()
+        return navigation.viewControllers.first as? DayPager
+    }
+
     /// `-PrismOpen <kind>` — `search:<query>`, `backlinks:<path>`,
     /// `note:<path>`, `inbox`, `tasks`, `find`, `dictated:<text>` (added to
     /// today as dictation adds it) — at launch, for scripted checks.
@@ -122,8 +172,9 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         guard let spec = UserDefaults.standard.string(forKey: "PrismOpen"), let column = columns.first else { return }
         let (head, rest) = spec.firstIndex(of: ":").map { (String(spec[..<$0]), String(spec[spec.index(after: $0)...])) } ?? (spec, "")
         switch head {
-        case "inbox": pendingPage = 1
-        case "tasks": pendingPage = 2
+        case "inbox": DispatchQueue.main.async { self.setRoot(.inbox) }
+        case "tasks": DispatchQueue.main.async { self.showTasks() }
+        case "columns": DispatchQueue.main.async { for _ in 1..<max(1, Int(rest) ?? 2) { self.addColumn() } }
         case "find": DispatchQueue.main.async { self.showSearch() }
         case "search": column.pushViewController(makeSheet(.search(rest)), animated: false)
         case "backlinks": column.pushViewController(makeSheet(.backlinks(rest)), animated: false)
@@ -184,6 +235,13 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     /// A column's tab, shown.
     private func select(column: Int) {
         guard columnTabs.indices.contains(column) else { return }
+        // The one shown beside, about to be the one in use: let go of first,
+        // to be the tab's own.
+        if let paired, paired === columns[column] { unpair() }
+        // How it looked, left: for beside the next swipe.
+        if let shown = selectedNavigation, shown.view.window != nil, !shown.view.isHidden {
+            previews[ObjectIdentifier(shown)] = picture(of: shown)
+        }
         if bar.isSearching { leaveSearch(back: false) }
         selectedTab = columnTabs[column]
         lastColumn = column
@@ -192,18 +250,231 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     }
 
     /// The edge swiped from: back, where there is somewhere to go back to.
+    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        gesture === pairTap
+    }
+
     func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
-        (selectedNavigation?.viewControllers.count ?? 0) > 1
+        if gesture === pairTap { return true }
+        // The bar swiped across — not down, not while searching, nor with a fan out: columns.
+        if gesture === barSwipe, let pan = gesture as? UIPanGestureRecognizer {
+            let velocity = pan.velocity(in: view)
+            return !bar.isSearching && heldFan == nil && abs(velocity.x) > abs(velocity.y) * 1.2
+        }
+        return (selectedNavigation?.viewControllers.count ?? 0) > 1
+    }
+
+    // MARK: Two columns side by side — open wide, as the Duo unfolded
+
+    /// The widest the screen is with one column: wider, two side by side —
+    /// the one in use and the one after it. `-PrismPairWidth` to try it narrower.
+    private var pairWidth: CGFloat {
+        let set = UserDefaults.standard.double(forKey: "PrismPairWidth")
+        return set > 0 ? CGFloat(set) : 600
+    }
+    private var barLeading: NSLayoutConstraint?
+    private var barTrailing: NSLayoutConstraint?
+    /// The column shown beside the one in use — the window's own child, not a tab.
+    private var paired: UINavigationController?
+    /// The first of the two shown: they move along only when the one in use goes past them.
+    private var pairStart = 0
+    private let pairRule = UIView()
+    private lazy var pairTap: UITapGestureRecognizer = {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(tappedPaired))
+        tap.cancelsTouchesInView = false
+        tap.delegate = self
+        return tap
+    }()
+
+    private var isPaired: Bool { paired != nil }
+
+    /// Wide: two shown, the bar under the one in use; narrow: one, as ever.
+    private func updatePairing() {
+        guard !bar.isSearching, let selected = selectedNavigation, swipeStage == nil else { return }
+        let width = view.bounds.width
+        // The tab's own container: what the column in use is laid out in.
+        let host = selected.view.superview
+        guard width >= pairWidth else {
+            if paired != nil { unpair() }
+            if let host, host !== view { host.frame = view.bounds }
+            barLeading?.constant = 0
+            barTrailing?.constant = 0
+            pairRule.removeFromSuperview()
+            return
+        }
+        // Two to show: one more, as a new tab, when there is but one.
+        if columns.count < 2 { addColumn() }
+        let at = selectedColumn
+        if at < pairStart { pairStart = at }
+        if at > pairStart + 1 { pairStart = at - 1 }
+        pairStart = min(max(0, pairStart), columns.count - 2)
+        let partner = columns[at == pairStart ? pairStart + 1 : pairStart]
+        if paired !== partner {
+            unpair()
+            // Its view alone: the column is the tab controller's child already,
+            // as every tab's is — made another's, it would be no tab's.
+            view.insertSubview(partner.view, belowSubview: bar)
+            partner.view.addGestureRecognizer(pairTap)
+            paired = partner
+        }
+        let half = (width / 2).rounded()
+        let left = CGRect(x: 0, y: 0, width: half, height: view.bounds.height)
+        let right = CGRect(x: half, y: 0, width: width - half, height: view.bounds.height)
+        let selectedLeft = at == pairStart
+        if let host, host !== view {
+            host.frame = selectedLeft ? left : right
+            selected.view.frame = host.bounds
+        }
+        // Its top clear of the clock: the window's safe area is not passed to
+        // a column beside the tab's, so it starts under it.
+        // (A column once the tab's keeps the clock's room it had: none more.)
+        partner.view.frame = selectedLeft ? right : left
+        let short = max(0, view.safeAreaInsets.top - partner.view.safeAreaInsets.top)
+        if short > 0 { partner.view.frame = partner.view.frame.inset(by: UIEdgeInsets(top: short, left: 0, bottom: 0, right: 0)) }
+        // The bar under the one in use.
+        barLeading?.constant = selectedLeft ? 0 : half
+        barTrailing?.constant = selectedLeft ? -(width - half) : 0
+        if pairRule.superview == nil {
+            pairRule.backgroundColor = Ink.rule
+            view.addSubview(pairRule)
+        }
+        pairRule.frame = CGRect(x: half - 0.5, y: 0, width: 1 / max(view.traitCollection.displayScale, 1), height: view.bounds.height)
+        view.bringSubviewToFront(pairRule)
+    }
+
+    private func unpair() {
+        guard let paired else { return }
+        paired.view.removeGestureRecognizer(pairTap)
+        paired.view.removeFromSuperview()
+        self.paired = nil
+    }
+
+    /// A touch in the column beside: that one in use, the bar under it.
+    @objc private func tappedPaired() {
+        guard let paired, let index = columns.firstIndex(where: { $0 === paired }) else { return }
+        select(column: index)
+        view.setNeedsLayout()
+    }
+
+    // MARK: Columns, swiped through
+
+    /// The bar swiped across: the column beside, as Safari's tabs are.
+    private lazy var barSwipe = UIPanGestureRecognizer(target: self, action: #selector(swipedBar(_:)))
+    /// While swiped: the column shown, and those beside it, as pictures, moving.
+    private var swipeStage: UIView?
+    /// Each column as it last looked, left: to show beside the one swiped.
+    private var previews: [ObjectIdentifier: UIImage] = [:]
+    private let columnDots = ColumnDots()
+
+    /// How a column looks now, drawn.
+    private func picture(of navigation: UINavigationController) -> UIImage {
+        let view = navigation.view!
+        return UIGraphicsImageRenderer(bounds: view.bounds).image { _ in view.drawHierarchy(in: view.bounds, afterScreenUpdates: false) }
+    }
+
+    /// A column's picture beside the one swiped: as it last looked — or, a
+    /// new one, the paper with what it will be.
+    private func preview(_ index: Int?, width: CGFloat) -> UIView {
+        if let index, columns.indices.contains(index), let image = previews[ObjectIdentifier(columns[index])] {
+            let picture = UIImageView(image: image)
+            picture.frame = view.bounds
+            return picture
+        }
+        let page = UIView(frame: view.bounds)
+        page.backgroundColor = Ink.page
+        let label = UILabel()
+        let name = index.flatMap { columns.indices.contains($0) ? sheet(in: columns[$0].topViewController).map { names(of: $0).first ?? "" } : nil }
+        label.attributedText = NSAttributedString(string: (name ?? "New Column").uppercased(), attributes: Card.label(size: 17))
+        label.sizeToFit()
+        label.center = CGPoint(x: page.bounds.midX, y: page.bounds.midY - 40)
+        page.addSubview(label)
+        return page
+    }
+
+    @objc private func swipedBar(_ pan: UIPanGestureRecognizer) {
+        let width = view.bounds.width
+        let at = selectedColumn
+        let travel = pan.translation(in: view).x
+        // Two shown: across to the next pair, simply.
+        if isPaired {
+            guard pan.state == .ended else { return }
+            let velocity = pan.velocity(in: view).x
+            let step = travel < -60 || velocity < -650 ? 1 : travel > 60 || velocity > 650 ? -1 : 0
+            guard step != 0, at + step >= 0 else { return }
+            if at + step >= columns.count { addColumn() }
+            UISelectionFeedbackGenerator().selectionChanged()
+            UIView.transition(with: view, duration: 0.25, options: [.transitionCrossDissolve, .allowUserInteraction]) {
+                self.select(column: at + step)
+                self.updatePairing()
+            }
+            columnDots.show(count: columns.count, at: selectedColumn, in: view, over: bar.frame)
+            columnDots.hide(after: 0.9)
+            return
+        }
+        switch pan.state {
+        case .began:
+            guard let navigation = selectedNavigation else { return }
+            setChromeHidden(false)
+            let current = picture(of: navigation)
+            previews[ObjectIdentifier(navigation)] = current
+            let stage = UIView(frame: view.bounds)
+            stage.backgroundColor = Ink.page
+            let shown = UIImageView(image: current)
+            shown.frame = view.bounds
+            stage.addSubview(shown)
+            if at > 0 {
+                let left = preview(at - 1, width: width)
+                left.frame.origin.x = -width - 12
+                stage.addSubview(left)
+            }
+            let right = preview(at + 1 < columns.count ? at + 1 : nil, width: width)
+            right.frame.origin.x = width + 12
+            stage.addSubview(right)
+            view.insertSubview(stage, belowSubview: bar)
+            swipeStage = stage
+            navigation.view.isHidden = true
+            columnDots.show(count: max(columns.count, at + 2), at: at, in: view, over: bar.frame)
+        case .changed:
+            // No column to the left: held back, as a band stretched.
+            let x = travel > 0 && at == 0 ? travel / (1 + travel / 60) : travel
+            swipeStage?.transform = CGAffineTransform(translationX: x, y: 0)
+        default:
+            let velocity = pan.velocity(in: view).x
+            let ended = pan.state == .ended
+            var step = 0
+            if ended, travel < -width * 0.28 || velocity < -650 { step = 1 }
+            if ended, at > 0, travel > width * 0.28 || velocity > 650 { step = -1 }
+            finishSwipe(step)
+        }
+    }
+
+    /// The swipe let go: on to the column beside — a new one, past the last — or back.
+    private func finishSwipe(_ step: Int) {
+        guard let stage = swipeStage else { return }
+        let old = selectedNavigation
+        UIView.animate(withDuration: 0.32, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0) {
+            stage.transform = CGAffineTransform(translationX: CGFloat(-step) * (self.view.bounds.width + 12), y: 0)
+        } completion: { _ in
+            if step != 0 {
+                let next = self.selectedColumn + step
+                if next >= self.columns.count { self.addColumn() }
+                UISelectionFeedbackGenerator().selectionChanged()
+                self.select(column: next)
+            }
+            old?.view.isHidden = false
+            stage.removeFromSuperview()
+            self.swipeStage = nil
+            self.columnDots.show(count: self.columns.count, at: self.selectedColumn, in: self.view, over: self.bar.frame)
+            self.columnDots.hide(after: 0.9)
+            self.layoutChanged()
+        }
     }
 
     /// Home: the days, back to their first sheet, at today.
     private func goHome() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         if bar.isSearching { leaveSearch(back: false) }
-        let days = columns[0]
-        select(column: 0)
-        if days.viewControllers.count > 1 { days.popToRootViewController(animated: true) }
-        dayPager?.show(.today)
+        dailyHere()?.show(.today)
         setChromeHidden(false)
         layoutChanged()
     }
@@ -236,7 +507,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     }
 
     /// The days, a day at a time: the first column's root.
-    private var dayPager: DayPager? { columns.first?.viewControllers.first as? DayPager }
+    private var dayPager: DayPager? { selectedNavigation?.viewControllers.first as? DayPager }
 
     /// A column's root: the days, a page each; the inbox and the pinned, a
     /// list over the note chosen; else a sheet of notes.
@@ -314,9 +585,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     }
 
     /// The inbox's column, showing the inbox or the pinned notes.
-    private func showInbox(pinned: Bool) {
-        if showsPinned == pinned { tabTapped(Self.inboxColumn) } else { togglePinned() }
-    }
+    private func showInbox(pinned: Bool) { setRoot(pinned ? .pinned : .inbox) }
 
     /// The tasks, on the stack of the view shown.
     private func showTasks() {
@@ -334,7 +603,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     /// note shown, and the app's own.
     private func barMenu() -> UIMenu {
         let views: [UIMenuElement] = [
-            UIAction(title: "Daily", image: UIImage(systemName: "house")) { [weak self] _ in self?.tabTapped(0) },
+            UIAction(title: "Daily", image: UIImage(systemName: "house")) { [weak self] _ in self?.goHome() },
             UIAction(title: "Inbox", image: UIImage(systemName: "tray")) { [weak self] _ in self?.showInbox(pinned: false) },
             UIAction(title: "Pinned", image: UIImage(systemName: "pin")) { [weak self] _ in self?.showInbox(pinned: true) },
             UIAction(title: "Tasks", image: UIImage(systemName: "checkmark.circle")) { [weak self] _ in self?.showTasks() },
@@ -355,18 +624,25 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     private func setUpBar() {
         bar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(bar)
+        barSwipe.delegate = self
+        barSwipe.maximumNumberOfTouches = 1
+        bar.addGestureRecognizer(barSwipe)
         // At the foot; while searching, over the keyboard when it is up.
         let toBottom = bar.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -BottomBar.margin)
         NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated { self?.keyboardMoved(note) }
         }
+        let leading = bar.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+        let trailing = bar.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            leading,
+            trailing,
             bar.heightAnchor.constraint(equalToConstant: BottomBar.height),
             toBottom,
         ])
         barToBottom = toBottom
+        barLeading = leading
+        barTrailing = trailing
         bar.onHome = { [weak self] in self?.goHome() }
         bar.onBack = { [weak self] in
             guard let navigation = self?.selectedNavigation, navigation.viewControllers.count > 1 else { return }
@@ -405,47 +681,12 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         barToBottom?.constant = -lift
     }
 
-    /// A view's tab tapped: gone to; tapped again, back to its first sheet —
-    /// the days, to today; any other, there already, to its top.
-    private func tabTapped(_ column: Int) {
-        if StallWatch.enabled { StallWatch.mark("tab tapped") }
-        if column == selectedColumn, !bar.isSearching {
-            let navigation = columns[column]
-            if navigation.viewControllers.count > 1 {
-                navigation.popToRootViewController(animated: true)
-            } else if let pager = navigation.viewControllers.first as? DayPager {
-                pager.show(.today)
-            } else if let root = sheet(in: navigation.viewControllers.first) {
-                // Its first sheet already: to the top of it.
-                root.scrollToTop()
-            }
-        }
-        select(column: column)
-        setChromeHidden(false)
-        layoutChanged()
-    }
-
-    /// The inbox's tab to the pinned notes, or back: its column started
-    /// afresh on the other, and shown.
-    private func togglePinned() {
-        showsPinned.toggle()
-        UserDefaults.standard.set(showsPinned, forKey: "InboxShowsPinned")
-        let tab = tab(Self.inboxColumn)
-        columnTabs[Self.inboxColumn].title = tab.title
-        let navigation = columns[Self.inboxColumn]
-        UIView.transition(with: navigation.view, duration: 0.25, options: .transitionCrossDissolve) {
-            navigation.setViewControllers([self.makeRoot(tab.kind)], animated: false)
-        }
-        select(column: Self.inboxColumn)
-        setChromeHidden(false)
-        layoutChanged()
-    }
-
     /// The column of the tab showing — or, in search, of the one before.
     private var selectedColumn: Int { selectedTab.flatMap { tab in columnTabs.firstIndex { $0 === tab } } ?? lastColumn }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updatePairing()
         view.bringSubviewToFront(bar)
         if let page = pendingPage {
             pendingPage = nil
@@ -585,6 +826,19 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     /// once, settings. What can be done to the note is its title pill's.
     func menu(for sheet: SheetController) -> UIMenu {
         var sections: [UIMenuElement] = []
+        // Columns, as Safari's tabs: one more, or this one closed.
+        var columnItems: [UIMenuElement] = [
+            UIAction(title: "New Column", image: UIImage(systemName: "plus.rectangle.on.rectangle")) { [weak self] _ in
+                guard let self else { return }
+                select(column: addColumn())
+            },
+        ]
+        if columns.count > 1 {
+            columnItems.append(UIAction(title: "Close Column", image: UIImage(systemName: "xmark.rectangle")) { [weak self] _ in
+                self?.closeColumn()
+            })
+        }
+
         var sync: [UIMenuElement] = store.isSyncing ? [
             UIAction(title: "Syncing…", image: UIImage(systemName: "arrow.triangle.2.circlepath"), attributes: .disabled) { _ in },
         ] : [
@@ -629,6 +883,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         sections.append(UIMenu(options: .displayInline, children: [
             UIAction(title: "Settings…", image: UIImage(systemName: "textformat")) { [weak self] _ in self?.showSettings() },
         ]))
+        sections.append(UIMenu(options: .displayInline, children: columnItems))
         return UIMenu(children: sections)
     }
 
@@ -810,10 +1065,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         switch place {
         case .day(let day):
             if store.graph?.exists(path: GraphPaths.dailyPath(for: day)) == false { store.reveal([day]) }
-            guard let days = columns.first, let pager = dayPager else { return }
-            select(column: 0)
-            days.popToRootViewController(animated: false)
-            pager.show(day)
+            dailyHere()?.show(day)
         case .note(let path):
             openInColumn(.note(path))
         case .search(let query):
@@ -868,11 +1120,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     /// far along each one's to-dos are. A day tapped is gone to.
     func showCalendar() {
         // The days' own: the month over the day shown.
-        if let pager = dayPager {
-            select(column: 0)
-            columns[0].popToRootViewController(animated: false)
-            return pager.showCalendar(true)
-        }
+        if let pager = dailyHere() { return pager.showCalendar(true) }
         guard let calendar = calendarController(day: .today) else { return }
         calendar.onChoose = { [weak self, weak calendar] day in
             calendar?.dismiss(animated: true)
@@ -952,10 +1200,8 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     /// A row put first in today — not typed in: shown, and written.
     func addToToday(_ text: String) {
         sheet(in: selectedNavigation?.topViewController)?.saveAll()
-        guard let days = columns.first, let pager = dayPager else { return }
-        select(column: 0)
+        guard let pager = dailyHere() else { return }
         setChromeHidden(false)
-        days.popToRootViewController(animated: false)
         let today = NoteRef.day(.today)
         pager.show(.today, animated: false)
         DispatchQueue.main.async { pager.sheet?.addAtTop(of: today, text: text) }
@@ -967,10 +1213,8 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     /// Today, in the days, a new row at its top with the caret in it.
     func writeToday() {
         sheet(in: selectedNavigation?.topViewController)?.saveAll()
-        guard let days = columns.first, let pager = dayPager else { return }
-        select(column: 0)
+        guard let pager = dailyHere() else { return }
         setChromeHidden(false)
-        days.popToRootViewController(animated: false)
         let today = NoteRef.day(.today)
         pager.show(.today, animated: false)
         // Once laid out where today is.
@@ -1157,8 +1401,14 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     private func restoreLayout() {
         guard let data = UserDefaults.standard.data(forKey: "Tabs"),
               let layout = try? JSONDecoder().decode(Layout.self, from: data) else { return }
-        for (c, sheets) in layout.columns.enumerated() where columns.indices.contains(c) && sheets.first?.kind == tab(c).kind {
+        for (c, sheets) in layout.columns.enumerated() {
+            guard let root = sheets.first?.kind else { continue }
+            // As many columns as were left, each from its foot.
+            if !columns.indices.contains(c) { addColumn(root) }
             let navigation = columns[c]
+            if (navigation.viewControllers.first as? NoteHost)?.rootKind ?? sheet(in: navigation.viewControllers.first)?.kind != root {
+                navigation.setViewControllers([makeRoot(root)], animated: false)
+            }
             for sheet in sheets.dropFirst() { navigation.pushViewController(makeSheet(sheet.kind), animated: false) }
             for (s, controller) in navigation.viewControllers.enumerated() where sheets.indices.contains(s) {
                 guard let sheet = controller as? SheetController else { continue }
@@ -1247,4 +1497,32 @@ struct BacklinkCard {
     var title: String
     var snippet: String
     var link: String
+}
+
+/// Which column shows, among how many: dots over the bar, while swiping.
+final class ColumnDots: UIView {
+    private var dots: [UIView] = []
+
+    func show(count: Int, at index: Int, in host: UIView, over bar: CGRect) {
+        if superview !== host { host.addSubview(self) }
+        host.bringSubviewToFront(self)
+        dots.forEach { $0.removeFromSuperview() }
+        dots = (0..<count).map { i in
+            let dot = UIView()
+            dot.backgroundColor = i == index ? Ink.text : Ink.faint
+            dot.layer.cornerRadius = 3
+            addSubview(dot)
+            return dot
+        }
+        let side: CGFloat = 6, gap: CGFloat = 8
+        let width = CGFloat(count) * side + CGFloat(max(0, count - 1)) * gap
+        frame = CGRect(x: (host.bounds.width - width) / 2, y: bar.minY - 18, width: width, height: side)
+        for (i, dot) in dots.enumerated() { dot.frame = CGRect(x: CGFloat(i) * (side + gap), y: 0, width: side, height: side) }
+        layer.removeAllAnimations()
+        alpha = 1
+    }
+
+    func hide(after delay: TimeInterval) {
+        UIView.animate(withDuration: 0.3, delay: delay, options: [.allowUserInteraction]) { self.alpha = 0 }
+    }
 }
