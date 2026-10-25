@@ -191,17 +191,17 @@ package final class OutlineLayoutManager: NSLayoutManager {
                 }
                 let hovered = outlineView?.hoveredCardFrame == rect
                 if let tweet = store.tweet(box.source) {
-                    TweetCard.draw(tweet, in: rect, images: store)
+                    TweetCard.draw(tweet, in: rect, images: store, flat: outlineView?.metrics.typography.flat == true)
                     if hovered { Self.drawCardHide(in: rect) }
                     continue
                 }
                 if let video = store.video(box.source) {
-                    VideoCard.draw(video, in: rect, images: store)
+                    VideoCard.draw(video, in: rect, images: store, flat: outlineView?.metrics.typography.flat == true)
                     if hovered { Self.drawCardHide(in: rect) }
                     continue
                 }
                 if box.isCard, let face = store.richFace(box.source) {
-                    RichCard.draw(face, in: rect, images: store)
+                    RichCard.draw(face, in: rect, images: store, typography: outlineView?.metrics.typography)
                     if hovered { Self.drawCardHide(in: rect) }
                     continue
                 }
@@ -287,8 +287,10 @@ package final class OutlineLayoutManager: NSLayoutManager {
         case .task(let done, let round):
             let name = round ? (done ? "checkmark.circle.fill" : "circle") : (done ? "checkmark.square.fill" : "square")
             let configuration = NSImage.SymbolConfiguration(pointSize: font.pointSize * 0.95, weight: .regular)
-                // Checked: a white tick on the accent colour.
-                .applying(.init(paletteColors: done ? [.white, .controlAccentColor] : [view.metrics.typography.ink.secondary]))
+                // Checked: a white tick on the accent colour — flat, the page's on the text's ink.
+                .applying(.init(paletteColors: done ? (view.metrics.typography.flat ? [.textBackgroundColor, view.metrics.typography.ink.text]
+                                                                                      : [.white, .controlAccentColor])
+                                                    : [view.metrics.typography.ink.secondary]))
             guard let image = NSImage(systemSymbolName: name, accessibilityDescription: done ? "Done" : "To do")?
                 .withSymbolConfiguration(configuration) else { return }
             let size = image.size

@@ -901,6 +901,13 @@ enum Card {
         set { UserDefaults.standard.set(!newValue, forKey: "PageCards") }
     }
 
+    /// The small line in spaced capitals over things, at a text's size: a
+    /// day's date, a gap's days, a card's site — one style for them all.
+    nonisolated static func label(size: CGFloat) -> [NSAttributedString.Key: Any] {
+        let small = round(size * 0.74)
+        return [.font: Typeface.current.body(small, weight: .medium), .foregroundColor: Ink.label, .kern: small * 0.09]
+    }
+
     /// The flat page's header: a small line in spaced capitals — a day's
     /// date, or a note's age — and, for a note, its name in bold under it.
     static func flatHeader(path: String, name: String, store: PrismStore?, size: CGFloat) -> NSMutableAttributedString {
@@ -908,10 +915,7 @@ enum Card {
         let meta = meta(for: path, store: store) ?? ""
         let dated = GraphPaths.day(fromDailyPath: path) != nil || GraphPaths.week(fromWeeklyPath: path) != nil
         let kicker = (dated ? [name, meta] : [meta]).filter { !$0.isEmpty }.joined(separator: "  ·  ").uppercased()
-        let small = round(size * 0.74)
-        let text = NSMutableAttributedString(string: kicker, attributes: [
-            .font: face.body(small, weight: .medium), .foregroundColor: Ink.secondary, .kern: small * 0.09,
-        ])
+        let text = NSMutableAttributedString(string: kicker, attributes: label(size: size))
         guard !dated else { return text }
         let lead = NSMutableParagraphStyle()
         lead.paragraphSpacingBefore = 3

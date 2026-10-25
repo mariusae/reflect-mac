@@ -152,16 +152,20 @@ enum Typeface: String, CaseIterable {
     /// at 16 points; lines as tall as suits it; the faces of families set
     /// by named styles — Book, Light, Semibold — named, not guessed at.
     var defaults: Settings {
+        let flat = PageStyle.flat
         let styles: (text: String?, heading: String?) = switch self {
         case .styrene: ("Regular", "Bold")
-        // Its Book reads heavy on screen; its Semibold claims Book's weight.
-        case .ideal: ("Light", "Semibold")
+        // On cards, its Book reads heavy; its Semibold claims Book's weight.
+        // Flat, on the paper itself, its Book holds — and its Bold heads.
+        case .ideal: flat ? ("Book", "Bold") : ("Light", "Semibold")
         case .fraunces: (nil, "SemiBold")
         default: (nil, nil)
         }
         let lineHeight: Double = switch self {
         case .styrene: 1.42
-        case .ideal, .alegreya: 1.45
+        // Flat, its Book a little closer; the column shorter, as a page's.
+        case .ideal: flat ? 1.42 : 1.45
+        case .alegreya: 1.45
         // As it was: a multiple of the face's own line.
         default: (naturalLine(style: styles.text) * leading * 100).rounded() / 100
         }
@@ -176,7 +180,7 @@ enum Typeface: String, CaseIterable {
                             textStyle: nil, headingStyle: nil, smoothing: true)
         }
         return Settings(size: Double(round(16 * scale * 2) / 2), lineHeight: lineHeight, rowSpacing: 0.34, indent: 1.6,
-                        lineLength: 660, headingScale: 1.5, textStyle: styles.text, headingStyle: styles.heading,
+                        lineLength: self == .ideal && flat ? 600 : 660, headingScale: 1.5, textStyle: styles.text, headingStyle: styles.heading,
                         // Styrene's regular is heavy already: without the
                         // smoothing that thickens strokes, it reads as a regular should.
                         smoothing: self != .styrene)
@@ -224,7 +228,7 @@ enum Typeface: String, CaseIterable {
     func typography() -> Typography {
         let settings = settings
         let textFace = Self.face(settings.textStyle, in: family)
-        return Typography(bodyFamily: family, headingFamily: headingFamily, monospaceFamily: monoFamily,
+        var typography = Typography(bodyFamily: family, headingFamily: headingFamily, monospaceFamily: monoFamily,
                           bodyFace: textFace, headingFace: Self.face(settings.headingStyle, in: headingFamily),
                           monospaceFace: Self.face(monoStyle, in: monoFamily),
                           size: CGFloat(settings.size), lineHeight: CGFloat(settings.lineHeight / naturalLine(style: settings.textStyle)),
@@ -232,6 +236,11 @@ enum Typeface: String, CaseIterable {
                           lineLength: CGFloat(settings.lineLength), indent: CGFloat(settings.indent),
                           ink: Ink.notes, smoothing: settings.smoothing, headingAxes: headingAxes,
                           headingCase: settings.headingCase ?? .family)
+        typography.flat = PageStyle.flat
+        // Ideal Sans in its Book: bold within the text its Semibold, an even step up.
+        if self == .ideal, settings.textStyle == "Book" { typography.boldStyle = "Semibold" }
+        ProgressRing.monochrome = PageStyle.flat
+        return typography
     }
 
     /// The face for the window's own words — the sidebar, the finder, the
@@ -291,14 +300,29 @@ enum Ink {
     /// Weeks, among the days: a warm ochre.
     static let week = dynamic(NSColor(srgbRed: 0.78, green: 0.52, blue: 0.12, alpha: 1),
                               NSColor(srgbRed: 0.93, green: 0.7, blue: 0.32, alpha: 1))
+    /// The small lines in spaced capitals over things: firmer than the
+    /// secondary ink, to read at their size.
+    static let label = dynamic(hex(0x7a7067), hex(0xa79e92))
     static let marked = dynamic(NSColor(srgbRed: 1, green: 0.86, blue: 0.3, alpha: 0.45),
                                 NSColor(srgbRed: 0.85, green: 0.7, blue: 0.2, alpha: 0.35))
 
     /// What the notes themselves are set in.
-    static let notes = TextInk(text: text, secondary: secondary, tertiary: faint, rule: rule)
+    static let notes = TextInk(text: text, secondary: secondary, tertiary: faint, rule: rule, label: label)
 
     static func dynamic(_ light: NSColor, _ dark: NSColor) -> NSColor {
         NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }
+    }
+}
+
+/// View ▸ Page: the notes flat on the page — parted by a hairline, headed
+/// in small capitals, links underlined — or each on a card of its own.
+enum PageStyle {
+    static var flat: Bool {
+        get {
+            if let forced = ProcessInfo.processInfo.environment["PRISM_CARDS"] { return forced != "1" }
+            return !UserDefaults.standard.bool(forKey: "PageCards")
+        }
+        set { UserDefaults.standard.set(!newValue, forKey: "PageCards") }
     }
 }
 

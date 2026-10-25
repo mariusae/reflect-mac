@@ -58,6 +58,10 @@ final class Column: NSView, OutlineTextViewNavigator {
     private let sticky = StickyHeader()
     /// While the pointer is over the column: a sheet of each kind to add.
     private let sheetBar = SheetBar()
+    /// The column's controls, at its foot: the name over a row of marks.
+    private let panel = FootPanel()
+    /// Home: today, in this column.
+    var onHome: ((Column) -> Void)?
     /// A sheet of a kind asked for, from the bar, on this column.
     var onAddSheet: ((Column, SheetBar.Choice) -> Void)?
     /// The calendar asked for, from the timeline's tool: shown by it.
@@ -235,6 +239,8 @@ final class Column: NSView, OutlineTextViewNavigator {
         addSubview(tip)
         addSubview(close)
         addSubview(foldButton)
+        // Shown only while the pointer is over the column.
+        for view in [close, foldButton, controlsGround] as [NSView] { view.alphaValue = 0 }
         foldButton.isHidden = true
         foldButton.target = self
         foldButton.action = #selector(foldClicked)
@@ -262,6 +268,8 @@ final class Column: NSView, OutlineTextViewNavigator {
             guard let self else { return }
             onAddSheet?(self, choice)
         }
+        addSubview(panel)
+        setUpPanel()
         sheetBar.onMore = { [weak self] choice, view in
             guard let self, choice == .timeline else { return }
             onShowCalendar?(self, view)
@@ -300,6 +308,36 @@ final class Column: NSView, OutlineTextViewNavigator {
     required init?(coder: NSCoder) { fatalError() }
 
     @objc private func closeColumn() { onClose?(self) }
+
+    // MARK: Hovered
+
+    /// The pointer over the column: its fold and × show — else the top is plain paper.
+    private var pointerInside = false {
+        didSet {
+            guard pointerInside != oldValue else { return }
+            let alpha: CGFloat = pointerInside ? 1 : 0
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.15
+                for view in [close, foldButton, controlsGround] as [NSView] { view.animator().alphaValue = alpha }
+            }
+        }
+    }
+
+    private lazy var hoverArea = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                                owner: self)
+
+    override func updateTrackingAreas() {
+        if !trackingAreas.contains(hoverArea) { addTrackingArea(hoverArea) }
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        if event.trackingArea === hoverArea { pointerInside = true } else { super.mouseEntered(with: event) }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if event.trackingArea === hoverArea { pointerInside = false } else { super.mouseExited(with: event) }
+    }
     @objc private func foldClicked() { onFold?(self) }
 
     // MARK: The bar of sheets to add
@@ -313,6 +351,13 @@ final class Column: NSView, OutlineTextViewNavigator {
     private var sheetBarWanted: Bool { isFocused && stackScrubber == nil && switcher == nil && !isCollapsed && livePeek == nil && !isWeb }
 
     func updateSheetBar() {
+        // The panel whole on the column in use; else its name alone.
+        panel.compact = !sheetBarWanted
+        needsLayout = true
+        // The old toolbox: never shown, the panel in its place.
+        sheetBar.isHidden = true
+        return
+        // swiftlint:disable:next unreachable_code
         let shown = sheetBarWanted
         // The row centred on what shows: the stack moves beside it, or alone to the middle.
         needsLayout = true
@@ -1095,17 +1140,10 @@ final class Column: NSView, OutlineTextViewNavigator {
         stack.ref = ref
         stack.cards = cards
         stack.face = face
-        // Right of the toolbox, a gap off it, as far as the cards' right edge.
-        let bar = sheetBar.frame
-        let left = bar.maxX + 10
-        let right = min(bounds.width - 8, cardSpan.maxX)
-        stack.bunchHeight = bar.height
-        stack.widest = max(0, right - left)
-        let size = stack.size
-        // The front card level with the toolbox; dealt out, up from there.
-        stack.frame = NSRect(x: left - BacklinkStack.depth, y: bar.minY - BacklinkStack.depth,
-                             width: min(size.width, right - left + 2 * BacklinkStack.depth), height: size.height)
-        stack.isHidden = stack.widest < 60
+        // Dealt out over the panel, across it, from its mark — never bunched.
+        stack.hidesBunch = true
+        stack.keepsOpen = { [weak self] in self?.pointerOn(self?.panel.linksFrame) == true }
+        placeOverPanel(stack)
     }
 
     private var isBacklinks: Bool { if case .backlinks = kind { true } else { false } }
@@ -1158,16 +1196,119 @@ final class Column: NSView, OutlineTextViewNavigator {
         stack.faint = forward
         stack.moreTitle = forward ? "Furthest forward…" : "Back to the first…"
         stack.face = face
-        // Left of the toolbox, a gap off it, as far as the cards' left edge.
-        let bar = sheetBar.frame
-        let right = bar.minX - 10
-        let left = max(8, cardSpan.minX, titleBarLeft)
-        stack.bunchHeight = bar.height
-        stack.widest = max(0, right - left)
+        stack.anchorRight = false
+        stack.hidesBunch = true
+        stack.keepsOpen = { [weak self] in self?.pointerOn(self?.panel.backFrame) == true }
+        placeOverPanel(stack)
+    }
+
+    // MARK: The panel
+
+    private func setUpPanel() {
+        panel.onSearch = { [weak self] in
+            guard let self else { return }
+            onAddSheet?(self, .search)
+        }
+        panel.onBack = { [weak self] in
+            guard let self, !beneath.isEmpty else { return }
+            sheetStack?.show(false)
+            onRaise?(self, beneath.count - 1)
+        }
+        panel.onHome = { [weak self] in
+            guard let self else { return }
+            onHome?(self)
+        }
+        panel.onViews = { [weak self] view in self?.showViews(from: view) }
+        panel.onBacklinks = { [weak self] in
+            guard let self, let ref = current?.ref else { return }
+            backlinkStack?.show(false)
+            onShowBacklinks?(ref, self)
+        }
+        panel.onMenu = { [weak self] view in
+            guard let self, let note = current, let button = view as? NSButton else { return }
+            onNoteMenu?(note, button)
+        }
+        panel.onPlus = { NSApp.sendAction(#selector(PrismWindowController.newNote(_:)), to: nil, from: nil) }
+        panel.onHoverBack = { [weak self] inside in self?.hoverStack(self?.sheetStack, inside) }
+        panel.onHoverLinks = { [weak self] inside in self?.hoverStack(self?.backlinkStack, inside) }
+    }
+
+    /// The views, from home held: the days, the inbox, the tasks, search, the calendar.
+    private func showViews(from view: NSView) {
+        let menu = NSMenu()
+        for choice in [SheetBar.Choice.timeline, .inbox, .tasks, .search] {
+            let item = ClosureMenuItem(title: choice.name) { [weak self] in
+                guard let self else { return }
+                onAddSheet?(self, choice)
+            }
+            item.image = NSImage(systemSymbolName: choice.symbol, accessibilityDescription: nil)
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let calendar = ClosureMenuItem(title: "Calendar…") { [weak self] in
+            guard let self else { return }
+            onShowCalendar?(self, view)
+        }
+        calendar.image = NSImage(systemSymbolName: "calendar", accessibilityDescription: nil)
+        menu.addItem(calendar)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height + 4), in: view)
+    }
+
+    /// The pointer onto a mark, or off it: its stack dealt out, or — not
+    /// gone onto the cards — gathered.
+    private func hoverStack(_ stack: BacklinkStack?, _ inside: Bool) {
+        guard let stack else { return }
+        if inside { return stack.show(true) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak stack] in
+            guard let stack, !stack.pointerIsOver else { return }
+            stack.show(false)
+        }
+    }
+
+    /// Whether the pointer is in a rectangle of the panel's.
+    private func pointerOn(_ rect: NSRect?) -> Bool {
+        guard let rect, let window else { return false }
+        return convert(rect, from: panel).contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+    }
+
+    /// A stack's place: over the panel, as wide, dealt out up from its top.
+    private func placeOverPanel(_ stack: BacklinkStack) {
+        let base = panel.frame
+        stack.widest = max(0, base.width)
         let size = stack.size
-        let width = min(size.width, right - left + 2 * BacklinkStack.depth)
-        stack.frame = NSRect(x: right + BacklinkStack.depth - width, y: bar.minY - BacklinkStack.depth, width: width, height: size.height)
-        stack.isHidden = stack.widest < 60
+        stack.frame = NSRect(x: base.minX - BacklinkStack.depth, y: base.maxY + 6 - BacklinkStack.depth,
+                             width: base.width + 2 * BacklinkStack.depth, height: size.height)
+        stack.isHidden = panel.isHidden || panel.compact
+    }
+
+    /// The panel at the foot, centred on the cards: whole on the column in
+    /// use, its name alone on the rest; its name as what is shown is.
+    private func placePanel() {
+        panel.isHidden = isCollapsed || isWeb || switcher != nil || stackScrubber != nil
+        guard !panel.isHidden else { return }
+        let font = metrics.typography.headingFont(size: round(metrics.fontSize * 0.95), weight: .semibold)
+        if let view = current, !isBacklinks {
+            let day = view.ref.day != nil || GraphPaths.week(fromWeeklyPath: view.ref.path) != nil
+            panel.show(Column.name(of: view.ref).title, font: font, cover: view.coverSource.flatMap { Prism.Place.coverImage?($0) },
+                       symbol: day ? "calendar" : "doc.text")
+        } else {
+            let symbol = switch kind {
+            case .timeline: "house"
+            case .inbox: "tray"
+            case .tasks: "checkmark.circle"
+            case .search: "magnifyingglass"
+            case .backlinks: "arrow.turn.up.left"
+            case .note, .web: "doc.text"
+            }
+            panel.show(Self.kindName(kind), font: font, cover: nil, symbol: symbol)
+        }
+        panel.canGoBack = !beneath.isEmpty
+        panel.showBacklinks(isBacklinks ? 0 : current.flatMap { backlinkCards?($0.ref)?.count } ?? 0)
+        let cards = cardSpan
+        let width = min(panel.fittingWidth, max(120, bounds.width - 24))
+        let height = panel.fittingHeight
+        let x = min(max(12, (cards.midX - width / 2).rounded()), bounds.width - 12 - width)
+        panel.frame = NSRect(x: x, y: 14, width: width, height: height)
     }
 
     /// What a sheet is, under its name on its card.
@@ -1557,6 +1698,7 @@ final class Column: NSView, OutlineTextViewNavigator {
         let bar = sheetBar.fittingSize
         sheetBar.frame = NSRect(x: max(8, ((bounds.width - bar.width) / 2).rounded()), y: (Self.footMiddle - bar.height / 2).rounded(),
                                 width: bar.width, height: bar.height)
+        placePanel()
         placeBacklinkStack()
         placeSheetStack()
         // The note's name, centred over the cards, clear of what is either side.
@@ -1568,6 +1710,8 @@ final class Column: NSView, OutlineTextViewNavigator {
         titleX = min(max(titleX, leftEdge), rightEdge - titleWidth)
         titlePill.frame = NSRect(x: titleX, y: (topMiddle - TitlePill.height / 2).rounded(), width: titleWidth, height: TitlePill.height)
         if titleWidth < 60 { titlePill.isHidden = true }
+        // The name is the panel's, at the foot: the top plain paper.
+        titlePill.isHidden = true
         grip.frame = NSRect(x: 56, y: bounds.height - 12, width: max(0, bounds.width - 112), height: 12)
         // The title bar across the column, the notes under it; its words
         // short of the controls at its right.

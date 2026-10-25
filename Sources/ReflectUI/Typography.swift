@@ -8,12 +8,16 @@ package struct TextInk: Equatable {
     package var secondary: NSColor
     package var tertiary: NSColor
     package var rule: NSColor
+    /// The small lines in spaced capitals over things: quieter than the
+    /// words, firmer than what is set back, to read at their size.
+    package var label: NSColor
 
-    package init(text: NSColor, secondary: NSColor, tertiary: NSColor, rule: NSColor) {
+    package init(text: NSColor, secondary: NSColor, tertiary: NSColor, rule: NSColor, label: NSColor? = nil) {
         self.text = text
         self.secondary = secondary
         self.tertiary = tertiary
         self.rule = rule
+        self.label = label ?? secondary
     }
 
     /// The system's own, following its appearance.
@@ -57,6 +61,45 @@ package struct Typography: Equatable {
     package var smoothing = true
     /// How headings are set.
     package var headingCase: HeadingCase = .family
+    /// The page flat: notes on the paper, not cards — parted by a hairline,
+    /// headed by a small line in spaced capitals; links underlined, not on
+    /// pills; ticks in the text's ink.
+    package var flat = false
+    /// The style bold within the text is set in, by name — `Semibold`, an
+    /// even step up from a Book — where the family's Bold would be too far.
+    package var boldStyle: String?
+
+    /// A font made bold within the text: in the style named for it, as
+    /// italic as it was, where the family has one; else nil.
+    package func bolder(_ font: NSFont) -> NSFont? {
+        guard let boldStyle, let family = font.familyName else { return nil }
+        let italic = font.fontDescriptor.symbolicTraits.contains(.italic)
+        let wanted = italic ? boldStyle + " Italic" : boldStyle
+        guard let face = Face.all(in: family).first(where: { $0.italic == italic && $0.style.caseInsensitiveCompare(wanted) == .orderedSame })
+                ?? Face.all(in: family).first(where: { $0.italic == italic && $0.style.lowercased().hasPrefix(boldStyle.lowercased()) }),
+              let made = NSFont(name: face.name, size: font.pointSize) else { return nil }
+        return Self.withFeatures(made)
+    }
+
+    /// A face of the text's — or the headings' — family by its style name,
+    /// `Semibold`, at a size; nil where the family has none of that name.
+    package func face(style: String, heading: Bool = false, size: CGFloat) -> NSFont? {
+        guard let family = heading ? headingFamily : bodyFamily,
+              let name = Face.all(in: family).first(where: { !$0.italic && $0.style.caseInsensitiveCompare(style) == .orderedSame })?.name
+        else { return nil }
+        return Self.withFeatures(NSFont(name: name, size: size) ?? .systemFont(ofSize: size))
+    }
+
+    /// The small line in spaced capitals over things, at the text's size: a
+    /// day's date, a note's age, a gap's days, a card's site.
+    package func label(size: CGFloat? = nil) -> [NSAttributedString.Key: Any] {
+        let small = round((size ?? self.size) * 0.74)
+        // The family's Medium, where it has one; else the text's own face.
+        let medium = bodyFamily.flatMap { family in
+            Face.all(in: family).first { !$0.italic && $0.style.caseInsensitiveCompare("Medium") == .orderedSame }?.name
+        }
+        return [.font: Self.font(bodyFamily, face: medium ?? bodyFace, size: small), .foregroundColor: ink.label, .kern: small * 0.09]
+    }
 
     package init(bodyFamily: String? = nil, headingFamily: String? = nil, monospaceFamily: String? = nil,
                  bodyFace: String? = nil, headingFace: String? = nil, monospaceFace: String? = nil,

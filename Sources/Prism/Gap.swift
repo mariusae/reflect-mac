@@ -47,9 +47,18 @@ final class GapView: NSView, ColumnBlock {
         let color = hovering ? Ink.text : Ink.secondary
         dots.font = .systemFont(ofSize: round(metrics.fontSize * 1.3), weight: .bold)
         dots.textColor = color
-        label.font = Typography.font(metrics.typography.headingFamily, face: metrics.typography.headingFace,
-                                     size: round(metrics.fontSize * 0.72), weight: .medium)
-        label.textColor = hovering ? Ink.secondary : Ink.faint
+        if metrics.typography.flat {
+            // Flat, in the small capitals every label is in.
+            var attributes = metrics.typography.label()
+            if hovering { attributes[.foregroundColor] = Ink.text }
+            label.attributedStringValue = NSAttributedString(string: Self.describe(gap).uppercased(), attributes: attributes)
+            dots.textColor = hovering ? Ink.text : Ink.label
+        } else {
+            label.stringValue = Self.describe(gap)
+            label.font = Typography.font(metrics.typography.headingFamily, face: metrics.typography.headingFace,
+                                         size: round(metrics.fontSize * 0.72), weight: .medium)
+            label.textColor = hovering ? Ink.secondary : Ink.faint
+        }
         needsLayout = true
     }
 

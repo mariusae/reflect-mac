@@ -424,17 +424,38 @@ package enum InlineMarkdown {
                 switch $0.kind { case .link(let t), .url(let t): t == target; default: false }
             }), text.substring(with: span.range) == rowText, let card = images.rich(target, text: linkText) else { return }
             let face = RichCardFace(card, linkText: linkText)
-            storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: RichCard.size(of: face), isCard: true),
+            storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: RichCard.size(of: face, typography: typography), isCard: true),
                                  range: NSRange(location: span.range.location, length: 1))
         }
         let found = InlineMarkup.spans(in: text, range: body)
         let resolved = images?.resolve(found) ?? found.map(unshown)
+        /// Flat, a link alone in its row, its card under it: its site alone,
+        /// small and grey — the card says the rest. Whole while the caret is in it.
+        func flatSite(_ span: InlineSpan, _ target: String) -> NSRange? {
+            guard typography.flat, !span.hidesCard, text.substring(with: span.range) == rowText,
+                  storage.attribute(.outlineImage, at: span.range.location, effectiveRange: nil) != nil,
+                  caret.map({ NSLocationInRange($0, span.range) || $0 == NSMaxRange(span.range) }) != true,
+                  var host = URL(string: target)?.host() else { return nil }
+            if host.hasPrefix("www.") { host.removeFirst(4) }
+            let found = (text.substring(with: span.range) as NSString).range(of: host, options: .backwards)
+            return found.location == NSNotFound ? nil : NSRange(location: span.range.location + found.location, length: found.length)
+        }
         let carousels = images.map { Carousel.groups(in: resolved, text: text, images: $0) } ?? [:]
+        // Flat: links in the text's ink, a faint line under them; no pills.
+        let flat = typography.flat
+        let linkInk = flat ? typography.ink.text : LinkPill.tint
+        func underline(_ range: NSRange) {
+            guard flat else { return }
+            storage.addAttributes([.underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: typography.ink.tertiary], range: range)
+        }
         for span in resolved {
             let content = span.content
+            /// A link shown as its site alone: where, in the row's text.
+            var site: NSRange?
             switch span.kind {
             case .strong:
-                storage.addAttribute(.font, value: font(at: content.location).adding(.bold), range: content)
+                let plain = font(at: content.location)
+                storage.addAttribute(.font, value: typography.bolder(plain) ?? plain.adding(.bold), range: content)
             case .emphasis:
                 storage.addAttribute(.font, value: font(at: content.location).adding(.italic), range: content)
             case .strikethrough:
@@ -454,15 +475,16 @@ package enum InlineMarkdown {
                 ], range: content)
             case .link(let target):
                 if let url = URL(string: target) {
-                    storage.addAttributes([.link: url, .foregroundColor: LinkPill.tint], range: content)
+                    storage.addAttributes([.link: url, .foregroundColor: linkInk], range: content)
                 }
+                if images?.filePill(target) == nil { underline(content) }
                 if pills, images?.filePill(target) == nil {
                     // A link whose text is its own address — `<https://…>` —
                     // is shown as a bare address is: shortened, one icon.
                     if text.substring(with: content) == target, target.hasPrefix("http") {
-                        LinkPill.markBare(storage, content, revealed: caret)
+                        LinkPill.markBare(storage, content, revealed: caret, flat: flat)
                     } else {
-                        LinkPill.mark(storage, span.range, kind: .web)
+                        LinkPill.mark(storage, span.range, kind: .web, flat: flat)
                     }
                 }
                 // A post's or a video's link shows its card below it, as a bare one does —
@@ -474,6 +496,7 @@ package enum InlineMarkdown {
                 } else {
                     markRichCard(target, text: text.substring(with: content))
                 }
+                site = flatSite(span, target)
                 // A file in the graph: a pill, its icon and size in the room
                 // its hidden brackets are given.
                 if let pill = images?.filePill(target), let open = span.markup.first, let close = span.markup.last,
@@ -490,9 +513,10 @@ package enum InlineMarkdown {
                 }
             case .url(let target):
                 if let url = URL(string: target) {
-                    storage.addAttributes([.link: url, .foregroundColor: LinkPill.tint], range: content)
+                    storage.addAttributes([.link: url, .foregroundColor: linkInk], range: content)
                 }
-                if pills { LinkPill.markBare(storage, span.range, revealed: caret) }
+                underline(content)
+                if pills { LinkPill.markBare(storage, span.range, revealed: caret, flat: flat) }
                 // A post's or a video's bare link shows its card too, below the link.
                 if Tweet.key(from: target) != nil || Video.id(from: target) != nil, let size = images?.naturalSize(target) {
                     storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: size),
@@ -500,12 +524,14 @@ package enum InlineMarkdown {
                 } else {
                     markRichCard(target, text: nil)
                 }
+                site = flatSite(span, target)
             case .wikiLink(let title):
                 if let url = URL.wiki(title) {
-                    storage.addAttributes([.link: url, .foregroundColor: LinkPill.tint], range: content)
+                    storage.addAttributes([.link: url, .foregroundColor: linkInk], range: content)
                 }
+                underline(content)
                 let name = title.components(separatedBy: "|").first?.trimmingCharacters(in: .whitespaces) ?? title
-                if pills { LinkPill.mark(storage, span.range, kind: Day(name) != nil || Week(name) != nil ? .day : .page) }
+                if pills { LinkPill.mark(storage, span.range, kind: Day(name) != nil || Week(name) != nil ? .day : .page, flat: flat) }
             case .image(let reference):
                 // Pictures side by side: one carousel, drawn at the first's place.
                 if let group = carousels[span.range.location] {
@@ -520,13 +546,25 @@ package enum InlineMarkdown {
             case .imageText:
                 storage.addAttribute(.foregroundColor, value: typography.ink.secondary, range: span.range)
             case .tag:
-                storage.addAttribute(.foregroundColor, value: LinkPill.tint, range: span.range)
-                if pills { LinkPill.mark(storage, span.range, kind: .tag) }
+                storage.addAttribute(.foregroundColor, value: flat ? typography.ink.secondary : LinkPill.tint, range: span.range)
+                if pills, !flat { LinkPill.mark(storage, span.range, kind: .tag) }
             case .comment:
                 break
             }
             for run in span.markup {
                 storage.addAttribute(.outlineHidden, value: true, range: run)
+            }
+            // A link shown as its site: the rest of it hidden, the site small and grey.
+            if let site {
+                for key: NSAttributedString.Key in [.outlineLink, .outlineLinkLead, .outlineLinkTail, .outlineLinkEllipsis, .underlineStyle] {
+                    storage.removeAttribute(key, range: span.range)
+                }
+                storage.addAttribute(.outlineHidden, value: true, range: span.range)
+                storage.removeAttribute(.outlineHidden, range: site)
+                storage.addAttributes([.foregroundColor: typography.ink.secondary,
+                                       .font: Typography.font(typography.bodyFamily, face: typography.bodyFace, size: round(base.pointSize * 0.82))],
+                                      range: site)
+                if let url = storage.attribute(.link, at: content.location, effectiveRange: nil) { storage.addAttribute(.link, value: url, range: site) }
             }
         }
         // After the words' own styles: the arrow's face is the last word on it.

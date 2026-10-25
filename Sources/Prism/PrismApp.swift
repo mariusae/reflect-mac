@@ -25,6 +25,12 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         Appearance.current = appearance
     }
 
+    /// View ▸ Page: flat, or cards.
+    @objc func choosePage(_ sender: NSMenuItem) {
+        PageStyle.flat = sender.representedObject as? String == "flat"
+        controller?.typographyChanged()
+    }
+
     /// Prism ▸ Settings: the typography window.
     @objc func showSettings(_ sender: Any?) {
         guard let controller else { return }
@@ -448,6 +454,13 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             choice.representedObject = appearance.rawValue
             appearances.submenu?.addItem(choice)
         }
+        let pages = NSMenuItem(title: "Page", action: nil, keyEquivalent: "")
+        pages.submenu = NSMenu(title: "Page")
+        for (title, value) in [("Flat", "flat"), ("Cards", "cards")] {
+            let choice = item(title, #selector(PrismApp.choosePage(_:)))
+            choice.representedObject = value
+            pages.submenu?.addItem(choice)
+        }
         let faces = NSMenuItem(title: "Typeface", action: nil, keyEquivalent: "")
         faces.submenu = NSMenu(title: "Typeface")
         for face in Typeface.available {
@@ -457,8 +470,11 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         }
         submenu("View", [
             item("Show Sidebar", #selector(PrismWindowController.toggleSidebar(_:)), "s", [.command, .control]),
+            // As a browser's address field: the column's own name field, searching.
+            item("Go to Field", #selector(PrismWindowController.find(_:)), "l"),
             .separator(),
             appearances,
+            pages,
             faces,
             item("Bigger", #selector(PrismWindowController.biggerText(_:)), "+"),
             item("Smaller", #selector(PrismWindowController.smallerText(_:)), "-"),
@@ -549,6 +565,9 @@ extension PrismApp: NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(chooseAppearance(_:)) {
             item.state = item.representedObject as? String == Appearance.current.rawValue ? .on : .off
+        }
+        if item.action == #selector(choosePage(_:)) {
+            item.state = (item.representedObject as? String == "flat") == PageStyle.flat ? .on : .off
         }
         return true
     }

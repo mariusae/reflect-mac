@@ -30,7 +30,7 @@ package enum VideoCard {
     }
 
     /// Draws the card into a rectangle of its size, or shrunk to fit.
-    package static func draw(_ video: Video, in rect: NSRect, images: ImageStore) {
+    package static func draw(_ video: Video, in rect: NSRect, images: ImageStore, flat: Bool = false) {
         let natural = size(of: video)
         NSGraphicsContext.saveGraphicsState()
         let transform = NSAffineTransform()
@@ -39,9 +39,12 @@ package enum VideoCard {
         transform.concat()
         let bounds = NSRect(origin: .zero, size: natural)
 
-        let card = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
-        NSColor.controlBackgroundColor.setFill()
-        card.fill()
+        // Flat, the picture square-cornered, no frame round it.
+        let card = flat ? NSBezierPath(rect: bounds) : NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
+        if !flat {
+            NSColor.controlBackgroundColor.setFill()
+            card.fill()
+        }
 
         // The picture, filling the top: cropped to 16:9, which takes off the
         // black bars YouTube's thumbnails come with.
@@ -84,9 +87,11 @@ package enum VideoCard {
                                                                        .foregroundColor: NSColor.secondaryLabelColor])
         mark.draw(at: NSPoint(x: width - padding - mark.size().width, y: y + 1))
 
-        NSColor.separatorColor.setStroke()
-        card.lineWidth = 1
-        card.stroke()
+        if !flat {
+            NSColor.separatorColor.setStroke()
+            card.lineWidth = 1
+            card.stroke()
+        }
         NSGraphicsContext.restoreGraphicsState()
     }
 }

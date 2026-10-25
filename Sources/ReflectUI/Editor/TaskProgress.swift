@@ -84,6 +84,9 @@ package final class ProgressRingButton: NSButton {
 /// clockwise from the top, with the share done — and, all done, whole, with
 /// a tick in it when there is room for one.
 package enum ProgressRing {
+    /// In the text's ink, not the accent's: the flat page, all one colour.
+    package nonisolated(unsafe) static var monochrome = false
+
     package static func draw(_ progress: Checkboxes.Progress, in rect: NSRect, lineWidth width: CGFloat, flipped: Bool,
                      tick: Bool = true, track: NSColor = .quaternaryLabelColor, dimmed: Bool = false) {
         let ring = rect.insetBy(dx: width / 2, dy: width / 2)
@@ -97,7 +100,8 @@ package enum ProgressRing {
 
         guard progress.total > 0 else { return }
         let share = CGFloat(progress.share)
-        (dimmed ? NSColor.controlAccentColor.withAlphaComponent(0.6) : NSColor.controlAccentColor).setStroke()
+        let ink = ProgressRing.monochrome ? NSColor.labelColor : NSColor.controlAccentColor
+        (dimmed ? ink.withAlphaComponent(0.6) : ink).setStroke()
         if share >= 1 {
             let full = NSBezierPath(ovalIn: ring)
             full.lineWidth = width

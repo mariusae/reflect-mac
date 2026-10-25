@@ -49,7 +49,8 @@ final class NoteBadges: NSView {
     override func draw(_ dirtyRect: NSRect) {
         for (flag, slot) in zip(flags.shown, slots()) {
             let color: NSColor = switch flag.weight {
-            case .calling: Ink.accent
+            // Flat, all in ink: what calls is the text's, not blue.
+            case .calling: PageStyle.flat ? Ink.text : Ink.accent
             case .telling: Ink.week
             case .quiet: Ink.faint
             }

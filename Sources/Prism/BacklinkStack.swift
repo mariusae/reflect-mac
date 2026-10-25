@@ -41,6 +41,31 @@ final class BacklinkStack: NSView {
     var onShowAll: (() -> Void)?
     /// Dealt out or gathered: the column lays it out again, taller or not.
     var onSpread: (() -> Void)?
+    /// Never shown bunched: dealt out from a mark the column has, when the
+    /// pointer is on it — `show(_:)` — and gathered back into it.
+    var hidesBunch = false { didSet { if hidesBunch != oldValue { needsDisplay = true } } }
+    /// While true, the pointer leaving the cards does not gather them: it is
+    /// on the mark they were dealt from.
+    var keepsOpen: (() -> Bool)?
+
+    /// Dealt out, or gathered, as the column asks.
+    func show(_ out: Bool) {
+        guard out != (target == 1) else { return }
+        if !out { hovered = nil }
+        spread(out)
+    }
+
+    /// Whether the pointer is on one of its cards.
+    var pointerIsOver: Bool {
+        guard let window, dealt > 0.01 else { return false }
+        return card(at: convert(window.mouseLocationOutsideOfEventStream, from: nil)) != nil
+    }
+
+    /// How many show, bunched or dealt out: none bunched, when it never is.
+    private var shownCount: Int {
+        let all = dealtCards.count
+        return dealt > 0.01 ? all : hidesBunch ? 0 : min(all, 3)
+    }
 
     override var isFlipped: Bool { true }
 
@@ -166,7 +191,8 @@ final class BacklinkStack: NSView {
 
     private func card(at point: NSPoint) -> Int? {
         let all = dealtCards
-        // The one on top first: the newest, at the foot.
+        // The one on top first: the newest, at the foot. None, bunched and never shown so.
+        guard shownCount > 0 else { return nil }
         return all.indices.first { place($0, of: all.count).contains(point) }
     }
 
@@ -178,7 +204,7 @@ final class BacklinkStack: NSView {
         guard !all.isEmpty else { return }
         let named = dealt > 0.6
         // Bunched, three at most show; the newest on top, at the foot.
-        let count = dealt > 0.01 ? all.count : min(all.count, 3)
+        let count = shownCount
         for i in stride(from: count - 1, through: 0, by: -1) {
             let rect = place(i, of: all.count).insetBy(dx: 0.5, dy: 0.5)
             let lifted = named && i == hovered
@@ -269,19 +295,17 @@ final class BacklinkStack: NSView {
 
     override func resetCursorRects() {
         let all = dealtCards
-        let count = dealt > 0.01 ? all.count : min(all.count, 3)
-        for i in 0..<count { addCursorRect(place(i, of: all.count), cursor: .pointingHand) }
+        for i in 0..<shownCount { addCursorRect(place(i, of: all.count), cursor: .pointingHand) }
     }
 
     /// Only the cards are its own: the room about them, the note's.
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
         let all = dealtCards
-        let count = dealt > 0.01 ? all.count : min(all.count, 3)
-        return (0..<count).contains { place($0, of: all.count).contains(local) } ? self : nil
+        return (0..<shownCount).contains { place($0, of: all.count).contains(local) } ? self : nil
     }
 
-    override func mouseEntered(with event: NSEvent) { spread(true) }
+    override func mouseEntered(with event: NSEvent) { if !hidesBunch { spread(true) } }
 
     /// Dealt out at once, the newest pointed at: for a script's picture.
     func spreadForScript() {
@@ -295,7 +319,7 @@ final class BacklinkStack: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if !isSpread, card(at: point) != nil { spread(true) }
+        if !isSpread, !hidesBunch, card(at: point) != nil { spread(true) }
         let index = card(at: point)
         if index != hovered {
             hovered = index
@@ -306,6 +330,8 @@ final class BacklinkStack: NSView {
 
     override func mouseExited(with event: NSEvent) {
         hovered = nil
+        needsDisplay = true
+        if keepsOpen?() == true { return }
         spread(false)
     }
 

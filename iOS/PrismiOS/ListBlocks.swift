@@ -368,16 +368,19 @@ final class GapBlock: UIView, SheetBlock {
     init(gap: TimelineGap, metrics: PhoneMetrics) {
         self.gap = gap
         super.init(frame: .zero)
-        let font = metrics.face.heading(round(metrics.size * 0.78), weight: .medium)
+        // Flat, in the small capitals every label is in.
+        let label = Card.flat ? Card.label(size: metrics.size) : nil
+        let font = (label?[.font] as? UIFont) ?? metrics.face.heading(round(metrics.size * 0.78), weight: .medium)
         let title = NSMutableAttributedString()
         // The dots on the middle of the words beside them, not their baseline.
         if let dots = UIImage(systemName: "ellipsis", withConfiguration: UIImage.SymbolConfiguration(pointSize: round(metrics.size * 0.9), weight: .bold))?
-            .withTintColor(Ink.secondary, renderingMode: .alwaysOriginal) {
+            .withTintColor(Card.flat ? Ink.label : Ink.secondary, renderingMode: .alwaysOriginal) {
             let attachment = NSTextAttachment(image: dots)
             attachment.bounds = CGRect(x: 0, y: ((font.capHeight - dots.size.height) / 2).rounded(), width: dots.size.width, height: dots.size.height)
             title.append(NSAttributedString(attachment: attachment))
         }
-        title.append(NSAttributedString(string: "  " + Self.describe(gap), attributes: [.font: font, .foregroundColor: Ink.faint]))
+        title.append(NSAttributedString(string: "  " + (label == nil ? Self.describe(gap) : Self.describe(gap).uppercased()),
+                                        attributes: label ?? [.font: font, .foregroundColor: Ink.faint]))
         button.setAttributedTitle(title, for: .normal)
         button.contentHorizontalAlignment = .leading
         button.accessibilityLabel = "Show " + Self.describe(gap)

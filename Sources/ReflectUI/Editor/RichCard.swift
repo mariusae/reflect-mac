@@ -7,22 +7,41 @@ import ReflectCore
 /// at the left.
 package enum RichCard {
     package static let width: CGFloat = 440
-    private static let padding: CGFloat = 12
     private static let thumbnail: CGFloat = 76
 
-    private static let serviceFont = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
-    private static let titleFont = NSFont.systemFont(ofSize: 14, weight: .semibold)
-    private static let detailFont = NSFont.systemFont(ofSize: 12.5)
-    private static let factsFont = NSFont.systemFont(ofSize: 11.5)
+    /// How a card is set: framed, in the system's face; or, on the flat page,
+    /// unframed, in the notes' own — the site in small capitals over its
+    /// title in Semibold, as a magazine heads a piece.
+    private struct Style {
+        var flat = false
+        var padding: CGFloat = 12
+        var serviceFont = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+        var titleFont = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        var detailFont = NSFont.systemFont(ofSize: 12.5)
+        var factsFont = NSFont.systemFont(ofSize: 11.5)
+        var label: [NSAttributedString.Key: Any] = [:]
+
+        init(_ typography: Typography?) {
+            guard let typography, typography.flat else { return }
+            flat = true
+            padding = 4
+            label = typography.label(size: 15)
+            titleFont = typography.face(style: "Semibold", heading: true, size: 15) ?? typography.headingFont(size: 15, weight: .semibold)
+            detailFont = Typography.font(typography.bodyFamily, face: typography.bodyFace, size: 13)
+            factsFont = Typography.font(typography.bodyFamily, face: typography.bodyFace, size: 12)
+            serviceFont = label[.font] as? NSFont ?? serviceFont
+        }
+    }
 
     private static func hasPicture(_ face: RichCardFace) -> Bool { face.picture != .none }
 
     /// Where the words go, across: clear of the picture.
-    private static func textInsets(_ face: RichCardFace) -> (left: CGFloat, right: CGFloat) {
+    private static func textInsets(_ face: RichCardFace, _ style: Style) -> (left: CGFloat, right: CGFloat) {
+        let padding = style.padding
         switch face.picture {
-        case .none: (padding, padding)
-        case .thumbnail: (padding, padding + thumbnail + 12)
-        case .artwork: (padding + thumbnail + 12, padding)
+        case .none: return (padding, padding)
+        case .thumbnail: return (padding, padding + thumbnail + 12)
+        case .artwork: return (padding + thumbnail + 12, padding)
         }
     }
 
@@ -36,7 +55,9 @@ package enum RichCard {
     private static func height(_ text: NSAttributedString, width: CGFloat, lines: Int, font: NSFont) -> CGFloat {
         let full = ceil(text.boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude),
                                           options: [.usesLineFragmentOrigin, .usesFontLeading]).height)
-        return min(full, ceil(font.ascender - font.descender + font.leading) * CGFloat(lines) + 1)
+        // A line as the face sets it: some faces' lines are taller than their ascent and descent.
+        let line = max(ceil(font.ascender - font.descender + font.leading), ceil(NSLayoutManager().defaultLineHeight(for: font)))
+        return min(full, line * CGFloat(lines) + 1)
     }
 
     private struct Layout {
@@ -46,12 +67,13 @@ package enum RichCard {
         var total: CGFloat
     }
 
-    private static func layout(_ face: RichCardFace) -> Layout {
-        let insets = textInsets(face)
+    private static func layout(_ face: RichCardFace, _ style: Style) -> Layout {
+        let insets = textInsets(face, style)
+        let padding = style.padding
         let text = width - insets.left - insets.right
-        let title = height(paragraph(face.title, font: titleFont, color: .labelColor), width: text, lines: 2, font: titleFont)
-        let detail = face.detail.map { height(paragraph($0, font: detailFont, color: .secondaryLabelColor), width: text, lines: 2, font: detailFont) } ?? 0
-        let facts = face.facts.map { height(paragraph($0, font: factsFont, color: .secondaryLabelColor), width: text, lines: 1, font: factsFont) } ?? 0
+        let title = height(paragraph(face.title, font: style.titleFont, color: .labelColor), width: text, lines: 2, font: style.titleFont)
+        let detail = face.detail.map { height(paragraph($0, font: style.detailFont, color: .secondaryLabelColor), width: text, lines: 2, font: style.detailFont) } ?? 0
+        let facts = face.facts.map { height(paragraph($0, font: style.factsFont, color: .secondaryLabelColor), width: text, lines: 1, font: style.factsFont) } ?? 0
         var total = padding + 16 + 4 + title
         if detail > 0 { total += 3 + detail }
         if facts > 0 { total += 4 + facts }
@@ -60,11 +82,15 @@ package enum RichCard {
         return Layout(title: title, detail: detail, facts: facts, total: ceil(total))
     }
 
-    package static func size(of face: RichCardFace) -> CGSize { CGSize(width: width, height: layout(face).total) }
+    package static func size(of face: RichCardFace, typography: Typography? = nil) -> CGSize {
+        CGSize(width: width, height: layout(face, Style(typography)).total)
+    }
 
     /// Draws the card into a rectangle of its size, or shrunk to fit.
-    package static func draw(_ face: RichCardFace, in rect: NSRect, images: ImageStore) {
-        let measures = layout(face)
+    package static func draw(_ face: RichCardFace, in rect: NSRect, images: ImageStore, typography: Typography? = nil) {
+        let style = Style(typography)
+        let padding = style.padding, corner: CGFloat = style.flat ? 0 : 8
+        let measures = layout(face, style)
         NSGraphicsContext.saveGraphicsState()
         let transform = NSAffineTransform()
         transform.translateX(by: rect.minX, yBy: rect.minY)
@@ -72,26 +98,37 @@ package enum RichCard {
         transform.concat()
         let bounds = NSRect(x: 0, y: 0, width: width, height: measures.total)
         let card = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
-        NSColor.controlBackgroundColor.setFill()
-        card.fill()
+        if !style.flat {
+            NSColor.controlBackgroundColor.setFill()
+            card.fill()
+        }
 
         // The picture: a page's at the right, a cover at the left.
         switch face.picture {
         case .thumbnail(let url):
-            drawPicture(images.image(url), in: NSRect(x: width - padding - thumbnail, y: padding, width: thumbnail, height: thumbnail), corner: 8)
+            drawPicture(images.image(url), in: NSRect(x: width - padding - thumbnail, y: padding, width: thumbnail, height: thumbnail), corner: corner)
         case .artwork(let url):
-            drawPicture(images.image(url), in: NSRect(x: padding, y: padding, width: thumbnail, height: thumbnail), corner: 8)
+            drawPicture(images.image(url), in: NSRect(x: padding, y: padding, width: thumbnail, height: thumbnail), corner: corner)
         case .none:
             break
         }
 
-        let insets = textInsets(face)
+        let insets = textInsets(face, style)
         let textWidth = width - insets.left - insets.right
         var x = insets.left
         var y = padding
+        let titleFont = style.titleFont, detailFont = style.detailFont, factsFont = style.factsFont
         // The service: a site's icon, or the service's mark, then its name.
         let tint = face.tint.map { NSColor(srgbRed: $0.0, green: $0.1, blue: $0.2, alpha: 1) } ?? NSColor.secondaryLabelColor
-        if let icon = face.icon.flatMap({ images.image($0) }) {
+        if style.flat {
+            // The site in small spaced capitals: no mark, no colour.
+            var label = style.label
+            let truncating = NSMutableParagraphStyle()
+            truncating.lineBreakMode = .byTruncatingTail
+            label[.paragraphStyle] = truncating
+            NSAttributedString(string: face.service.uppercased(), attributes: label)
+                .draw(with: NSRect(x: x, y: y, width: textWidth, height: 16), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        } else if let icon = face.icon.flatMap({ images.image($0) }) {
             icon.draw(in: NSRect(x: x, y: y + 1, width: 14, height: 14), from: .zero, operation: .sourceOver, fraction: 1,
                       respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high.rawValue])
             x += 19
@@ -102,11 +139,13 @@ package enum RichCard {
                         from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
             x += size.width + 5
         }
-        let service = NSMutableParagraphStyle()
-        service.lineBreakMode = .byTruncatingTail
-        NSAttributedString(string: face.service, attributes: [.font: serviceFont, .foregroundColor: face.tint == nil ? NSColor.secondaryLabelColor : tint,
-                                                              .paragraphStyle: service])
-            .draw(with: NSRect(x: x, y: y, width: insets.left + textWidth - x, height: 16), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        if !style.flat {
+            let service = NSMutableParagraphStyle()
+            service.lineBreakMode = .byTruncatingTail
+            NSAttributedString(string: face.service, attributes: [.font: style.serviceFont, .foregroundColor: face.tint == nil ? NSColor.secondaryLabelColor : tint,
+                                                                  .paragraphStyle: service])
+                .draw(with: NSRect(x: x, y: y, width: insets.left + textWidth - x, height: 16), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        }
         y += 16 + 4
         x = insets.left
         paragraph(face.title, font: titleFont, color: .labelColor)
@@ -124,9 +163,11 @@ package enum RichCard {
                 .draw(with: NSRect(x: x, y: y, width: textWidth, height: measures.facts), options: [.usesLineFragmentOrigin, .usesFontLeading, .truncatesLastVisibleLine])
         }
 
-        NSColor.separatorColor.setStroke()
-        card.lineWidth = 1
-        card.stroke()
+        if !style.flat {
+            NSColor.separatorColor.setStroke()
+            card.lineWidth = 1
+            card.stroke()
+        }
         NSGraphicsContext.restoreGraphicsState()
     }
 

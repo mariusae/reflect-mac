@@ -51,7 +51,8 @@ enum Typeface: String, CaseIterable, Identifiable {
         case .mona: 1.42
         case .plex: 1.4
         case .alegreya, .lato: 1.4
-        case .ideal: 1.45
+        // Its Book set closer, as solid paragraphs are; its Light given more air.
+        case .ideal: Self.idealBook ? 1.38 : 1.45
         case .system: 1.33
         case .literata, .fraunces, .source: 1.5
         }
@@ -91,7 +92,7 @@ enum Typeface: String, CaseIterable, Identifiable {
     }
 
     /// The weight bold is set in: Ideal Sans's Semibold, as on the Mac.
-    var boldWeight: UIFont.Weight { lighter(.bold) }
+    var boldWeight: UIFont.Weight { self == .ideal ? .semibold : .bold }
 
     /// A font of a family at a weight, italic or not, picked from the
     /// family's own faces by name — not by traits, which can land on any.
@@ -107,34 +108,42 @@ enum Typeface: String, CaseIterable, Identifiable {
         return UIFont(descriptor: font.fontDescriptor.addingAttributes([.featureSettings: features]), size: font.pointSize)
     }
 
-    /// Ideal Sans's text in its Book, not its Light: chosen in Settings.
+    /// Ideal Sans's text in its Book — solid on a phone's white page — or
+    /// in its Light, as the Mac sets it: chosen in Settings.
     static var idealBook: Bool {
-        get { UserDefaults.standard.bool(forKey: "Typeface.idealBook") }
-        set { UserDefaults.standard.set(newValue, forKey: "Typeface.idealBook") }
+        get { !UserDefaults.standard.bool(forKey: "Typeface.idealLight") }
+        set { UserDefaults.standard.set(!newValue, forKey: "Typeface.idealLight") }
     }
 
-    /// A weight as the face is set, as on the Mac: Ideal Sans's Book reads
-    /// heavy, so its text is its Light, and what would be bold its Semibold —
-    /// unless its Book is chosen, and set as any face is.
-    private func lighter(_ weight: UIFont.Weight) -> UIFont.Weight {
-        guard self == .ideal, !Self.idealBook else { return weight }
+    /// A text weight as the face is set. Ideal Sans: bold within the text its
+    /// Semibold, an even step up from its Book; in its Light, as the Mac
+    /// sets it, the text its Light.
+    private func textWeight(_ weight: UIFont.Weight) -> UIFont.Weight {
+        guard self == .ideal else { return weight }
         switch weight {
-        case .regular: return .light
+        case .regular: return Self.idealBook ? .regular : .light
         case .bold: return .semibold
         case .heavy, .black: return .bold
         default: return weight
         }
     }
 
+    /// A heading weight as the face is set: Ideal Sans's in its Book, Bold;
+    /// in its Light, as the Mac sets it, Semibold.
+    private func headingWeight(_ weight: UIFont.Weight) -> UIFont.Weight {
+        guard self == .ideal, !Self.idealBook else { return weight }
+        return textWeight(weight)
+    }
+
     /// The size text is set at, for a size asked for.
     func size(_ base: CGFloat) -> CGFloat { round(base * scale * 2) / 2 }
 
     func body(_ size: CGFloat, weight: UIFont.Weight = .regular, italic: Bool = false) -> UIFont {
-        font(family, size: size, weight: lighter(weight), italic: italic)
+        font(family, size: size, weight: textWeight(weight), italic: italic)
     }
 
     func heading(_ size: CGFloat, weight: UIFont.Weight = .bold) -> UIFont {
-        var font = font(headingFamily, size: size, weight: lighter(weight))
+        var font = font(headingFamily, size: size, weight: headingWeight(weight))
         // Fraunces softened, its corners rounded.
         if self == .fraunces {
             let soft = "SOFT".utf8.reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
@@ -264,6 +273,9 @@ enum Ink {
     static let card = dynamic(hex(0xfdfdfc), hex(0x1a1a1a))
     static let text = dynamic(hex(0x000000), hex(0xf3f5f7))
     static let secondary = dynamic(hex(0x999999), hex(0x777777))
+    /// The small lines in spaced capitals over things: quieter than the
+    /// text, a shade firmer than the secondary grey, to read at their size.
+    static let label = dynamic(hex(0x737373), hex(0x9e9e9e))
     static let faint = dynamic(hex(0x000000, alpha: 0.3), hex(0xf3f5f7, alpha: 0.3))
     static let rule = dynamic(hex(0x000000, alpha: 0.15), hex(0xf3f5f7, alpha: 0.15))
     static let hover = dynamic(hex(0x000000, alpha: 0.04), hex(0xf3f5f7, alpha: 0.06))

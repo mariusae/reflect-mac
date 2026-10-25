@@ -151,9 +151,8 @@ package final class DayView: NSView, NSTextViewDelegate {
             }
             if conflictView != nil { notes.append("Needs Review") } else if isReadOnly { notes.append("Read Only") }
             // A card says when the note last changed.
-            if card != nil, week == nil, let modified = modified { notes.insert(CardSurface.ago(modified), at: 0) }
-            badge.stringValue = notes.joined(separator: " · ")
-            badge.isHidden = notes.isEmpty
+            if carded || flat, week == nil, let modified = modified { notes.insert(CardSurface.ago(modified), at: 0) }
+            setBadge(notes)
             needsLayout = true
             return
         }
@@ -168,15 +167,40 @@ package final class DayView: NSView, NSTextViewDelegate {
         case today.adding(1): notes.append("Tomorrow")
         default:
             // A card says how far off any other day is.
-            if card != nil, let a = today.date, let b = day.date {
+            if carded || flat, let a = today.date, let b = day.date {
                 notes.append(CardSurface.distance(days: Calendar.current.dateComponents([.day], from: a, to: b).day ?? 0))
             }
         }
         if conflictView != nil { notes.append("Needs Review") } else if isReadOnly { notes.append("Read Only") }
-        badge.stringValue = notes.joined(separator: " · ")
-        badge.isHidden = notes.isEmpty
+        // Flat, a day's date and how far it is, one small line in capitals.
+        if flat {
+            title.attributedStringValue = NSAttributedString(string: ([title.stringValue] + notes).joined(separator: "  ·  ").uppercased(),
+                                                             attributes: metrics.typography.label())
+            badge.isHidden = true
+            needsLayout = true
+            return
+        }
+        setBadge(notes)
         needsLayout = true
     }
+
+    /// What is said beside the name — or, flat, over it, in small capitals.
+    private func setBadge(_ notes: [String]) {
+        let words = notes.joined(separator: flat ? "  ·  " : " · ")
+        if flat {
+            badge.attributedStringValue = NSAttributedString(string: words.uppercased(), attributes: metrics.typography.label())
+        } else {
+            badge.stringValue = words
+            badge.font = Typography.font(metrics.typography.bodyFamily, face: metrics.typography.bodyFace, size: round(metrics.fontSize * 0.88))
+            badge.textColor = metrics.typography.ink.secondary
+        }
+        badge.isHidden = notes.isEmpty
+    }
+
+    /// The page flat: a hairline under the note, not a card; its header a small line in capitals.
+    private var flat: Bool { metrics.typography.flat }
+    /// On a card: one is wanted, and the page is not flat.
+    private var carded: Bool { card != nil && !flat }
 
     /// When the note's file last changed.
     private var modified: Date? {
@@ -191,7 +215,12 @@ package final class DayView: NSView, NSTextViewDelegate {
     }
 
     private var headerTop: CGFloat { coverRoom(columnWidth: column.width) + round(metrics.fontSize * 2.2) }
-    private var headerHeight: CGFloat { ceil(title.intrinsicContentSize.height) }
+    /// Flat, a note's small line over its name: the room it takes.
+    private var kickerRoom: CGFloat {
+        guard flat, ref.day == nil, !title.stringValue.isEmpty, !badge.isHidden else { return 0 }
+        return ceil(badge.intrinsicContentSize.height) + 2
+    }
+    private var headerHeight: CGFloat { kickerRoom + ceil(title.intrinsicContentSize.height) }
     /// Where the note starts: under its name, or, for a note whose first
     /// heading is its name, straight away.
     /// Whether its words beside the name — when, a week's days — sit on its
@@ -203,7 +232,9 @@ package final class DayView: NSView, NSTextViewDelegate {
     /// The middle of the name's lowercase letters, in this view — for the
     /// buttons beside it to be centred on; nil with no name over the note.
     package var nameMiddle: CGFloat? {
-        guard !title.stringValue.isEmpty, let font = title.font else { return nil }
+        // Flat, a day's name is its small line in capitals, in that line's face.
+        let shown = flat && ref.day != nil ? metrics.typography.label()[.font] as? NSFont : title.font
+        guard !title.stringValue.isEmpty, let font = shown else { return nil }
         layoutSubtreeIfNeeded()
         return title.frame.minY + font.ascender - font.xHeight / 2
     }
@@ -229,13 +260,13 @@ package final class DayView: NSView, NSTextViewDelegate {
     /// How wide the banner is over a column of text: the card's width, or
     /// the column's on the page.
     private func coverWidth(columnWidth: CGFloat) -> CGFloat {
-        card == nil ? columnWidth : columnWidth + 2 * CardSurface.outset
+        !carded ? columnWidth : columnWidth + 2 * CardSurface.outset
     }
 
     /// The room the cover takes above the name: none without one.
     private func coverRoom(columnWidth: CGFloat) -> CGFloat {
         guard coverSource != nil else { return 0 }
-        return (card == nil ? 0 : CardSurface.spacing) + CoverBanner.height(width: coverWidth(columnWidth: columnWidth))
+        return (!carded ? 0 : CardSurface.spacing) + CoverBanner.height(width: coverWidth(columnWidth: columnWidth))
     }
 
     /// The cover as the note now says, its picture as the store has it.
@@ -255,8 +286,8 @@ package final class DayView: NSView, NSTextViewDelegate {
         }
         banner.isHidden = source == nil
         banner.image = source.flatMap { editor.images?.image($0) }
-        banner.topOnly = card != nil
-        banner.radius = card == nil ? 8 : CardSurface.radius
+        banner.topOnly = carded
+        banner.radius = !carded ? (flat ? 0 : 8) : CardSurface.radius
     }
     private var bottomPadding: CGFloat { round(metrics.fontSize * 1.6) }
 
@@ -264,9 +295,11 @@ package final class DayView: NSView, NSTextViewDelegate {
         super.layout()
         let column = column
         card?.frame = CardSurface.frame(column: column, in: bounds)
+        card?.isHidden = flat
         if coverSource != nil {
             let width = coverWidth(columnWidth: column.width)
-            banner.frame = NSRect(x: card?.frame.minX ?? column.minX, y: card?.frame.minY ?? 0,
+            let surface = carded ? card?.frame : nil
+            banner.frame = NSRect(x: surface?.minX ?? column.minX, y: surface?.minY ?? 0,
                                   width: width, height: CoverBanner.height(width: width))
         }
         // A label draws its text a couple of points in from its edge.
@@ -274,13 +307,17 @@ package final class DayView: NSView, NSTextViewDelegate {
         // Whole points, and a little over: a bold face's last figure reaches
         // past the width it is measured at.
         let size = title.intrinsicContentSize
-        title.frame = NSRect(x: textX, y: headerTop, width: ceil(size.width) + 4, height: ceil(size.height))
+        title.frame = NSRect(x: textX, y: headerTop + kickerRoom, width: ceil(size.width) + 4, height: ceil(size.height))
         let badgeSize = badge.intrinsicContentSize
         // At the right, clear of the buttons there, on the name's baseline.
         let rise = (title.font?.ascender ?? 0) - (badge.font?.ascender ?? 0)
         badge.frame = NSRect(x: max(title.frame.maxX + 6, column.maxX - trailingReserve - ceil(badgeSize.width) - 4),
                              y: (title.frame.minY + rise).rounded(),
                              width: ceil(badgeSize.width) + 4, height: ceil(badgeSize.height))
+        if kickerRoom > 0 {
+            // Flat: over the name, in small capitals.
+            badge.frame = NSRect(x: textX, y: headerTop, width: ceil(badgeSize.width) + 4, height: ceil(badgeSize.height))
+        }
         if badgeOnFirstLine {
             // At the right of the first line, on its middle, clear of the buttons there.
             let width = ceil(badgeSize.width) + 4
@@ -452,9 +489,15 @@ package final class DayView: NSView, NSTextViewDelegate {
     private var card: CardSurface?
 
     package override func draw(_ dirtyRect: NSRect) {
+        let column = column
+        // Flat, among others, a hairline under each note, across its text.
+        if flat, card != nil {
+            metrics.typography.ink.rule.setFill()
+            NSRect(x: column.minX + metrics.indent, y: bounds.height - 1, width: column.width - metrics.indent, height: 1).fill()
+            return
+        }
         // Days are ruled apart; a note on its own needs no rule.
         guard drawsRule, ref.day != nil else { return }
-        let column = column
         metrics.typography.ink.rule.setFill()
         NSRect(x: column.minX, y: 0, width: column.width, height: 1).fill()
     }

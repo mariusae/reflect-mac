@@ -49,7 +49,7 @@ package enum TweetCard {
 
     /// Draws the card into a rectangle of its size, or shrunk to fit a
     /// narrower column.
-    package static func draw(_ tweet: Tweet, in rect: NSRect, images: ImageStore) {
+    package static func draw(_ tweet: Tweet, in rect: NSRect, images: ImageStore, flat: Bool = false) {
         let natural = size(of: tweet)
         NSGraphicsContext.saveGraphicsState()
         let transform = NSAffineTransform()
@@ -58,12 +58,15 @@ package enum TweetCard {
         transform.concat()
         let bounds = NSRect(origin: .zero, size: natural)
 
-        let card = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
-        NSColor.controlBackgroundColor.setFill()
-        card.fill()
-        NSColor.separatorColor.setStroke()
-        card.lineWidth = 1
-        card.stroke()
+        // Flat, no frame: on the page as the rest of the note is.
+        if !flat {
+            let card = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
+            NSColor.controlBackgroundColor.setFill()
+            card.fill()
+            NSColor.separatorColor.setStroke()
+            card.lineWidth = 1
+            card.stroke()
+        }
 
         let avatar = NSRect(x: padding, y: padding, width: avatarSize, height: avatarSize)
         NSGraphicsContext.saveGraphicsState()

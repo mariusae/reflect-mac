@@ -37,6 +37,8 @@ struct Place: Equatable {
 final class Sidebar: NSView {
     var onOpen: ((Place) -> Void)?
     private let card = NSView()
+    /// Flat: a hairline at its right edge, where the notes begin.
+    private let edge = NSView()
     private let scroll = NSScrollView()
     private let list = FlippedView()
     /// Headers and rows, top to bottom.
@@ -58,6 +60,8 @@ final class Sidebar: NSView {
         card.layer?.masksToBounds = true
         card.layer?.borderWidth = 0.5
         addSubview(card)
+        edge.wantsLayer = true
+        addSubview(edge)
 
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -103,19 +107,28 @@ final class Sidebar: NSView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            card.layer?.borderColor = Ink.rule.cgColor
-            card.layer?.backgroundColor = Ink.shelf.cgColor
-        }
+        effectiveAppearance.performAsCurrentDrawingAppearance { style() }
+    }
+
+    /// A card of its own — or, flat, the page's paper, a hairline at its edge.
+    private func style() {
+        let flat = PageStyle.flat
+        card.layer?.cornerRadius = flat ? 0 : 12
+        card.layer?.borderWidth = flat ? 0 : 0.5
+        card.layer?.borderColor = Ink.rule.cgColor
+        card.layer?.backgroundColor = (flat ? Ink.paper : Ink.shelf).cgColor
+        edge.layer?.backgroundColor = Ink.rule.cgColor
+        edge.isHidden = !flat
     }
 
     func show(_ sections: [(title: String, places: [Place])], current: String?, face: Typeface) {
         entries.forEach { $0.removeFromSuperview() }
         entries = []
         for section in sections where !section.places.isEmpty {
-            let header = NSTextField(labelWithAttributedString: NSAttributedString(string: section.title.uppercased(), attributes: [
-                .font: face.font(size: 10.5, weight: .semibold), .kern: 0.9, .foregroundColor: Ink.faint,
-            ]))
+            // Flat, in the small capitals every label is in.
+            let attributes: [NSAttributedString.Key: Any] = PageStyle.flat ? face.typography().label()
+                : [.font: face.font(size: 10.5, weight: .semibold), .kern: 0.9, .foregroundColor: Ink.faint]
+            let header = NSTextField(labelWithAttributedString: NSAttributedString(string: section.title.uppercased(), attributes: attributes))
             list.addSubview(header)
             entries.append(header)
             // Room for a thumbnail in each row, when any has a cover.
@@ -133,10 +146,8 @@ final class Sidebar: NSView {
     override func layout() {
         super.layout()
         card.frame = bounds
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            card.layer?.borderColor = Ink.rule.cgColor
-            card.layer?.backgroundColor = Ink.shelf.cgColor
-        }
+        edge.frame = NSRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height)
+        effectiveAppearance.performAsCurrentDrawingAppearance { style() }
         scroll.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - 44)
         let width = scroll.contentSize.width
         var y: CGFloat = 4

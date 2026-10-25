@@ -17,10 +17,13 @@ package final class LinkPill: NSObject {
     /// Whether it has a hidden character to put its icon in: not a tag, nor
     /// an address shown whole.
     package let hasLead: Bool
+    /// On the flat page: no pill, no icon — the link underlined, as words are.
+    package let flat: Bool
 
-    package init(_ kind: Kind, hasLead: Bool = true) {
+    package init(_ kind: Kind, hasLead: Bool = true, flat: Bool = false) {
         self.kind = kind
-        self.hasLead = hasLead && kind != .tag
+        self.flat = flat
+        self.hasLead = hasLead && kind != .tag && !flat
     }
 
     package var symbol: String? {
@@ -54,9 +57,9 @@ package final class LinkPill: NSObject {
     /// Marks a span as a pill: its lead, where the icon goes, on its first
     /// character, and its tail on its last — both hidden markup, laid out
     /// with room of their own.
-    package static func mark(_ storage: NSTextStorage, _ range: NSRange, kind: Kind) {
+    package static func mark(_ storage: NSTextStorage, _ range: NSRange, kind: Kind, flat: Bool = false) {
         guard range.length >= 2 else { return }
-        let pill = LinkPill(kind)
+        let pill = LinkPill(kind, flat: flat)
         storage.addAttribute(.outlineLink, value: pill, range: range)
         // A tag's characters are all shown: no room of its own to take.
         guard pill.hasLead else { return }
@@ -67,24 +70,24 @@ package final class LinkPill: NSObject {
     /// A bare web address, shortened unless the caret is in it: the scheme
     /// and `www.` hidden, and all the path but its first and last parts,
     /// and what follows the path. Its lead is the first hidden character.
-    package static func markBare(_ storage: NSTextStorage, _ range: NSRange, revealed: Int?) {
+    package static func markBare(_ storage: NSTextStorage, _ range: NSRange, revealed: Int?, flat: Bool = false) {
         let text = storage.string as NSString
         let address = text.substring(with: range)
         let parts = shortened(address)
         let shown = revealed.map { NSLocationInRange($0, range) || $0 == NSMaxRange(range) } ?? false
         guard !shown, parts.prefix > 0 else {
             // Whole, to be edited: all its characters shown, none to put an icon in.
-            storage.addAttribute(.outlineLink, value: LinkPill(.web, hasLead: false), range: range)
+            storage.addAttribute(.outlineLink, value: LinkPill(.web, hasLead: false, flat: flat), range: range)
             return
         }
-        let pill = LinkPill(.web)
+        let pill = LinkPill(.web, flat: flat)
         storage.addAttribute(.outlineLink, value: pill, range: range)
         func hide(_ local: NSRange) {
             guard local.length > 0 else { return }
             storage.addAttribute(.outlineHidden, value: true, range: NSRange(location: range.location + local.location, length: local.length))
         }
         hide(NSRange(location: 0, length: parts.prefix))
-        storage.addAttribute(.outlineLinkLead, value: pill, range: NSRange(location: range.location, length: 1))
+        if pill.hasLead { storage.addAttribute(.outlineLinkLead, value: pill, range: NSRange(location: range.location, length: 1)) }
         if let middle = parts.middle {
             hide(middle)
             storage.addAttribute(.outlineLinkEllipsis, value: pill, range: NSRange(location: range.location + middle.location, length: 1))
@@ -154,8 +157,12 @@ extension OutlineLayoutManager {
                 pieces.append(NSRect(x: rect.minX + origin.x - pad, y: baseline - ascent - 2 + origin.y,
                                      width: rect.width + 2 * pad, height: ascent + descent + 4))
             }
-            LinkPill.tint.withAlphaComponent(0.12).setFill()
-            for piece in pieces { NSBezierPath(roundedRect: piece, xRadius: 5, yRadius: 5).fill() }
+            // Flat: no pill; only a shortened address's ellipsis, in the text's ink.
+            let ink = pill.flat ? (storage.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? NSColor ?? .textColor) : LinkPill.tint
+            if !pill.flat {
+                LinkPill.tint.withAlphaComponent(0.12).setFill()
+                for piece in pieces { NSBezierPath(roundedRect: piece, xRadius: 5, yRadius: 5).fill() }
+            }
             if let first = pieces.first, let symbol = pill.symbol {
                 let side = LinkPill.iconSide(for: font)
                 let configuration = NSImage.SymbolConfiguration(pointSize: side * 0.9, weight: .medium)
@@ -173,7 +180,7 @@ extension OutlineLayoutManager {
                 let glyph = glyphIndexForCharacter(at: at.location)
                 let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
                 let point = location(forGlyphAt: glyph)
-                let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: LinkPill.tint]
+                let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ink]
                 (LinkPill.ellipsis as NSString).draw(at: NSPoint(x: line.minX + point.x + origin.x,
                                                                  y: line.minY + point.y - ascent + origin.y),
                                                      withAttributes: attributes)

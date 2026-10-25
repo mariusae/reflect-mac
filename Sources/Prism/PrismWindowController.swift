@@ -251,6 +251,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         column.onDragSheet = { [weak self] column, index, event in self?.drag(index, from: column, event: event) }
         column.onRemoveFromInbox = { [weak self] ref in self?.setFrontmatter(ref.path, "inbox", nil) }
         column.onNoteMenu = { [weak self] view, button in self?.showNoteMenu(for: view, from: button) }
+        column.onHome = { [weak self] column in self?.openSheet(.timeline, at: .day(.today), on: column, pushing: true) }
         column.onNeedPicture = { [weak self] sheet, size in self?.picture(of: sheet, size: size) }
         column.onOpenPage = { [weak self] ref, column in self?.openPage(of: ref, beside: column) }
         column.onHighlight = { [weak self] ref, passage in self?.highlight(passage, in: ref) }

@@ -293,7 +293,8 @@ enum PhoneCardView {
 
     // Flat, in the notes' own face: the site in small spaced capitals over
     // its title in bold, as a magazine heads a piece.
-    private static var richTitleFont: UIFont { Card.flat ? Typeface.current.heading(16, weight: .bold) : .systemFont(ofSize: 15, weight: .semibold) }
+    // Flat, the title semibold at about the text's size: the card second to what was written.
+    private static var richTitleFont: UIFont { Card.flat ? Typeface.current.heading(16, weight: .semibold) : .systemFont(ofSize: 15, weight: .semibold) }
     private static var richDetailFont: UIFont { Card.flat ? Typeface.current.body(14) : .systemFont(ofSize: 13) }
     private static var richFactsFont: UIFont { Card.flat ? Typeface.current.body(12) : .systemFont(ofSize: 12) }
     private static var richServiceFont: UIFont { Card.flat ? Typeface.current.body(11, weight: .medium) : .systemFont(ofSize: 12, weight: .semibold) }
@@ -331,11 +332,9 @@ enum PhoneCardView {
         let tint = face.tint.map { UIColor(red: $0.0, green: $0.1, blue: $0.2, alpha: 1) } ?? Ink.secondary
         if Card.flat {
             // The site in small spaced capitals, grey: no mark, no colour.
-            let size = richServiceFont.pointSize
             (face.service.uppercased() as NSString).draw(with: CGRect(x: x, y: y, width: textWidth, height: 17),
                                                          options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                                         attributes: [.font: richServiceFont, .foregroundColor: Ink.secondary, .kern: size * 0.1],
-                                                         context: nil)
+                                                         attributes: Card.label(size: 15), context: nil)
         } else if let icon = face.icon.flatMap({ PhoneCards.picture($0, for: source) }) {
             icon.draw(in: CGRect(x: x, y: y + 1, width: 15, height: 15))
             x += 20
