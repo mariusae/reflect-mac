@@ -463,6 +463,9 @@ package final class DayView: NSView, NSTextViewDelegate {
         return max(minimumHeight, height)
     }
 
+    /// Flat: whether a hairline is drawn under it — among other notes, not alone.
+    package var ruledUnder = true { didSet { if ruledUnder != oldValue { needsDisplay = true } } }
+
     /// Whether a day is ruled off from the one before it: not where each
     /// note's heading says enough.
     package var drawsRule = true { didSet { needsDisplay = true } }
@@ -490,8 +493,10 @@ package final class DayView: NSView, NSTextViewDelegate {
 
     package override func draw(_ dirtyRect: NSRect) {
         let column = column
-        // Flat, among others, a hairline under each note, across its text.
+        // Flat, among others, a hairline under each note, across its text —
+        // none under a note alone.
         if flat, card != nil {
+            guard ruledUnder else { return }
             metrics.typography.ink.rule.setFill()
             NSRect(x: column.minX + metrics.indent, y: bounds.height - 1, width: column.width - metrics.indent, height: 1).fill()
             return

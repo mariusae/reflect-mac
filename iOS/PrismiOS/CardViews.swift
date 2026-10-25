@@ -7,6 +7,8 @@ import PrismCore
 final class CardBackground: UIView {
     /// Flat: only a hairline under the note, across the text's width.
     private let rule = UIView()
+    /// Whether the hairline is drawn: among other notes, not under one alone.
+    var ruled = true { didSet { setNeedsLayout() } }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -28,7 +30,7 @@ final class CardBackground: UIView {
         layer.shadowOpacity = flat ? 0 : 0.06
         layer.shadowRadius = 5
         layer.shadowOffset = CGSize(width: 0, height: 1)
-        rule.isHidden = !flat
+        rule.isHidden = !flat || !ruled
     }
 
     override func layoutSubviews() {

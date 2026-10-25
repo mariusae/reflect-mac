@@ -1797,6 +1797,8 @@ final class Column: NSView, OutlineTextViewNavigator {
         // The notes across the whole column: the scrubber lies over them,
         // when it is wanted.
         let inset: CGFloat = 0
+        // A hairline under each note among others; none under one alone.
+        for case let note as DayView in blocks { note.ruledUnder = listsNotes }
         for view in blocks {
             let height = view.desiredHeight(width: width - inset)
             let frame = NSRect(x: inset, y: y, width: width - inset, height: height)

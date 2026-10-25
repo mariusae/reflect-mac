@@ -73,6 +73,8 @@ final class NoteBlock: UIView {
         self.ref = ref
         self.store = store
         self.showsHeader = showsHeader
+        // A note alone — no header, the sheet its own — no hairline under it.
+        card.ruled = showsHeader
         storedMetrics = metrics
         super.init(frame: .zero)
         addSubview(card)
@@ -615,7 +617,8 @@ final class NoteBlock: UIView {
         if let progress {
             let side = round(storedMetrics.size * 0.85)
             let image = ProgressRing.image(progress, side: side)
-            if accessory == nil {
+            // Flat, the inbox's Done is at the right: the ring keeps its place in the margin.
+            if accessory == nil || Card.flat {
                 ringView.image = image
                 ringView.isHidden = false
                 ringView.bounds = CGRect(x: 0, y: 0, width: side, height: side)
@@ -675,7 +678,9 @@ final class NoteBlock: UIView {
     /// its height often.
     private func headerSize(width: CGFloat) -> CGSize {
         if let headerMeasure, abs(headerMeasure.width - width) < 0.5 { return headerMeasure.size }
-        let room = width - 2 * Self.side - max(36, ceil(metaLabel.bounds.width) + 12)
+        // Clear of what is at the right: when, or — flat, in the inbox — its Done.
+        let right = Card.flat ? (accessory == nil ? 0 : 40) : max(36, ceil(metaLabel.bounds.width) + 12)
+        let room = width - 2 * Self.side - right
         let bounds = header.attributedTitle(for: .normal)?.boundingRect(with: CGSize(width: room, height: .greatestFiniteMagnitude),
                                                                          options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil) ?? .zero
         // A little over: the label wraps what only just fits, a ring at its end.
@@ -765,6 +770,14 @@ final class NoteBlock: UIView {
         // The ⋯ at the header's end, on its first line's middle; the inbox's
         // Done hanging in the margin before the name, as a task's box does.
         let firstLine = top + lineHeight / 2
+        // Where the name is: flat, a note's is under its small line in capitals —
+        // what hangs in the margin before it, its Done and its ring, beside it.
+        let nameLine: CGFloat = {
+            guard Card.flat, !header.isHidden, ref.day == nil, GraphPaths.week(fromWeeklyPath: ref.path) == nil,
+                  let kicker = Card.label(size: storedMetrics.size)[.font] as? UIFont else { return firstLine }
+            let name = Typeface.current.heading(round(storedMetrics.size * 1.12), weight: .bold)
+            return top + ceil(kicker.lineHeight) + 3 + ceil(name.lineHeight) / 2
+        }()
         // The ⋯ only on the card being typed in; held, any card's header has it.
         menuButton.isHidden = noteMenu == nil || header.isHidden || !(isLive && editor.isFirstResponder)
         menuButton.frame = CGRect(x: bounds.width - Self.side - 8, y: firstLine - 18, width: 36, height: 36)
@@ -777,9 +790,13 @@ final class NoteBlock: UIView {
             let inner = bounds.width - 2 * Self.side
             summaryView.frame = CGRect(x: Self.side, y: y + 4, width: inner, height: summaryView.height(width: inner))
         }
-        accessory?.frame = CGRect(x: Self.side - 28, y: firstLine - 16, width: 32, height: 32)
-        // On the bullets' line down the margin, and the name's middle.
-        ringView.center = CGPoint(x: Self.side - storedMetrics.indent / 2, y: firstLine)
+        // On the bullets' line down the margin, and the name's middle. Flat,
+        // the inbox's Done at the right, level with the name: what is done to
+        // the note, apart from the marks of what is in it.
+        let margin = Self.side - storedMetrics.indent / 2
+        accessory?.frame = Card.flat ? CGRect(x: bounds.width - Self.side - 26, y: nameLine - 16, width: 32, height: 32)
+            : CGRect(x: margin - 16, y: nameLine - 16, width: 32, height: 32)
+        ringView.center = CGPoint(x: margin, y: nameLine)
         trayView.isHidden = !(inboxMark && header.isHidden)
         if !trayView.isHidden {
             trayView.image = UIImage(systemName: "tray", withConfiguration: UIImage.SymbolConfiguration(pointSize: round(storedMetrics.size * 0.7),
