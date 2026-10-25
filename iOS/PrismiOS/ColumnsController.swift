@@ -210,11 +210,28 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     /// The bar as the sheet shown is: its name and cover.
     func updateBar() {
         let navigation = selectedNavigation
+        bar.canGoBack = (navigation?.viewControllers.count ?? 0) > 1
         guard let sheet = navigation?.topViewController as? SheetController else { return }
-        bar.setTitle(names(of: sheet), cover: sheet.currentNotePath.flatMap(cover(of:)))
+        // A day's or a week's mark is the calendar; another note's, its own.
+        let path = sheet.currentNotePath
+        let dated = path.map { GraphPaths.day(fromDailyPath: $0) != nil || GraphPaths.week(fromWeeklyPath: $0) != nil } ?? false
+        bar.setTitle(names(of: sheet), cover: path.flatMap(cover(of:)),
+                     symbol: path == nil ? Self.symbol(of: sheet.kind) : dated ? "calendar" : nil)
     }
 
-    /// What a sheet is called in the bar: the note being read, or the view.
+    /// A view's mark, in the bar's field in a cover's stead.
+    private static func symbol(of kind: SheetKind) -> String {
+        switch kind {
+        case .timeline: "house"
+        case .inbox: "tray"
+        case .pinned: "pin"
+        case .tasks: "checkmark.circle"
+        case .search: "magnifyingglass"
+        case .backlinks: "arrow.turn.up.left"
+        case .note: "doc.text"
+        }
+    }
+
     /// What a sheet is called, longest first: shorter ones where there is less room.
     private func names(of sheet: SheetController) -> [String] {
         if let path = sheet.currentNotePath { return SliceBlock.names(path, store: store) }
@@ -293,6 +310,10 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         ])
         barToBottom = toBottom
         bar.onHome = { [weak self] in self?.goHome() }
+        bar.onBack = { [weak self] in
+            guard let navigation = self?.selectedNavigation, navigation.viewControllers.count > 1 else { return }
+            navigation.popViewController(animated: true)
+        }
         bar.menu = { [weak self] in self?.barMenu() ?? UIMenu() }
         bar.onWrite = { [weak self] in
             guard let self else { return }
@@ -966,7 +987,9 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         }
         guard !entries.isEmpty else { return nil }
         // Views over the circle held; notes along the pill.
-        let column = what == .home ? bar.frame(of: .home) : bar.pillFrame
+        var column = what == .home ? bar.frame(of: .home) : bar.pillFrame
+        // Over the panel, not on it.
+        column.origin.y = bar.panelTop
         let fan = NoteFan(entries: entries, from: bar.convert(bar.frame(of: what), to: view),
                           along: bar.convert(column, to: view), in: view.bounds)
         fan.autoresizingMask = [.flexibleWidth, .flexibleHeight]

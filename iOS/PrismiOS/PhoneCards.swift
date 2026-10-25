@@ -224,7 +224,8 @@ enum PhoneCards {
 /// card is — its height worked out by the same measures that draw it.
 enum PhoneCardView {
     static let widest: CGFloat = 440
-    private static let padding: CGFloat = 12
+    /// Inside a card's frame; flat, no frame, only a little room above and below.
+    private static var padding: CGFloat { Card.flat ? 4 : 12 }
     private static let avatarSize: CGFloat = 36
 
     private static var nameFont: UIFont { .systemFont(ofSize: 15, weight: .semibold) }
@@ -290,10 +291,14 @@ enum PhoneCardView {
         return min(full, ceil(font.lineHeight) * CGFloat(most) + 1)
     }
 
-    private static var richTitleFont: UIFont { .systemFont(ofSize: 15, weight: .semibold) }
-    private static var richDetailFont: UIFont { .systemFont(ofSize: 13) }
-    private static var richFactsFont: UIFont { .systemFont(ofSize: 12) }
-    private static var richServiceFont: UIFont { .systemFont(ofSize: 12, weight: .semibold) }
+    // Flat, in the notes' own face: the site in small spaced capitals over
+    // its title in bold, as a magazine heads a piece.
+    private static var richTitleFont: UIFont { Card.flat ? Typeface.current.heading(16, weight: .bold) : .systemFont(ofSize: 15, weight: .semibold) }
+    private static var richDetailFont: UIFont { Card.flat ? Typeface.current.body(14) : .systemFont(ofSize: 13) }
+    private static var richFactsFont: UIFont { Card.flat ? Typeface.current.body(12) : .systemFont(ofSize: 12) }
+    private static var richServiceFont: UIFont { Card.flat ? Typeface.current.body(11, weight: .medium) : .systemFont(ofSize: 12, weight: .semibold) }
+    /// A picture's corners: flat, square, as a page's.
+    private static var corner: CGFloat { Card.flat ? 0 : 8 }
 
     private static func richLayout(_ face: RichCardFace, width: CGFloat) -> (title: CGFloat, detail: CGFloat, facts: CGFloat, total: CGFloat) {
         let insets = richInsets(face)
@@ -313,9 +318,9 @@ enum PhoneCardView {
         let measures = richLayout(face, width: rect.width)
         switch face.picture {
         case .thumbnail(let url):
-            fill(PhoneCards.picture(url, for: source), in: CGRect(x: rect.maxX - padding - thumbnail, y: rect.minY + padding, width: thumbnail, height: thumbnail), corner: 8)
+            fill(PhoneCards.picture(url, for: source), in: CGRect(x: rect.maxX - padding - thumbnail, y: rect.minY + padding, width: thumbnail, height: thumbnail), corner: corner)
         case .artwork(let url):
-            fill(PhoneCards.picture(url, for: source), in: CGRect(x: rect.minX + padding, y: rect.minY + padding, width: thumbnail, height: thumbnail), corner: 8)
+            fill(PhoneCards.picture(url, for: source), in: CGRect(x: rect.minX + padding, y: rect.minY + padding, width: thumbnail, height: thumbnail), corner: corner)
         case .none:
             break
         }
@@ -324,7 +329,14 @@ enum PhoneCardView {
         var x = rect.minX + insets.left
         var y = rect.minY + padding
         let tint = face.tint.map { UIColor(red: $0.0, green: $0.1, blue: $0.2, alpha: 1) } ?? Ink.secondary
-        if let icon = face.icon.flatMap({ PhoneCards.picture($0, for: source) }) {
+        if Card.flat {
+            // The site in small spaced capitals, grey: no mark, no colour.
+            let size = richServiceFont.pointSize
+            (face.service.uppercased() as NSString).draw(with: CGRect(x: x, y: y, width: textWidth, height: 17),
+                                                         options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                                         attributes: [.font: richServiceFont, .foregroundColor: Ink.secondary, .kern: size * 0.1],
+                                                         context: nil)
+        } else if let icon = face.icon.flatMap({ PhoneCards.picture($0, for: source) }) {
             icon.draw(in: CGRect(x: x, y: y + 1, width: 15, height: 15))
             x += 20
         } else if let symbol = UIImage(systemName: face.symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold))?
@@ -332,9 +344,11 @@ enum PhoneCardView {
             symbol.draw(at: CGPoint(x: x, y: y + (17 - symbol.size.height) / 2))
             x += symbol.size.width + 5
         }
-        (face.service as NSString).draw(with: CGRect(x: x, y: y, width: rect.minX + insets.left + textWidth - x, height: 17),
-                                        options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                        attributes: [.font: richServiceFont, .foregroundColor: face.tint == nil ? Ink.secondary : tint], context: nil)
+        if !Card.flat {
+            (face.service as NSString).draw(with: CGRect(x: x, y: y, width: rect.minX + insets.left + textWidth - x, height: 17),
+                                            options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                            attributes: [.font: richServiceFont, .foregroundColor: face.tint == nil ? Ink.secondary : tint], context: nil)
+        }
         y += 17 + 4
         x = rect.minX + insets.left
         (face.title as NSString).draw(with: CGRect(x: x, y: y, width: textWidth, height: measures.title),
@@ -357,12 +371,15 @@ enum PhoneCardView {
     }
 
     static func draw(_ card: PhoneCard, in rect: CGRect, source: String) {
-        let frame = UIBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 12)
-        Ink.paper.setFill()
-        frame.fill()
-        Ink.rule.setStroke()
-        frame.lineWidth = 1
-        frame.stroke()
+        // Flat, no frame: the card on the page as the rest of the note is.
+        if !Card.flat {
+            let frame = UIBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 12)
+            Ink.paper.setFill()
+            frame.fill()
+            Ink.rule.setStroke()
+            frame.lineWidth = 1
+            frame.stroke()
+        }
         switch card {
         case .post(let post): drawPost(post, in: rect, source: source)
         case .video(let video): drawVideo(video, in: rect, source: source)

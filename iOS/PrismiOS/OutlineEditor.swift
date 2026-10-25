@@ -370,9 +370,12 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
         let inHeading: Bool = { if case .heading = row.kind { true } else { false } }()
         let spans = InlineMarkup.spans(in: text, range: body)
         let carousels = carousels(in: spans, text: text)
+        let flat = Card.flat
         for span in spans {
             let content = span.content
             let revealed = caret.map { NSLocationInRange($0, span.range) || $0 == NSMaxRange(span.range) } ?? false
+            /// A link shown as its site alone: where, in the row's text.
+            var site: NSRange?
             switch span.kind {
             case .strong:
                 storage.addAttribute(.font, value: Self.adding(.traitBold, to: font(at: content.location)), range: content)
@@ -385,18 +388,34 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             case .highlight:
                 storage.addAttribute(.backgroundColor, value: Ink.marked, range: content)
             case .link(let target), .url(let target):
-                storage.addAttributes([.foregroundColor: Ink.accent, .prismLink: target], range: content)
-                if !inHeading { storage.addAttribute(.prismPill, value: true, range: span.range) }
+                // Flat, a link is the text's own ink, a faint line under it;
+                // else blue, on a pill.
+                storage.addAttributes([.foregroundColor: flat ? Ink.text : Ink.accent, .prismLink: target], range: content)
+                if flat {
+                    storage.addAttributes([.underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: Ink.faint], range: content)
+                } else if !inHeading {
+                    storage.addAttribute(.prismPill, value: true, range: span.range)
+                }
                 // A post's or a video's: its card under the row, once it is in —
                 // none for a link written `"no card"`.
+                let alone = text.substring(with: span.range) == text.substring(with: body).trimmingCharacters(in: .whitespaces)
+                var carded = false
                 if inHeading || span.hidesCard {
                 } else if PhoneCards.lookup(target) != nil {
                     storage.addAttribute(.prismCard, value: target, range: NSRange(location: span.range.location, length: 1))
-                } else if !PhoneCards.isCardLink(target),
+                    carded = true
+                } else if !PhoneCards.isCardLink(target), alone,
                           // Any other link alone in its row: a page's, a podcast's card.
-                          text.substring(with: span.range) == text.substring(with: body).trimmingCharacters(in: .whitespaces),
                           PhoneCards.rich(target, text: { if case .link = span.kind { text.substring(with: content) } else { nil } }()) != nil {
                     storage.addAttribute(.prismCard, value: target, range: NSRange(location: span.range.location, length: 1))
+                    carded = true
+                }
+                // Flat, a link alone in its row, its card under it: its site
+                // alone, small and grey — the card says the rest.
+                if flat, carded, alone, !revealed, var host = URL(string: target)?.host() {
+                    if host.hasPrefix("www.") { host.removeFirst(4) }
+                    let found = (text.substring(with: span.range) as NSString).range(of: host, options: .backwards)
+                    if found.location != NSNotFound { site = NSRange(location: span.range.location + found.location, length: found.length) }
                 }
                 // A bare address, as the Mac shows it: its site and the ends of
                 // its path, the link icon before — whole while the caret is in it.
@@ -418,10 +437,14 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
                     }
                 }
             case .wikiLink(let title):
-                storage.addAttributes([.foregroundColor: Ink.accent, .prismLink: "[[" + title + "]]"], range: content)
-                if !inHeading { storage.addAttribute(.prismPill, value: true, range: span.range) }
+                storage.addAttributes([.foregroundColor: flat ? Ink.text : Ink.accent, .prismLink: "[[" + title + "]]"], range: content)
+                if flat {
+                    storage.addAttributes([.underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: Ink.faint], range: content)
+                } else if !inHeading {
+                    storage.addAttribute(.prismPill, value: true, range: span.range)
+                }
             case .tag:
-                storage.addAttribute(.foregroundColor, value: Ink.accent, range: span.range)
+                storage.addAttribute(.foregroundColor, value: flat ? Ink.secondary : Ink.accent, range: span.range)
             case .comment:
                 if !revealed { storage.addAttribute(.prismHidden, value: true, range: span.range) }
             case .image(let reference):
@@ -483,6 +506,14 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
                     storage.removeAttribute(.prismHidden, range: lead)
                     storage.addAttribute(.prismIcon, value: symbol, range: lead)
                 }
+            }
+            // A link shown as its site: the rest of it hidden, the site small and grey.
+            if let site, let target = storage.attribute(.prismLink, at: content.location, effectiveRange: nil) {
+                for key: NSAttributedString.Key in [.prismIcon, .prismEllipsis, .underlineStyle] { storage.removeAttribute(key, range: span.range) }
+                storage.addAttribute(.prismHidden, value: true, range: span.range)
+                storage.removeAttribute(.prismHidden, range: site)
+                storage.addAttributes([.foregroundColor: Ink.secondary, .font: metrics.face.body(round(base.pointSize * 0.82)), .prismLink: target],
+                                      range: site)
             }
         }
         // `->` and `<-` shown as arrows — not in code or links, and typed as
@@ -561,7 +592,7 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? UIFont ?? metrics.body
             let fragment = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
             let place = location(forGlyphAt: glyph)
-            let text = NSAttributedString(string: "…", attributes: [.font: font, .foregroundColor: Ink.accent])
+            let text = NSAttributedString(string: "…", attributes: [.font: font, .foregroundColor: Card.flat ? Ink.text : Ink.accent])
             text.draw(at: CGPoint(x: origin.x + fragment.minX + place.x, y: origin.y + fragment.minY + place.y - font.ascender))
         }
         storage.enumerateAttribute(.prismIcon, in: characters) { value, range, _ in
@@ -583,7 +614,8 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     }
 
     /// Whether links have a pill behind them.
-    static let drawsPills = true
+    /// Links on pills, an icon in each — not on the flat page, where they are underlined.
+    static var drawsPills: Bool { !Card.flat }
 
     func layoutManager(_ layoutManager: NSLayoutManager, shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>,
                        properties: UnsafePointer<NSLayoutManager.GlyphProperty>, characterIndexes: UnsafePointer<Int>,
@@ -1068,7 +1100,8 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                     let round = row.marker == "+"
                     let shape = round ? UIBezierPath(ovalIn: box) : UIBezierPath(roundedRect: box, cornerRadius: 3.5)
                     if task.isDone {
-                        Ink.accent.setFill()
+                        // Ticked: black on the flat page, as all else is; else blue.
+                        (Card.flat ? Ink.text : Ink.accent).setFill()
                         shape.fill()
                         let tick = UIBezierPath()
                         tick.move(to: CGPoint(x: box.minX + side * 0.27, y: box.midY))
@@ -1077,7 +1110,7 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                         tick.lineWidth = 1.8
                         tick.lineCapStyle = .round
                         tick.lineJoinStyle = .round
-                        UIColor.white.setStroke()
+                        (Card.flat ? Ink.paper : UIColor.white).setStroke()
                         tick.stroke()
                     } else {
                         shape.lineWidth = 1.4
@@ -2775,7 +2808,7 @@ enum ProgressRing {
         Ink.rule.setStroke()
         rim.stroke()
         guard progress.total > 0 else { return }
-        Ink.accent.setStroke()
+        (Card.flat ? Ink.text : Ink.accent).setStroke()
         if progress.done >= progress.total {
             rim.stroke()
             guard tick else { return }

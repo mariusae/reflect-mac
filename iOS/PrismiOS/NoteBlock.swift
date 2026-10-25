@@ -598,7 +598,8 @@ final class NoteBlock: UIView {
 
     private func styleHeader() {
         updateCover()
-        let title = NSMutableAttributedString(attributedString: Card.header(name: name, meta: nil, size: storedMetrics.size))
+        let title = Card.flat ? Card.flatHeader(path: ref.path, name: name, store: store, size: storedMetrics.size)
+            : NSMutableAttributedString(attributedString: Card.header(name: name, meta: nil, size: storedMetrics.size))
         metaLabel.text = Card.meta(for: ref.path, store: store)
         metaLabel.sizeToFit()
         // Its to-dos, how far along, at the end of its name.
@@ -642,7 +643,8 @@ final class NoteBlock: UIView {
         header.titleLabel?.lineBreakMode = .byWordWrapping
         // Alone, a note whose first heading is its name needs no other.
         header.isHidden = !showsHeader && titleIsHeading
-        metaLabel.isHidden = header.isHidden
+        // Flat, its age is in the header's small line.
+        metaLabel.isHidden = header.isHidden || Card.flat
         headerMeasure = nil
         setNeedsLayout()
     }
@@ -659,7 +661,8 @@ final class NoteBlock: UIView {
 
     // MARK: Layout
 
-    static let side: CGFloat = 38
+    /// The text's margin; flat, a little less, as a page's.
+    static var side: CGFloat { Card.flat ? 30 : 38 }
     /// Narrower than this, nothing is laid out: text at no width never ends.
     static let minimumWidth: CGFloat = 300
 
@@ -890,6 +893,34 @@ enum Formats {
 /// day's distance from today, any other note's last change.
 @MainActor
 enum Card {
+    /// The page flat, as a magazine's: no cards, the notes on the paper
+    /// itself, parted by a hairline and headed by a small line in capitals.
+    /// Chosen in Settings; flat unless cards are.
+    nonisolated static var flat: Bool {
+        get { !UserDefaults.standard.bool(forKey: "PageCards") }
+        set { UserDefaults.standard.set(!newValue, forKey: "PageCards") }
+    }
+
+    /// The flat page's header: a small line in spaced capitals — a day's
+    /// date, or a note's age — and, for a note, its name in bold under it.
+    static func flatHeader(path: String, name: String, store: PrismStore?, size: CGFloat) -> NSMutableAttributedString {
+        let face = Typeface.current
+        let meta = meta(for: path, store: store) ?? ""
+        let dated = GraphPaths.day(fromDailyPath: path) != nil || GraphPaths.week(fromWeeklyPath: path) != nil
+        let kicker = (dated ? [name, meta] : [meta]).filter { !$0.isEmpty }.joined(separator: "  ·  ").uppercased()
+        let small = round(size * 0.74)
+        let text = NSMutableAttributedString(string: kicker, attributes: [
+            .font: face.body(small, weight: .medium), .foregroundColor: Ink.secondary, .kern: small * 0.09,
+        ])
+        guard !dated else { return text }
+        let lead = NSMutableParagraphStyle()
+        lead.paragraphSpacingBefore = 3
+        text.append(NSAttributedString(string: "\n" + name, attributes: [
+            .font: face.heading(round(size * 1.12), weight: .bold), .foregroundColor: Ink.text, .paragraphStyle: lead,
+        ]))
+        return text
+    }
+
     /// A card's edge, in from its block's sides; the room above and below
     /// it, half the space between two cards.
     static let inset: CGFloat = 10

@@ -8,6 +8,8 @@ struct SettingsView: View {
     @State private var face = Typeface.current
     @State private var size = Double(PhoneState.size)
     @State private var spacing = PhoneSpacing.of(Typeface.current)
+    @State private var idealBook = Typeface.idealBook
+    @State private var flat = Card.flat
     /// Told when the face or size changed: the sheets set again.
     let onChange: () -> Void
     let onDone: () -> Void
@@ -34,7 +36,26 @@ struct SettingsView: View {
                                 }
                             }
                         }
+                        // Ideal Sans, chosen: its text in its Light, or its Book.
+                        if option == .ideal, face == .ideal {
+                            Picker("Weight", selection: $idealBook) {
+                                Text("Light").tag(false)
+                                Text("Book").tag(true)
+                            }
+                            .pickerStyle(.segmented)
+                        }
                     }
+                }
+                Section {
+                    Picker("Page", selection: $flat) {
+                        Text("Flat").tag(true)
+                        Text("Cards").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("Page")
+                } footer: {
+                    Text("Flat: the notes on the page, parted by a line. Cards: each note on a card of its own.")
                 }
                 Section("Text Size") {
                     HStack(spacing: 14) {
@@ -77,6 +98,14 @@ struct SettingsView: View {
             PhoneSpacing.set(spacing, for: face)
             changeSoon()
         }
+        .onChange(of: flat) { _, flat in
+            Card.flat = flat
+            onChange()
+        }
+        .onChange(of: idealBook) { _, book in
+            Typeface.idealBook = book
+            onChange()
+        }
         .onChange(of: size) { _, size in
             PhoneState.size = CGFloat(size)
             onChange()
@@ -110,6 +139,8 @@ struct SettingsView: View {
 
     /// A few rows as a note sets them, in the face and size chosen.
     private var sample: some View {
+        // Read again when Ideal Sans's weight changes.
+        _ = idealBook
         let metrics = PhoneMetrics(face: face, size: CGFloat(size), spacing: spacing)
         let lineSpacing = max(0, (metrics.lineHeight - 1.2) * metrics.size)
         return VStack(alignment: .leading, spacing: metrics.rowGap) {

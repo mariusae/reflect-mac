@@ -107,10 +107,17 @@ enum Typeface: String, CaseIterable, Identifiable {
         return UIFont(descriptor: font.fontDescriptor.addingAttributes([.featureSettings: features]), size: font.pointSize)
     }
 
+    /// Ideal Sans's text in its Book, not its Light: chosen in Settings.
+    static var idealBook: Bool {
+        get { UserDefaults.standard.bool(forKey: "Typeface.idealBook") }
+        set { UserDefaults.standard.set(newValue, forKey: "Typeface.idealBook") }
+    }
+
     /// A weight as the face is set, as on the Mac: Ideal Sans's Book reads
-    /// heavy, so its text is its Light, and what would be bold its Semibold.
+    /// heavy, so its text is its Light, and what would be bold its Semibold —
+    /// unless its Book is chosen, and set as any face is.
     private func lighter(_ weight: UIFont.Weight) -> UIFont.Weight {
-        guard self == .ideal else { return weight }
+        guard self == .ideal, !Self.idealBook else { return weight }
         switch weight {
         case .regular: return .light
         case .bold: return .semibold
@@ -249,8 +256,10 @@ enum Ink {
     // As Threads has it: white and near-black, ink black and near-white,
     // greys for the rest.
     static let paper = dynamic(.white, hex(0x101010))
-    /// What the cards lie on, a little darker than they are.
-    static let page = dynamic(hex(0xf3f2ef), hex(0x000000))
+    /// What the cards lie on, a little darker than they are — or, the page
+    /// flat, the paper itself.
+    static var page: UIColor { Card.flat ? paper : cardsPage }
+    private static let cardsPage = dynamic(hex(0xf3f2ef), hex(0x000000))
     /// A note's card.
     static let card = dynamic(hex(0xfdfdfc), hex(0x1a1a1a))
     static let text = dynamic(hex(0x000000), hex(0xf3f5f7))

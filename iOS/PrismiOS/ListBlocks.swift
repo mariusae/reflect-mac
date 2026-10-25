@@ -151,7 +151,8 @@ final class SliceBlock: UIView, SheetBlock {
         metaLabel.sizeToFit()
         addSubview(metaLabel)
         title.contentHorizontalAlignment = .leading
-        title.setAttributedTitle(Card.header(name: Self.name(path, store: store), meta: nil, size: metrics.size), for: .normal)
+        title.setAttributedTitle(Card.flat ? Card.flatHeader(path: path, name: Self.name(path, store: store), store: store, size: metrics.size)
+                                     : Card.header(name: Self.name(path, store: store), meta: nil, size: metrics.size), for: .normal)
         title.titleLabel?.lineBreakMode = .byTruncatingMiddle
         title.addAction(UIAction { [weak self] _ in self?.onOpen?() }, for: .touchUpInside)
         addSubview(title)

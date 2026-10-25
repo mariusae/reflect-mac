@@ -5,24 +5,39 @@ import PrismCore
 /// The sheet of paper a note's card is: lighter than the page it lies on,
 /// its corners round, a soft shadow under it.
 final class CardBackground: UIView {
+    /// Flat: only a hairline under the note, across the text's width.
+    private let rule = UIView()
+
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = Ink.card
-        layer.cornerRadius = Card.radius
-        layer.cornerCurve = .continuous
-        layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.06
-        layer.shadowRadius = 5
-        layer.shadowOffset = CGSize(width: 0, height: 1)
         isUserInteractionEnabled = false
+        rule.backgroundColor = Ink.rule
+        addSubview(rule)
+        style()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    private func style() {
+        let flat = Card.flat
+        backgroundColor = flat ? .clear : Ink.card
+        layer.cornerRadius = flat ? 0 : Card.radius
+        layer.cornerCurve = .continuous
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = flat ? 0 : 0.06
+        layer.shadowRadius = 5
+        layer.shadowOffset = CGSize(width: 0, height: 1)
+        rule.isHidden = !flat
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
-        layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: Card.radius).cgPath
+        style()
+        layer.shadowPath = Card.flat ? nil : UIBezierPath(roundedRect: bounds, cornerRadius: Card.radius).cgPath
+        let inset = NoteBlock.side - Card.inset
+        rule.frame = CGRect(x: inset, y: bounds.height + Card.spacing - 0.5, width: max(0, bounds.width - 2 * inset),
+                            height: 1 / max(traitCollection.displayScale, 1))
     }
 }
 

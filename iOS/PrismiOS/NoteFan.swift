@@ -209,7 +209,7 @@ final class NoteFan: UIView, UIGestureRecognizerDelegate {
 
     private static let step: CGFloat = NoteChip.height + 8
     /// Room left over what was held: a circle swells while pressed.
-    private var clearance: CGFloat { entries.first?.round == true ? 22 : 8 }
+    private var clearance: CGFloat { 10 }
 
     /// `entries` nearest the thumb first.
     init(entries: [Entry], from origin: CGRect, along column: CGRect, in bounds: CGRect) {
@@ -252,8 +252,11 @@ final class NoteFan: UIView, UIGestureRecognizerDelegate {
 
     /// Where a chip lies dealt out: over the pill, up from just over the bar.
     private func place(_ i: Int) -> CGRect {
-        CGRect(x: column.minX, y: column.minY - clearance - NoteChip.height - CGFloat(i) * Self.step,
-               width: column.width, height: NoteChip.height)
+        // Views: circles, centred over what was held; notes, along the column.
+        let round = entries.first?.round == true
+        return CGRect(x: round ? column.midX - NoteChip.height / 2 : column.minX,
+                      y: column.minY - clearance - NoteChip.height - CGFloat(i) * Self.step,
+                      width: round ? NoteChip.height : column.width, height: NoteChip.height)
     }
 
     // MARK: Dealing out, and gathering in

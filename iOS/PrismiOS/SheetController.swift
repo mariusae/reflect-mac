@@ -164,6 +164,12 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         view.addSubview(scroll)
         scroll.addSubview(content)
         view.addSubview(scrubber)
+        // Under the clock, the page plain: not the system's blur of what
+        // scrolls beneath, which half shows it.
+        scroll.topEdgeEffect.isHidden = true
+        statusShade.backgroundColor = Ink.page
+        statusShade.isUserInteractionEnabled = false
+        view.addSubview(statusShade)
         scrubber.onScrub = { [weak self] y in self?.scrub(to: y) }
         // No title over the content: the buttons alone, as in Threads.
         navigationItem.title = nil
@@ -812,7 +818,12 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         }
     }
 
+    /// The page's own colour under the status bar.
+    private let statusShade = UIView()
+
     override func viewDidLayoutSubviews() {
+        statusShade.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: view.window?.safeAreaInsets.top ?? view.safeAreaInsets.top)
+        view.bringSubviewToFront(statusShade)
         super.viewDidLayoutSubviews()
         if StallWatch.enabled { StallWatch.mark("sheet layout \(kind)") }
         defer { if StallWatch.enabled { StallWatch.mark("sheet laid out \(kind)") } }
