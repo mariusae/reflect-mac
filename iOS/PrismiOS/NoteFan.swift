@@ -30,14 +30,14 @@ final class ShortLabel: UILabel {
     }
 }
 
-/// A note, as the bar shows the one being read: a glass capsule, its cover
-/// small and round at the start, its name centred — the way a note is shown
-/// wherever one is to be chosen.
+/// A note, or a view, as the bar's field shows what is open — a copy of
+/// the field: a capsule, the name centred, its cover or mark small and round
+/// just before it. Whatever is to be chosen is shown so: one of these each.
 final class NoteChip: UIView {
-    static let height: CGFloat = 48
-    static let round: CGFloat = 38
+    static let height: CGFloat = 44
+    static let round: CGFloat = 26
     /// In a cover's stead, for a note without one: a note's mark, on a faint round.
-    static let standIn = UIImage(systemName: "doc.text", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .medium))
+    static let standIn = UIImage(systemName: "doc.text", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .regular))
     static let standInGround = Ink.text.withAlphaComponent(0.06)
 
     private let glass = UIVisualEffectView(effect: UIGlassEffect())
@@ -50,7 +50,7 @@ final class NoteChip: UIView {
 
     init(names: [String], cover: UIImage?, symbol: String? = nil, secondary: Bool = false) {
         self.secondary = secondary
-        self.symbol = symbol.flatMap { UIImage(systemName: $0, withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .medium)) }
+        self.symbol = symbol.flatMap { UIImage(systemName: $0, withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .regular)) }
         super.init(frame: .zero)
         glass.isUserInteractionEnabled = false
         glass.cornerConfiguration = .capsule()
@@ -104,75 +104,14 @@ final class NoteChip: UIView {
         super.layoutSubviews()
         glass.frame = bounds
         let h = bounds.height
-        picture.frame = CGRect(x: 5, y: (h - Self.round) / 2, width: Self.round, height: Self.round)
-        // Centred — or, too long for that, as near it as it can be — clear of the round.
-        let lead: CGFloat = picture.isHidden ? 18 : picture.frame.maxX + 10, trail: CGFloat = 18
-        let room = max(0, bounds.width - lead - trail)
+        // As the field sets its name: the round just before it, the two centred together.
+        let round = picture.isHidden ? 0 : Self.round + 8
+        let room = max(0, bounds.width - 2 * 14 - round)
         let words = min(room, label.width(within: room))
-        let x = min(max((bounds.width - words) / 2, lead), bounds.width - trail - words)
-        label.frame = CGRect(x: x, y: 0, width: words, height: h)
+        let x = max(14, (bounds.width - round - words) / 2)
+        picture.frame = CGRect(x: x, y: (h - Self.round) / 2, width: Self.round, height: Self.round)
+        label.frame = CGRect(x: x + round, y: 0, width: words, height: h)
     }
-}
-
-/// A view, as the home button is: its mark in a glass circle, its name
-/// beside it — not a note, so not as one is shown.
-final class RoundChip: UIView {
-    private let glass = UIVisualEffectView(effect: UIGlassEffect())
-    private let mark = UIImageView()
-    private let label = UILabel()
-
-    init(name: String, symbol: String?) {
-        super.init(frame: .zero)
-        glass.isUserInteractionEnabled = false
-        glass.cornerConfiguration = .capsule()
-        addSubview(glass)
-        mark.image = symbol.flatMap { UIImage(systemName: $0, withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .medium)) }
-        mark.tintColor = Ink.text
-        mark.contentMode = .center
-        glass.contentView.addSubview(mark)
-        label.text = name
-        label.font = Typeface.current.heading(16, weight: .semibold)
-        label.textColor = Ink.text
-        // Read over whatever is behind: a halo of the page about the words.
-        label.layer.shadowColor = Ink.page.cgColor
-        label.layer.shadowOpacity = 1
-        label.layer.shadowRadius = 5
-        label.layer.shadowOffset = .zero
-        addSubview(label)
-        isAccessibilityElement = true
-        accessibilityLabel = name
-        accessibilityTraits = .button
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    /// The circle and its name: where the thumb takes it, in its own space.
-    var reach: CGRect { bounds.union(label.frame) }
-
-    var lifted = false {
-        didSet {
-            guard lifted != oldValue else { return }
-            UIView.animate(withDuration: 0.15, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState]) {
-                self.transform = self.lifted ? CGAffineTransform(scaleX: 1.08, y: 1.08) : .identity
-                self.glass.effect = {
-                    let effect = UIGlassEffect()
-                    if self.lifted { effect.tintColor = Ink.text.withAlphaComponent(0.08) }
-                    return effect
-                }()
-            }
-        }
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        glass.frame = bounds
-        mark.frame = glass.bounds
-        let width = ceil(label.sizeThatFits(CGSize(width: 240, height: bounds.height)).width)
-        label.frame = CGRect(x: bounds.maxX + 12, y: 0, width: width, height: bounds.height)
-    }
-
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool { reach.contains(point) }
 }
 
 /// Notes to choose among, dealt up out of the bar as chips — the nearest
@@ -190,8 +129,6 @@ final class NoteFan: UIView, UIGestureRecognizerDelegate {
         var symbol: String? = nil
         /// Not a note: "All 9 linking here…".
         var secondary = false
-        /// A view, not a note: a circle, as the home button is.
-        var round = false
         var action: () -> Void
     }
 
@@ -200,7 +137,7 @@ final class NoteFan: UIView, UIGestureRecognizerDelegate {
     var cover: ((String) -> UIImage?)?
 
     private let entries: [Entry]
-    private var chips: [UIView] = []
+    private var chips: [NoteChip] = []
     private let backdrop = UIVisualEffectView(effect: nil)
     /// Where they are dealt from: what was held, in this view.
     private let origin: CGRect
@@ -227,9 +164,7 @@ final class NoteFan: UIView, UIGestureRecognizerDelegate {
         outside.delegate = self
         addGestureRecognizer(outside)
         for (i, entry) in self.entries.enumerated() {
-            let chip: UIView = entry.round
-                ? RoundChip(name: entry.names.first ?? "", symbol: entry.symbol)
-                : NoteChip(names: entry.names, cover: entry.cover, symbol: entry.symbol, secondary: entry.secondary)
+            let chip = NoteChip(names: entry.names, cover: entry.cover, symbol: entry.symbol, secondary: entry.secondary)
             chip.tag = i
             chip.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tappedChip(_:))))
             addSubview(chip)
@@ -245,18 +180,15 @@ final class NoteFan: UIView, UIGestureRecognizerDelegate {
     required init?(coder: NSCoder) { fatalError() }
 
     private func showCovers() {
-        for case let (chip as NoteChip, entry) in zip(chips, entries) where !chip.hasCover {
+        for (chip, entry) in zip(chips, entries) where !chip.hasCover {
             if let path = entry.path, let image = cover?(path) { chip.show(cover: image) }
         }
     }
 
     /// Where a chip lies dealt out: over the pill, up from just over the bar.
     private func place(_ i: Int) -> CGRect {
-        // Views: circles, centred over what was held; notes, along the column.
-        let round = entries.first?.round == true
-        return CGRect(x: round ? column.midX - NoteChip.height / 2 : column.minX,
-                      y: column.minY - clearance - NoteChip.height - CGFloat(i) * Self.step,
-                      width: round ? NoteChip.height : column.width, height: NoteChip.height)
+        CGRect(x: column.minX, y: column.minY - clearance - NoteChip.height - CGFloat(i) * Self.step,
+               width: column.width, height: NoteChip.height)
     }
 
     // MARK: Dealing out, and gathering in
@@ -308,10 +240,7 @@ final class NoteFan: UIView, UIGestureRecognizerDelegate {
 
     /// The thumb moved to a point, in this view: the chip under it lifted.
     func track(_ point: CGPoint) {
-        let index = chips.firstIndex { chip in
-            let reach = (chip as? RoundChip).map { chip.convert($0.reach, to: self) } ?? chip.frame
-            return reach.insetBy(dx: -12, dy: -4).contains(point)
-        }
+        let index = chips.firstIndex { $0.frame.insetBy(dx: -12, dy: -4).contains(point) }
         guard index != pointed else { return }
         if let pointed, chips.indices.contains(pointed) { lift(chips[pointed], false) }
         pointed = index
@@ -321,10 +250,7 @@ final class NoteFan: UIView, UIGestureRecognizerDelegate {
         }
     }
 
-    private func lift(_ chip: UIView, _ up: Bool) {
-        (chip as? NoteChip)?.lifted = up
-        (chip as? RoundChip)?.lifted = up
-    }
+    private func lift(_ chip: NoteChip, _ up: Bool) { chip.lifted = up }
 
     /// The thumb let go at a point: the chip there taken; elsewhere, all gathered.
     func release(at point: CGPoint?) {

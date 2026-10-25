@@ -172,6 +172,23 @@ package final class DayView: NSView, NSTextViewDelegate {
             }
         }
         if conflictView != nil { notes.append("Needs Review") } else if isReadOnly { notes.append("Read Only") }
+        // A day on its own page: named large — Today, a weekday this week —
+        // its whole date over it in small capitals.
+        if standsAlone {
+            let near = (today.adding(-6)...today.adding(6)).contains(day)
+            let name = day == today ? "Today" : day == today.adding(-1) ? "Yesterday" : day == today.adding(1) ? "Tomorrow"
+                : Self.formatted(near ? "EEEE" : day.year == today.year ? "MMMMd" : "MMMMdyyyy", date)
+            let full = (day.year == today.year ? Self.titleFormatter : Self.titleWithYearFormatter).string(from: date)
+            title.attributedStringValue = NSAttributedString(string: name, attributes: [
+                .font: metrics.typography.headingFont(size: round(metrics.fontSize * 2), weight: .bold),
+                .foregroundColor: metrics.typography.ink.text,
+            ])
+            let said = ([full] + notes.filter { $0 != name && !$0.hasSuffix("d") && !$0.hasSuffix("w") }).joined(separator: "  ·  ")
+            badge.attributedStringValue = NSAttributedString(string: said.uppercased(), attributes: metrics.typography.label())
+            badge.isHidden = false
+            needsLayout = true
+            return
+        }
         // Flat, a day's date and how far it is, one small line in capitals.
         if flat {
             title.attributedStringValue = NSAttributedString(string: ([title.stringValue] + notes).joined(separator: "  ·  ").uppercased(),
@@ -217,7 +234,7 @@ package final class DayView: NSView, NSTextViewDelegate {
     private var headerTop: CGFloat { coverRoom(columnWidth: column.width) + round(metrics.fontSize * 2.2) }
     /// Flat, a note's small line over its name: the room it takes.
     private var kickerRoom: CGFloat {
-        guard flat, ref.day == nil, !title.stringValue.isEmpty, !badge.isHidden else { return 0 }
+        guard flat || standsAlone, ref.day == nil || standsAlone, !title.stringValue.isEmpty, !badge.isHidden else { return 0 }
         return ceil(badge.intrinsicContentSize.height) + 2
     }
     private var headerHeight: CGFloat { kickerRoom + ceil(title.intrinsicContentSize.height) }
@@ -233,7 +250,7 @@ package final class DayView: NSView, NSTextViewDelegate {
     /// buttons beside it to be centred on; nil with no name over the note.
     package var nameMiddle: CGFloat? {
         // Flat, a day's name is its small line in capitals, in that line's face.
-        let shown = flat && ref.day != nil ? metrics.typography.label()[.font] as? NSFont : title.font
+        let shown = flat && ref.day != nil && !standsAlone ? metrics.typography.label()[.font] as? NSFont : title.font
         guard !title.stringValue.isEmpty, let font = shown else { return nil }
         layoutSubtreeIfNeeded()
         return title.frame.minY + font.ascender - font.xHeight / 2
@@ -461,6 +478,15 @@ package final class DayView: NSView, NSTextViewDelegate {
         var height = editorTop(columnWidth: columnWidth) + bottomPadding + focusBarRoom
         height += conflictView?.height(forWidth: columnWidth) ?? editorHeight(width: columnWidth)
         return max(minimumHeight, height)
+    }
+
+    /// A day shown on a page of its own: headed large, its date over it.
+    package var standsAlone = false { didSet { if standsAlone != oldValue { updateTitle(); heightMayHaveChanged() } } }
+
+    private static func formatted(_ template: String, _ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate(template)
+        return formatter.string(from: date)
     }
 
     /// Flat: whether a hairline is drawn under it — among other notes, not alone.

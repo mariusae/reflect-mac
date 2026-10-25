@@ -219,6 +219,19 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         column.onClose = { [weak self] column in self?.close(column) }
         column.onAddSheet = { [weak self] column, choice in self?.addSheet(choice, on: column) }
         column.onShowCalendar = { [weak self] column, view in self?.showCalendar(from: column, at: view) }
+        column.dayMarks = { [weak self] in
+            guard let self else { return [:] }
+            return NoteCalendar.marks(graph: graph, index: index)
+        }
+        column.onGoToDay = { [weak self] column, day in self?.goTo(day, in: column) }
+        column.onChooseListed = { [weak self] column, ref in self?.chooseListed(ref, from: column) }
+        column.onDoneListed = { [weak self] column, ref in self?.doneListed(ref, in: column) }
+        column.onEnterListed = { [weak self] column in self?.enterListed(from: column) }
+        column.listedNote = { [weak self] ref in
+            let source = self?.graph.read(path: ref.path) ?? ""
+            return (source, ref.day == nil ? NoteCover.source(in: source) : nil)
+        }
+        watchDaySwipes()
         column.onFan = { [weak self] _, _ in self?.showHeading() }
         column.backlinkCards = { [weak self] ref in self?.backlinkCards(ref) }
         column.onShowBacklinks = { [weak self] ref, column in
@@ -463,6 +476,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         case .note(let ref): .init(kind: "note", note: ref.path, top: ref.path, offset: Double(sheet.place?.offset ?? 0))
         case .backlinks(let ref): .init(kind: "backlinks", note: ref.path, top: nil, offset: Double(sheet.offset))
         case .inbox: .init(kind: "inbox", note: nil, top: sheet.place?.ref.path, offset: Double(sheet.place?.offset ?? 0))
+        case .pinned: .init(kind: "pinned", note: nil, top: nil, offset: Double(sheet.offset))
         case .tasks: .init(kind: "tasks", note: nil, top: nil, offset: Double(sheet.offset))
         case .search(let query): .init(kind: "search", note: query, top: nil, offset: Double(sheet.offset))
         case .web(let ref): .init(kind: "web", note: ref.path, top: nil, offset: 0)
@@ -484,6 +498,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             guard let note = place.note else { return nil }
             kind = .backlinks(NoteRef(path: note))
         case "inbox": kind = .inbox
+        case "pinned": kind = .pinned
         case "tasks": kind = .tasks
         case "search": kind = .search(place.note ?? "")
         case "web":
@@ -586,9 +601,9 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         case .backlinks(let ref):
             column.pendingOffset = sheet.offset
             findBacklinks(ref, in: column)
-        case .inbox:
-            refreshInbox(column)
-            if let place = sheet.place { column.restore(place, key: key) }
+        case .inbox, .pinned:
+            refreshList(column, kind: sheet.kind)
+            listNarrow(column)
         case .tasks:
             refreshTasks(column, force: true)
             column.scroll(toY: sheet.offset + 12, animated: false)
@@ -1567,6 +1582,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         case .backlinks:
             if let note { openSheet(.backlinks(note), on: column, pushing: !fresh) }
         case .inbox: openSheet(.inbox, on: column, pushing: !fresh)
+        case .pinned: openSheet(.pinned, on: column, pushing: !fresh)
         case .tasks: openSheet(.tasks, on: column, pushing: !fresh)
         case .search:
             if !fresh { push(column) }
@@ -1850,26 +1866,94 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     // MARK: The inbox
 
     /// Opens a column of the inbox, right of this one — or goes to the one open.
-    @objc func showInbox(_ sender: Any?) {
-        if !wantsNewColumn, let open = columns.first(where: { $0.kind == .inbox }) {
+    @objc func showInbox(_ sender: Any?) { showList(.inbox) }
+    @objc func showPinned(_ sender: Any?) { showList(.pinned) }
+    @objc func showPinnedSheet(_ sender: Any?) { openSheet(.pinned) }
+
+    /// The inbox, or the pinned, as a list in a column of its own — the one
+    /// open already, gone to — its first note open beside it.
+    private func showList(_ kind: Column.Kind) {
+        if !wantsNewColumn, let open = columns.first(where: { $0.kind == kind }) {
             active = open
-            if let view = open.views.first { window?.makeFirstResponder(view.editor) }
+            window?.makeFirstResponder(open)
             return
         }
         let (column, fresh) = columnBeside(focusedColumn)
         if !fresh { push(column) }
         active = column
-        refreshInbox(column)
-        if let view = column.views.first { window?.makeFirstResponder(view.editor) }
+        refreshList(column, kind: kind)
+        listNarrow(column)
+        if let first = column.listed.first { chooseListed(first, from: column) }
+        window?.makeFirstResponder(column)
         saveLayout()
     }
 
-    private func refreshInbox(_ column: Column) {
-        column.showInbox(index.inbox.map { NoteRef(path: $0.path) })
-    }
+    private func refreshInbox(_ column: Column) { refreshList(column, kind: .inbox) }
 
     private func refreshInboxes() {
-        for column in columns where column.kind == .inbox { refreshInbox(column) }
+        for column in columns where column.isList { refreshList(column, kind: column.kind) }
+    }
+
+    // MARK: A list, the note chosen beside it
+
+    /// The inbox, or the pinned, as a list: the one chosen kept, if still
+    /// there — else the one in its place, or the first — and open beside.
+    private func refreshList(_ column: Column, kind: Column.Kind) {
+        let refs = (kind == .pinned ? index.pinned : index.inbox).map { NoteRef(path: $0.path) }
+        let before = column.listed
+        column.showList(refs, kind: kind)
+        guard column.listSelection.map(refs.contains) != true else { return }
+        // The one chosen gone — done with — the one after it, or the last.
+        let at = column.listSelection.flatMap(before.firstIndex(of:)) ?? 0
+        let next = refs.isEmpty ? nil : refs[min(at, refs.count - 1)]
+        column.listSelection = nil
+        if let next, column === active || !before.isEmpty { chooseListed(next, from: column) }
+    }
+
+    /// A list column narrower than a note's: a share of the width, as Mail's list.
+    private func listNarrow(_ column: Column) {
+        guard column.share == 1 else { return }
+        column.share = 0.6
+        layoutPage()
+    }
+
+    /// A note chosen from a list: open in the column beside it — in place of
+    /// the one chosen before it, not over it, so the stack does not grow.
+    private func chooseListed(_ ref: NoteRef, from list: Column) {
+        let previous = list.listSelection
+        list.listSelection = ref
+        let (column, fresh) = columnBeside(list)
+        column.saveAll()
+        if !fresh, previous.map({ column.kind != .note($0) && !column.shows($0) }) ?? true { push(column) }
+        show(ref.path, in: column)
+        active = list
+        window?.makeFirstResponder(list)
+        showHeading()
+        saveLayout()
+    }
+
+    /// ↓ pressed in the list column so many times: for a script.
+    func stepListForScript(_ steps: Int) {
+        guard let list = columns.first(where: { $0.isList }), let window else { return }
+        window.makeFirstResponder(list)
+        for _ in 0..<steps {
+            if let down = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                           context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 125) {
+                list.keyDown(with: down)
+            }
+        }
+    }
+
+    /// The note chosen, its Done: out of the inbox — the next chosen.
+    private func doneListed(_ ref: NoteRef, in list: Column) {
+        setFrontmatter(ref.path, "inbox", nil)
+    }
+
+    /// Into the note open beside the list: the keyboard in it.
+    private func enterListed(from list: Column) {
+        guard let ref = list.listSelection, let (column, _) = Optional(columnBeside(list)), let view = column.view(for: ref) else { return }
+        active = column
+        window?.makeFirstResponder(view.editor)
     }
 
     // MARK: The note's own settings
@@ -2068,7 +2152,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         let pinnedPaths = Set(pinned.map(\.path))
         let recent = index.all.filter { $0.day == nil && !$0.path.hasPrefix(GraphPaths.weeklyDirectory + "/") && !pinnedPaths.contains($0.path) }
             .sorted { $0.modified > $1.modified }.prefix(12).map { Place(title: $0.title, path: $0.path, flags: NoteFlags($0), cover: $0.cover) }
-        sidebar.show([("Days", dayPlaces), ("Pinned", pinned), ("Recent", Array(recent))],
+        sidebar.show([("Daily", dayPlaces), ("Pinned", pinned), ("Recent", Array(recent))],
                      current: active.flatMap(location(of:)), face: face)
     }
 
@@ -2300,6 +2384,70 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// Back: the top sheet of the focused column taken off.
     @objc func goBack(_ sender: Any?) { pop(focusedColumn) }
+
+    // MARK: Daily, a day at a time
+
+    /// The daily column the keyboard is in — or the first there is.
+    private var dailyColumn: Column? { focusedColumn.isPaged ? focusedColumn : columns.first { $0.isPaged } }
+
+    @objc func previousDay(_ sender: Any?) {
+        guard let column = dailyColumn else { return NSSound.beep() }
+        column.stepDay(-1)
+    }
+
+    @objc func nextDay(_ sender: Any?) {
+        guard let column = dailyColumn else { return NSSound.beep() }
+        column.stepDay(1)
+    }
+
+    /// View ▸ Daily ▸ One Day at a Time: on, a page a day; off, every day scrolled through.
+    @objc func togglePagedDays(_ sender: Any?) {
+        Column.pagedDays.toggle()
+        redrawDaily()
+    }
+
+    /// View ▸ Daily ▸ Show Month: the month over the day, or not.
+    @objc func toggleDailyMonth(_ sender: Any?) {
+        Column.showsMonth.toggle()
+        redrawDaily()
+    }
+
+    private func redrawDaily() {
+        for column in columns where column.isTimeline {
+            let ref = column.current?.ref ?? .day(.today)
+            column.showTimeline(timelineEntries(including: ref), around: ref)
+        }
+        saveLayout()
+    }
+
+    /// Two fingers across a day on its own page: the day before, or after —
+    /// once a swipe is well across, and once a swipe.
+    private var daySwipe: (column: Column, travel: CGFloat, done: Bool)?
+    private var swipeMonitor: Any?
+
+    private func watchDaySwipes() {
+        guard swipeMonitor == nil else { return }
+        swipeMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, event.hasPreciseScrollingDeltas else { return event }
+            if event.phase == .began {
+                let point = event.locationInWindow
+                daySwipe = columns.first { $0.isPaged && $0.convert($0.bounds, to: nil).contains(point) }.map { ($0, 0, false) }
+            }
+            guard var swipe = daySwipe else { return event }
+            // Across, not down: as a page is turned.
+            guard abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) || swipe.travel != 0 else {
+                if event.phase == .ended || event.phase == .cancelled { daySwipe = nil }
+                return event
+            }
+            swipe.travel += event.scrollingDeltaX
+            if !swipe.done, abs(swipe.travel) > 90 {
+                swipe.done = true
+                swipe.column.stepDay(swipe.travel > 0 ? -1 : 1)
+            }
+            daySwipe = event.phase == .ended || event.phase == .cancelled ? nil : swipe
+            return nil
+        }
+    }
 
     @objc func goForward(_ sender: Any?) { forward(0, in: focusedColumn) }
 
@@ -2545,6 +2693,12 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     @objc func actualSizeText(_ sender: Any?) { size = CGFloat(face.defaults.size) }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(togglePagedDays(_:)) { item.state = Column.pagedDays ? .on : .off }
+        if item.action == #selector(toggleDailyMonth(_:)) {
+            item.state = Column.showsMonth ? .on : .off
+            return Column.pagedDays
+        }
+        if item.action == #selector(previousDay(_:)) || item.action == #selector(nextDay(_:)) { return dailyColumn != nil }
         switch item.action {
         case #selector(chooseTypeface(_:)):
             item.state = item.representedObject as? String == face.rawValue ? .on : .off

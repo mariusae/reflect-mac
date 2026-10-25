@@ -282,6 +282,10 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         if let path = environment["PRISM_INBOX_ADD"] { controller.toggleInboxForScript(path) }
         if let path = environment["PRISM_INBOX_REMOVE"] { controller.removeFromInboxForScript(path) }
         if environment["PRISM_INBOX"] == "1" { controller.showInbox(nil) }
+        // `PRISM_LIST_STEP`: ↓ pressed so many times in the list column, a moment after.
+        if let steps = environment["PRISM_LIST_STEP"].flatMap(Int.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { controller.stepListForScript(steps) }
+        }
         if environment["PRISM_TASKS"] == "1" { controller.showTasks(nil) }
         for choice in (environment["PRISM_BAR"] ?? "").split(separator: "|") { controller.sheetBarForScript(String(choice)) }
         if let steps = environment["PRISM_STACK"] { controller.stackForScript(steps) }
@@ -461,6 +465,16 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             choice.representedObject = value
             pages.submenu?.addItem(choice)
         }
+        let daily = NSMenuItem(title: "Daily", action: nil, keyEquivalent: "")
+        let left = String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!)), right = String(Character(UnicodeScalar(NSRightArrowFunctionKey)!))
+        daily.submenu = NSMenu(title: "Daily")
+        for entry in [item("One Day at a Time", #selector(PrismWindowController.togglePagedDays(_:))),
+                      item("Show Week", #selector(PrismWindowController.toggleDailyMonth(_:))),
+                      .separator(),
+                      item("Previous Day", #selector(PrismWindowController.previousDay(_:)), left, [.command, .control]),
+                      item("Next Day", #selector(PrismWindowController.nextDay(_:)), right, [.command, .control])] {
+            daily.submenu?.addItem(entry)
+        }
         let faces = NSMenuItem(title: "Typeface", action: nil, keyEquivalent: "")
         faces.submenu = NSMenu(title: "Typeface")
         for face in Typeface.available {
@@ -475,6 +489,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             .separator(),
             appearances,
             pages,
+            daily,
             faces,
             item("Bigger", #selector(PrismWindowController.biggerText(_:)), "+"),
             item("Smaller", #selector(PrismWindowController.smallerText(_:)), "-"),
@@ -497,22 +512,24 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("Move to Trash…", #selector(PrismWindowController.trashNote(_:)), "\u{8}", [.command, .shift]),
         ])
         submenu("Column", [
-            item("Timeline", #selector(PrismWindowController.showTimeline(_:)), "t", [.command, .option]),
+            item("Daily", #selector(PrismWindowController.showTimeline(_:)), "t", [.command, .option]),
             item("Backlinks", #selector(PrismWindowController.showBacklinks(_:)), "b", [.command, .option]),
             item("Inbox", #selector(PrismWindowController.showInbox(_:)), "i", [.command, .option]),
+            item("Pinned", #selector(PrismWindowController.showPinned(_:)), "u", [.command, .option]),
             item("Tasks", #selector(PrismWindowController.showTasks(_:)), "k", [.command, .option]),
             item("Search", #selector(PrismWindowController.showSearch(_:)), "f", [.command, .option]),
             .separator(),
             // The same, ⇧ held: in a new column, whatever is to the right.
-            item("Timeline in New Column", #selector(PrismWindowController.showTimeline(_:)), "t", [.command, .option, .shift]),
+            item("Daily in New Column", #selector(PrismWindowController.showTimeline(_:)), "t", [.command, .option, .shift]),
             item("Backlinks in New Column", #selector(PrismWindowController.showBacklinks(_:)), "b", [.command, .option, .shift]),
             item("Inbox in New Column", #selector(PrismWindowController.showInbox(_:)), "i", [.command, .option, .shift]),
             item("Tasks in New Column", #selector(PrismWindowController.showTasks(_:)), "k", [.command, .option, .shift]),
             item("Search in New Column", #selector(PrismWindowController.showSearch(_:)), "f", [.command, .option, .shift]),
             .separator(),
-            item("Timeline Here", #selector(PrismWindowController.showTimelineSheet(_:)), "t", [.command, .option, .control]),
+            item("Daily Here", #selector(PrismWindowController.showTimelineSheet(_:)), "t", [.command, .option, .control]),
             item("Backlinks Here", #selector(PrismWindowController.showBacklinksSheet(_:)), "b", [.command, .option, .control]),
             item("Inbox Here", #selector(PrismWindowController.showInboxSheet(_:)), "i", [.command, .option, .control]),
+            item("Pinned Here", #selector(PrismWindowController.showPinnedSheet(_:)), "u", [.command, .option, .control]),
             item("Tasks Here", #selector(PrismWindowController.showTasksSheet(_:)), "k", [.command, .option, .control]),
             item("Search Here", #selector(PrismWindowController.showSearchSheet(_:)), "f", [.command, .option, .control]),
             .separator(),

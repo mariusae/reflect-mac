@@ -194,7 +194,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
                 }
             }
         }, for: .valueChanged)
-        scroll.refreshControl = refresh
+        scroll.refreshControl = onPullDown == nil ? refresh : nil
         // Swiped left over a note: what links to it.
         backlinkSwipe.maximumNumberOfTouches = 1
         backlinkSwipe.addTarget(self, action: #selector(swipedToBacklinks(_:)))
@@ -389,7 +389,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
 
     private var titleText: String {
         switch kind {
-        case .timeline: "Days"
+        case .timeline: "Daily"
         case .note(let path): store.index?.entry(path)?.title ?? GraphPaths.day(fromDailyPath: path).map(NoteBlock.dayTitle) ?? path
         case .backlinks(let path): "Linked to " + (store.index?.entry(path)?.title ?? path)
         case .inbox: "Inbox"
@@ -485,7 +485,9 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             shown = low..<min(entries.count, low + Self.span)
             setBlocks(Array(entries[shown]), showsHeaders: true)
         case .note(let path):
-            setBlocks([NoteRef(path: path)], showsHeaders: false)
+            // A day alone: headed large — Today, and its date over it.
+            let head = GraphPaths.day(fromDailyPath: path).map { [Self.dayHead($0, metrics: metrics)] } ?? []
+            setBlocks([NoteRef(path: path)], showsHeaders: false, before: head)
             refreshTopic(path)
         case .inbox:
             refreshInbox()
@@ -822,7 +824,8 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     private let statusShade = UIView()
 
     override func viewDidLayoutSubviews() {
-        statusShade.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: view.window?.safeAreaInsets.top ?? view.safeAreaInsets.top)
+        // Its own top's: none for a sheet under a list, clear of the clock.
+        statusShade.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: view.safeAreaInsets.top)
         view.bringSubviewToFront(statusShade)
         super.viewDidLayoutSubviews()
         if StallWatch.enabled { StallWatch.mark("sheet layout \(kind)") }
@@ -1014,6 +1017,8 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        // Pulled down well past the top: what is above it — a calendar, a list.
+        if let onPullDown, scroll.contentOffset.y < -(scroll.adjustedContentInset.top + 70) { onPullDown() }
         if !decelerate {
             rememberPlaces()
             onStateChange?()
@@ -1022,6 +1027,32 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
 
     /// Told to hide the chrome — reading down — or bring it back.
     var onChromeHidden: ((Bool) -> Void)?
+    /// Pulled down past its top — set, in place of a sync: what is over it,
+    /// shown — the month over a day, the list over a note.
+    var onPullDown: (() -> Void)? {
+        didSet { if isViewLoaded, onPullDown != nil { scroll.refreshControl = nil } }
+    }
+    /// A swipe to the left over a note: what links to it — not where a swipe
+    /// across turns the page.
+    var allowsBacklinkSwipe = true
+
+    /// A day, headed alone: its name as it is to today — Today, Yesterday,
+    /// a weekday this week, else its date — and its full date over it.
+    static func dayHead(_ day: Day, metrics: PhoneMetrics) -> HeadBlock {
+        let today = Day.today
+        let date = day.date ?? Date()
+        let title: String
+        switch day {
+        case today: title = "Today"
+        case today.adding(-1): title = "Yesterday"
+        case today.adding(1): title = "Tomorrow"
+        default:
+            let near = (today.adding(-6)...today.adding(6)).contains(day)
+            title = Formats.date(near ? "EEEE" : day.year == today.year ? "MMMMd" : "MMMMdyyyy").string(from: date)
+        }
+        let kicker = Formats.date(day.year == today.year ? "EEEEMMMMd" : "EEEEMMMMdyyyy").string(from: date)
+        return HeadBlock(title: title, kicker: kicker, metrics: metrics)
+    }
     private var lastScrollY: CGFloat = 0
     private var chromeTravel: CGFloat = 0
 
@@ -1267,6 +1298,7 @@ extension SheetController: UIGestureRecognizerDelegate {
     /// swipe turns.
     func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
         guard gesture === backlinkSwipe, let pan = gesture as? UIPanGestureRecognizer else { return true }
+        guard allowsBacklinkSwipe else { return false }
         let velocity = pan.velocity(in: scroll)
         guard velocity.x < 0, -velocity.x > abs(velocity.y) * 1.5 else { return false }
         let point = pan.location(in: scroll)

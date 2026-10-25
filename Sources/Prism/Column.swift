@@ -28,6 +28,8 @@ final class Column: NSView, OutlineTextViewNavigator {
         case backlinks(NoteRef)
         /// The notes in the inbox.
         case inbox
+        /// The notes pinned, in their order.
+        case pinned
         /// The tasks of every note, grouped as Reflect groups them.
         case tasks
         /// The notes some words are found in.
@@ -379,8 +381,24 @@ final class Column: NSView, OutlineTextViewNavigator {
     // MARK: Contents
 
     var isTimeline: Bool { kind == .timeline }
+    /// Daily, a day at a time — not every day, scrolled through: View ▸ Daily.
+    static var pagedDays: Bool {
+        get { !UserDefaults.standard.bool(forKey: "DailyContinuous") }
+        set { UserDefaults.standard.set(!newValue, forKey: "DailyContinuous") }
+    }
+    /// The week over the day shown: View ▸ Daily ▸ Show Week.
+    static var showsMonth: Bool {
+        get { !UserDefaults.standard.bool(forKey: "DailyMonthHidden") }
+        set { UserDefaults.standard.set(!newValue, forKey: "DailyMonthHidden") }
+    }
+    /// The days, a page each: this column's.
+    var isPaged: Bool { isTimeline && Self.pagedDays }
+    /// The days with notes, marked: for the week over a day.
+    var dayMarks: (() -> [Day: NoteCalendar.Mark])?
+    /// A day chosen from the month, or stepped to.
+    var onGoToDay: ((Column, Day) -> Void)?
     /// Whether it shows many notes, one after another: the timeline, the inbox.
-    var listsNotes: Bool { isTimeline || kind == .inbox || isSearch && Self.searchShowsNotes }
+    var listsNotes: Bool { (isTimeline && !Self.pagedDays) || isSearch && Self.searchShowsNotes }
     private var isSearch: Bool { if case .search = kind { true } else { false } }
 
     /// Whether a search shows the notes it found whole, not the rows that match.
@@ -807,6 +825,77 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     /// Shows the inbox's notes: those already shown kept where they are,
     /// those new to it first, those gone from it let go.
+    // MARK: A list of notes, one open beside
+
+    /// The note chosen from the list: open in the column beside.
+    var listSelection: NoteRef? {
+        didSet { for case let row as NoteListRow in blocks { row.isChosen = row.ref == listSelection } }
+    }
+    /// A note chosen from the list — clicked, or stepped to with the arrows.
+    var onChooseListed: ((Column, NoteRef) -> Void)?
+    /// A note's Done, in the inbox's list: out of the inbox.
+    var onDoneListed: ((Column, NoteRef) -> Void)?
+    /// What the list says of a note: its text, its cover.
+    var listedNote: ((NoteRef) -> (source: String, cover: String?))?
+    /// Whether it lists notes to open beside, not notes whole.
+    var isList: Bool { kind == .inbox || kind == .pinned }
+    /// The notes listed, in order.
+    var listed: [NoteRef] { blocks.compactMap { ($0 as? NoteListRow)?.ref } }
+
+    /// The inbox, or the pinned: each a line or two, the one chosen open beside.
+    func showList(_ refs: [NoteRef], kind: Kind) {
+        if self.kind != kind { removeBlocks() } else { blocks.forEach { $0.removeFromSuperview() } }
+        self.kind = kind
+        let head = InboxHeader(metrics: metrics, title: kind == .pinned ? "Pinned" : "Inbox")
+        head.count = refs.count
+        document.addSubview(head)
+        let rows = refs.map { ref -> NoteListRow in
+            let note = listedNote?(ref) ?? (source: "", cover: nil)
+            let row = NoteListRow(ref: ref, source: note.source, cover: note.cover, when: Self.when(of: ref), inbox: kind == .inbox,
+                                  metrics: metrics, face: face)
+            row.onChoose = { [weak self] ref in
+                guard let self else { return }
+                window?.makeFirstResponder(self)
+                onChooseListed?(self, ref)
+            }
+            row.onDone = { [weak self] ref in
+                guard let self else { return }
+                onDoneListed?(self, ref)
+            }
+            row.isChosen = ref == listSelection
+            document.addSubview(row)
+            return row
+        }
+        blocks = [head] + rows
+        settled = true
+        relayout()
+    }
+
+    /// The note before or after the one chosen, chosen.
+    private func stepListed(_ step: Int) {
+        let all = listed
+        guard !all.isEmpty else { return }
+        let at = listSelection.flatMap { all.firstIndex(of: $0) }.map { $0 + step } ?? 0
+        let ref = all[min(max(at, 0), all.count - 1)]
+        onChooseListed?(self, ref)
+        if let row = blocks.first(where: { ($0 as? NoteListRow)?.ref == ref }) { row.scrollToVisible(row.bounds) }
+    }
+
+    /// The list's keys: ↑ and ↓ through it; ⌘⏎ the chosen one done; ⏎ into it.
+    override func keyDown(with event: NSEvent) {
+        guard isList, window?.firstResponder === self else { return super.keyDown(with: event) }
+        switch event.keyCode {
+        case 126: stepListed(-1)
+        case 125: stepListed(1)
+        case 36 where event.modifierFlags.contains(.command):
+            if kind == .inbox, let ref = listSelection { onDoneListed?(self, ref) }
+        case 36, 124: onEnterListed?(self)
+        default: super.keyDown(with: event)
+        }
+    }
+    /// ⏎ or → on the list: the keyboard into the note open beside.
+    var onEnterListed: ((Column) -> Void)?
+
     func showInbox(_ refs: [NoteRef]) {
         let wasInbox = kind == .inbox
         if !wasInbox {
@@ -1236,7 +1325,7 @@ final class Column: NSView, OutlineTextViewNavigator {
     /// The views, from home held: the days, the inbox, the tasks, search, the calendar.
     private func showViews(from view: NSView) {
         let menu = NSMenu()
-        for choice in [SheetBar.Choice.timeline, .inbox, .tasks, .search] {
+        for choice in [SheetBar.Choice.timeline, .inbox, .pinned, .tasks, .search] {
             let item = ClosureMenuItem(title: choice.name) { [weak self] in
                 guard let self else { return }
                 onAddSheet?(self, choice)
@@ -1295,6 +1384,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             let symbol = switch kind {
             case .timeline: "house"
             case .inbox: "tray"
+            case .pinned: "pin"
             case .tasks: "checkmark.circle"
             case .search: "magnifyingglass"
             case .backlinks: "arrow.turn.up.left"
@@ -1314,11 +1404,12 @@ final class Column: NSView, OutlineTextViewNavigator {
     /// What a sheet is, under its name on its card.
     private static func kindName(_ kind: Kind) -> String {
         switch kind {
-        case .timeline: "The days"
+        case .timeline: "Daily"
         case .note: "A note"
         case .backlinks: "What links here"
-        case .inbox: "The inbox"
-        case .tasks: "The tasks"
+        case .inbox: "Inbox"
+        case .pinned: "Pinned"
+        case .tasks: "Tasks"
         case .search(let query): query.isEmpty ? "Search" : "Search for “\(query)”"
         case .web: "A page on the web"
         }
@@ -1343,6 +1434,12 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     /// Shows the timeline, the window on it about a note.
     func showTimeline(_ entries: [NoteRef], around ref: NoteRef) {
+        if Self.pagedDays { return showDay(ref) }
+        // From a page a day: what it showed let go, every day made afresh.
+        if pagedShown {
+            removeBlocks()
+            pagedShown = false
+        }
         self.entries = entries
         let center = entries.firstIndex(of: ref) ?? entries.count - 1
         let low = max(0, min(center - Self.span / 2, entries.count - Self.span))
@@ -1356,7 +1453,8 @@ final class Column: NSView, OutlineTextViewNavigator {
     /// The timeline as it now is — a day written in elsewhere, a week
     /// begun — the window kept on the same days.
     func updateTimeline(_ entries: [NoteRef]) {
-        guard isTimeline, !shown.isEmpty else { return }
+        // A page of its own: the day stays as it is.
+        guard isTimeline, !shown.isEmpty, !Self.pagedDays else { return }
         let first = self.entries[shown.lowerBound], last = self.entries[shown.upperBound - 1]
         self.entries = entries
         let low = entries.firstIndex(of: first) ?? entries.firstIndex { $0 == last } ?? 0
@@ -1471,6 +1569,48 @@ final class Column: NSView, OutlineTextViewNavigator {
         }
     }
 
+    /// The days, a page each: this one — headed large, the month over it.
+    /// Whether what shows is a page a day.
+    private var pagedShown = false
+
+    private func showDay(_ ref: NoteRef) {
+        let same = isTimeline && pagedShown && entries == [ref]
+        pagedShown = true
+        entries = [ref]
+        shown = 0..<1
+        if kind != .timeline { removeBlocks() }
+        kind = .timeline
+        settled = false
+        var existing = notesShown()
+        for block in blocks where !(block is DayView || block is NoteCardBlock) { block.removeFromSuperview() }
+        let view = (existing.removeValue(forKey: ref) as? DayView) ?? makeView(ref)
+        view.standsAlone = true
+        existing.values.forEach(letGo)
+        var shownBlocks: [ColumnBlock] = []
+        if Self.showsMonth, let day = ref.day ?? GraphPaths.week(fromWeeklyPath: ref.path)?.monday {
+            let strip = WeekStrip(day: day, marks: dayMarks?() ?? [:], metrics: metrics)
+            strip.onChoose = { [weak self] day in
+                guard let self else { return }
+                onGoToDay?(self, day)
+            }
+            strip.onMonth = { [weak self] view in
+                guard let self else { return }
+                onShowCalendar?(self, view)
+            }
+            document.addSubview(strip)
+            shownBlocks.append(strip)
+        }
+        blocks = shownBlocks + [view]
+        relayout()
+        if !same { scroll(toY: 0, animated: false) }
+    }
+
+    /// The day before or after the one shown.
+    func stepDay(_ step: Int) {
+        guard isPaged, let day = entries.first?.day else { return }
+        onGoToDay?(self, day.adding(step))
+    }
+
     /// Shows a note on its own.
     func showNote(_ ref: NoteRef) {
         removeBlocks()
@@ -1561,6 +1701,7 @@ final class Column: NSView, OutlineTextViewNavigator {
     }
 
     private func removeBlocks() {
+        pagedShown = false
         webPage?.removeFromSuperview()
         webPage = nil
         webOutline = nil
@@ -1938,7 +2079,9 @@ final class Column: NSView, OutlineTextViewNavigator {
     func restore(_ place: Place, key: NoteRef? = nil) {
         relayout()
         if let view = view(for: place.ref) {
-            let y = max(0, min(view.frame.minY + place.offset - band, document.frame.height - scroll.contentSize.height))
+            // A day's page from its top, the month over it in sight — till read down into.
+            let top = pagedShown && place.offset <= 0 ? 0 : view.frame.minY + place.offset - band
+            let y = max(0, min(top, document.frame.height - scroll.contentSize.height))
             scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
             scroll.reflectScrolledClipView(scroll.contentView)
         }
@@ -1974,7 +2117,7 @@ final class Column: NSView, OutlineTextViewNavigator {
     func reveal(_ ref: NoteRef, animated: Bool) {
         guard let view = view(for: ref) else { return }
         relayout()
-        scroll(toY: view.frame.minY, animated: animated)
+        scroll(toY: pagedShown ? 0 : view.frame.minY, animated: animated)
         settled = true
         guard !view.hasConflict else { return }
         window?.makeFirstResponder(view.editor)
@@ -2606,13 +2749,14 @@ final class SheetBar: NSView {
     override var mouseDownCanMoveWindow: Bool { false }
 
     enum Choice: CaseIterable {
-        case timeline, backlinks, inbox, tasks, search
+        case timeline, backlinks, inbox, pinned, tasks, search
 
         var symbol: String {
             switch self {
             case .timeline: "calendar"
             case .backlinks: "link"
             case .inbox: "tray"
+            case .pinned: "pin"
             case .tasks: "checkmark.circle"
             case .search: "magnifyingglass"
             }
@@ -2620,9 +2764,10 @@ final class SheetBar: NSView {
 
         var name: String {
             switch self {
-            case .timeline: "Timeline"
+            case .timeline: "Daily"
             case .backlinks: "Backlinks"
             case .inbox: "Inbox"
+            case .pinned: "Pinned"
             case .tasks: "Tasks"
             case .search: "Search"
             }

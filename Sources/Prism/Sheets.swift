@@ -55,10 +55,11 @@ extension Column {
     /// What a sheet is called: the note it shows, or the day at its top.
     static func title(of kind: Kind, top: NoteRef?) -> String {
         switch kind {
-        case .timeline: top.map { name(of: $0).title } ?? "Timeline"
+        case .timeline: top.map { name(of: $0).title } ?? "Daily"
         case .note(let ref): name(of: ref).title
         case .backlinks(let ref): "Linked to " + name(of: ref).title
         case .inbox: "Inbox"
+        case .pinned: "Pinned"
         case .tasks: "Tasks"
         case .search(let query): query.isEmpty ? "Search" : "“\(query)”"
         case .web(let ref): name(of: ref).title
@@ -205,6 +206,7 @@ final class StackPill: NSView {
         case .note: "doc.text"
         case .backlinks: "link"
         case .inbox: "tray"
+        case .pinned: "pin"
         case .tasks: "checklist"
         case .search: "magnifyingglass"
         case .web: "safari"
@@ -958,6 +960,7 @@ final class SwitcherCard: NSView {
         case .note: "doc.text"
         case .backlinks: "link"
         case .inbox: "tray"
+        case .pinned: "pin"
         case .tasks: "checklist"
         case .search: "magnifyingglass"
         case .web: "safari"

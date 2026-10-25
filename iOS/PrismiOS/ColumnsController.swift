@@ -30,7 +30,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
 
     /// The tabs, in order, with what each shows and its icon.
     static let tabs: [(kind: SheetKind, title: String, symbol: String)] = [
-        (.timeline, "Days", "house"),
+        (.timeline, "Daily", "house"),
         (.inbox, "Inbox", "tray"),
     ]
     /// The inbox's tab, held, shows the pinned notes instead — and, held
@@ -67,7 +67,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             return LinkSuggestions.candidates(query, index: index)
         }
         columns = Self.tabs.indices.map(tab).map { tab in
-            let navigation = UINavigationController(rootViewController: makeSheet(tab.kind, around: tab.kind == .timeline ? .day(.today) : nil))
+            let navigation = UINavigationController(rootViewController: makeRoot(tab.kind))
             navigation.delegate = self
             styleBar(navigation)
             // No bar at the top: the name, back, and the menus are the bottom's.
@@ -143,7 +143,8 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
                 guard let self else { return }
                 let changed = self.store.changed
                 for column in self.columns {
-                    for case let sheet as SheetController in column.viewControllers { sheet.notesChanged(changed) }
+                    for sheet in self.allSheets(column) { sheet.notesChanged(changed) }
+                for case let host as NoteHost in column.viewControllers { host.notesChanged(changed) }
                 }
                 // What links where may have changed with them: counted again.
                 self.backlinkCards = [:]
@@ -162,7 +163,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             DispatchQueue.main.async { self?.observeSync() }
         }
         for column in columns {
-            for case let sheet as SheetController in column.viewControllers { sheet.showSyncing(syncing) }
+            for sheet in allSheets(column) { sheet.showSyncing(syncing) }
         }
     }
 
@@ -202,7 +203,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         let days = columns[0]
         select(column: 0)
         if days.viewControllers.count > 1 { days.popToRootViewController(animated: true) }
-        (days.viewControllers.first as? SheetController)?.show(.day(.today))
+        dayPager?.show(.today)
         setChromeHidden(false)
         layoutChanged()
     }
@@ -211,12 +212,69 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     func updateBar() {
         let navigation = selectedNavigation
         bar.canGoBack = (navigation?.viewControllers.count ?? 0) > 1
-        guard let sheet = navigation?.topViewController as? SheetController else { return }
+        guard let sheet = sheet(in: navigation?.topViewController) else {
+            // A view with no note shown — an empty inbox: its name.
+            if let host = navigation?.topViewController as? NoteHost { bar.setTitle([Self.viewTitle(host.rootKind)], symbol: Self.symbol(of: host.rootKind)) }
+            return
+        }
         // A day's or a week's mark is the calendar; another note's, its own.
         let path = sheet.currentNotePath
         let dated = path.map { GraphPaths.day(fromDailyPath: $0) != nil || GraphPaths.week(fromWeeklyPath: $0) != nil } ?? false
         bar.setTitle(names(of: sheet), cover: path.flatMap(cover(of:)),
                      symbol: path == nil ? Self.symbol(of: sheet.kind) : dated ? "calendar" : nil)
+    }
+
+    /// The note sheet a controller shows: itself, or the one a view of one
+    /// note at a time shows.
+    private func sheet(in controller: UIViewController?) -> SheetController? {
+        (controller as? SheetController) ?? (controller as? NoteHost)?.sheet
+    }
+
+    /// Every note sheet in a column: its own, and those its views hold.
+    private func allSheets(_ column: UINavigationController) -> [SheetController] {
+        column.viewControllers.flatMap { ($0 as? SheetController).map { [$0] } ?? ($0 as? NoteHost)?.sheets ?? [] }
+    }
+
+    /// The days, a day at a time: the first column's root.
+    private var dayPager: DayPager? { columns.first?.viewControllers.first as? DayPager }
+
+    /// A column's root: the days, a page each; the inbox and the pinned, a
+    /// list over the note chosen; else a sheet of notes.
+    func makeRoot(_ kind: SheetKind) -> UIViewController {
+        let host: NoteHost
+        switch kind {
+        case .timeline:
+            let pager = DayPager(makeSheet: { [unowned self] kind in makeSheet(kind) },
+                                 makeCalendar: { [unowned self] day in calendarController(day: day) })
+            pager.marks = { [weak self] in
+                guard let graph = self?.store.graph, let index = self?.store.index else { return [:] }
+                return NoteCalendar.marks(graph: graph, index: index)
+            }
+            host = pager
+        case .inbox, .pinned:
+            host = NoteListController(kind: kind, store: store, makeSheet: { [unowned self] kind in makeSheet(kind) })
+        default:
+            return makeSheet(kind)
+        }
+        host.onShownChange = { [weak self] in
+            self?.updateBar()
+            self?.updateBacklinks()
+            self?.layoutChanged()
+        }
+        return host
+    }
+
+    /// A view's name, with no note in it to name it.
+    private static func viewTitle(_ kind: SheetKind) -> String {
+        switch kind {
+        case .timeline: "Daily"
+        case .inbox: "Inbox"
+        case .pinned: "Pinned"
+        case .tasks: "Tasks"
+        case .search(let query): query
+        case .backlinks: "Linked Here"
+        case .note: "Note"
+        }
     }
 
     /// A view's mark, in the bar's field in a cover's stead.
@@ -236,7 +294,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     private func names(of sheet: SheetController) -> [String] {
         if let path = sheet.currentNotePath { return SliceBlock.names(path, store: store) }
         switch sheet.kind {
-        case .timeline: return ["Days"]
+        case .timeline: return ["Daily"]
         case .inbox: return ["Inbox"]
         case .pinned: return ["Pinned"]
         case .tasks: return ["Tasks"]
@@ -249,9 +307,9 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     /// The views other than the days, for home held.
     private func viewEntries() -> [NoteFan.Entry] {
         [
-            NoteFan.Entry(names: ["Inbox"], cover: nil, symbol: "tray", round: true) { [weak self] in self?.showInbox(pinned: false) },
-            NoteFan.Entry(names: ["Pinned"], cover: nil, symbol: "pin", round: true) { [weak self] in self?.showInbox(pinned: true) },
-            NoteFan.Entry(names: ["Tasks"], cover: nil, symbol: "checkmark.circle", round: true) { [weak self] in self?.showTasks() },
+            NoteFan.Entry(names: ["Inbox"], cover: nil, symbol: "tray") { [weak self] in self?.showInbox(pinned: false) },
+            NoteFan.Entry(names: ["Pinned"], cover: nil, symbol: "pin") { [weak self] in self?.showInbox(pinned: true) },
+            NoteFan.Entry(names: ["Tasks"], cover: nil, symbol: "checkmark.circle") { [weak self] in self?.showTasks() },
         ]
     }
 
@@ -262,7 +320,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
 
     /// The tasks, on the stack of the view shown.
     private func showTasks() {
-        guard let sheet = selectedNavigation?.topViewController as? SheetController else { return }
+        guard let sheet = sheet(in: selectedNavigation?.topViewController) else { return }
         if case .tasks = sheet.kind { return }
         push(.tasks, from: sheet)
     }
@@ -276,14 +334,14 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     /// note shown, and the app's own.
     private func barMenu() -> UIMenu {
         let views: [UIMenuElement] = [
-            UIAction(title: "Days", image: UIImage(systemName: "house")) { [weak self] _ in self?.tabTapped(0) },
+            UIAction(title: "Daily", image: UIImage(systemName: "house")) { [weak self] _ in self?.tabTapped(0) },
             UIAction(title: "Inbox", image: UIImage(systemName: "tray")) { [weak self] _ in self?.showInbox(pinned: false) },
             UIAction(title: "Pinned", image: UIImage(systemName: "pin")) { [weak self] _ in self?.showInbox(pinned: true) },
             UIAction(title: "Tasks", image: UIImage(systemName: "checkmark.circle")) { [weak self] _ in self?.showTasks() },
             UIAction(title: "Calendar", image: UIImage(systemName: "calendar")) { [weak self] _ in self?.showCalendar() },
         ]
         var sections: [UIMenuElement] = [UIMenu(options: .displayInline, children: views)]
-        guard let sheet = selectedNavigation?.topViewController as? SheetController else { return UIMenu(children: sections) }
+        guard let sheet = sheet(in: selectedNavigation?.topViewController) else { return UIMenu(children: sections) }
         if let path = sheet.currentNotePath {
             sections.append(UIMenu(title: SliceBlock.name(path, store: store), options: .displayInline,
                                    children: noteMenu(path, from: sheet).children))
@@ -355,9 +413,9 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             let navigation = columns[column]
             if navigation.viewControllers.count > 1 {
                 navigation.popToRootViewController(animated: true)
-            } else if let root = navigation.viewControllers.first as? SheetController, root.kind == .timeline {
-                root.show(.day(.today))
-            } else if let root = navigation.viewControllers.first as? SheetController {
+            } else if let pager = navigation.viewControllers.first as? DayPager {
+                pager.show(.today)
+            } else if let root = sheet(in: navigation.viewControllers.first) {
                 // Its first sheet already: to the top of it.
                 root.scrollToTop()
             }
@@ -376,7 +434,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         columnTabs[Self.inboxColumn].title = tab.title
         let navigation = columns[Self.inboxColumn]
         UIView.transition(with: navigation.view, duration: 0.25, options: .transitionCrossDissolve) {
-            navigation.setViewControllers([self.makeSheet(tab.kind)], animated: false)
+            navigation.setViewControllers([self.makeRoot(tab.kind)], animated: false)
         }
         select(column: Self.inboxColumn)
         setChromeHidden(false)
@@ -438,7 +496,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         sheet.onChromeHidden = { [weak self] hidden in self?.setChromeHidden(hidden) }
         sheet.menu = { [weak self] sheet in self?.menu(for: sheet) ?? UIMenu() }
         sheet.onCurrentNote = { [weak self, weak sheet] in
-            guard let self, let sheet, sheet === selectedNavigation?.topViewController else { return }
+            guard let self, let sheet, sheet === self.sheet(in: selectedNavigation?.topViewController) else { return }
             updateBacklinks()
             updateBar()
         }
@@ -495,7 +553,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     /// Everything typed, in every tab, written.
     func saveAll() {
         for column in columns {
-            for case let sheet as SheetController in column.viewControllers { sheet.saveAll() }
+            for sheet in allSheets(column) { sheet.saveAll() }
         }
     }
 
@@ -687,7 +745,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
 
     private func delete(_ path: String) {
         for column in columns {
-            for case let sheet as SheetController in column.viewControllers { sheet.discard(path) }
+            for sheet in allSheets(column) { sheet.discard(path) }
         }
         store.delete(path)
         for column in columns {
@@ -724,7 +782,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
 
     func showSearch() {
         guard let searchTab, !bar.isSearching else { return }
-        selectedNavigation?.topViewController.flatMap { $0 as? SheetController }?.saveAll()
+        sheet(in: selectedNavigation?.topViewController)?.saveAll()
         lastColumn = selectedColumn
         // Opened out from small or full alike, in one movement.
         bar.setSearching(true)
@@ -752,10 +810,10 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         switch place {
         case .day(let day):
             if store.graph?.exists(path: GraphPaths.dailyPath(for: day)) == false { store.reveal([day]) }
-            guard let days = columns.first, let root = days.viewControllers.first as? SheetController else { return }
+            guard let days = columns.first, let pager = dayPager else { return }
             select(column: 0)
             days.popToRootViewController(animated: false)
-            root.show(.day(day), asLeft: true)
+            pager.show(day)
         case .note(let path):
             openInColumn(.note(path))
         case .search(let query):
@@ -800,7 +858,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     private func openInColumn(_ kind: SheetKind) {
         let column = lastColumn
         select(column: column)
-        guard let sheet = columns[column].topViewController as? SheetController else { return }
+        guard let sheet = sheet(in: columns[column].topViewController) else { return }
         push(kind, from: sheet)
     }
 
@@ -809,11 +867,13 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     /// A month of days, the Days tab held: those with notes marked, and how
     /// far along each one's to-dos are. A day tapped is gone to.
     func showCalendar() {
-        guard let graph = store.graph, let index = store.index else { return }
-        let days = columns.first?.viewControllers.first as? SheetController
-        let shown = days?.place?.path.flatMap(GraphPaths.day(fromDailyPath:)) ?? .today
-        let calendar = CalendarController(month: NoteCalendar.Month(shown), marks: NoteCalendar.marks(graph: graph, index: index),
-                                          weeks: NoteCalendar.weeksWithNotes(index: index))
+        // The days' own: the month over the day shown.
+        if let pager = dayPager {
+            select(column: 0)
+            columns[0].popToRootViewController(animated: false)
+            return pager.showCalendar(true)
+        }
+        guard let calendar = calendarController(day: .today) else { return }
         calendar.onChoose = { [weak self, weak calendar] day in
             calendar?.dismiss(animated: true)
             self?.open(.day(day))
@@ -829,6 +889,18 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
             sheet.preferredCornerRadius = 28
         }
         present(calendar, animated: true)
+    }
+
+    /// The month a day is in: the days with notes marked, how far along each's to-dos are.
+    func calendarController(day: Day) -> CalendarController? {
+        guard let graph = store.graph, let index = store.index else { return nil }
+        let calendar = CalendarController(month: NoteCalendar.Month(day), marks: NoteCalendar.marks(graph: graph, index: index),
+                                          weeks: NoteCalendar.weeksWithNotes(index: index))
+        calendar.onChooseWeek = { [weak self] week in
+            self?.dayPager?.showCalendar(false)
+            self?.open(.note(GraphPaths.weeklyPath(for: week)))
+        }
+        return calendar
     }
 
     // MARK: Dictating
@@ -879,30 +951,30 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
 
     /// A row put first in today — not typed in: shown, and written.
     func addToToday(_ text: String) {
-        selectedNavigation?.topViewController.flatMap { $0 as? SheetController }?.saveAll()
-        guard let days = columns.first, let root = days.viewControllers.first as? SheetController else { return }
+        sheet(in: selectedNavigation?.topViewController)?.saveAll()
+        guard let days = columns.first, let pager = dayPager else { return }
         select(column: 0)
         setChromeHidden(false)
         days.popToRootViewController(animated: false)
         let today = NoteRef.day(.today)
-        root.show(today)
-        DispatchQueue.main.async { root.addAtTop(of: today, text: text) }
+        pager.show(.today, animated: false)
+        DispatchQueue.main.async { pager.sheet?.addAtTop(of: today, text: text) }
     }
 
-    private var currentSheet: SheetController? { selectedNavigation?.topViewController as? SheetController }
+    private var currentSheet: SheetController? { sheet(in: selectedNavigation?.topViewController) }
 
     /// A blank note, on this tab's stack, its title to be typed.
     /// Today, in the days, a new row at its top with the caret in it.
     func writeToday() {
-        selectedNavigation?.topViewController.flatMap { $0 as? SheetController }?.saveAll()
-        guard let days = columns.first, let root = days.viewControllers.first as? SheetController else { return }
+        sheet(in: selectedNavigation?.topViewController)?.saveAll()
+        guard let days = columns.first, let pager = dayPager else { return }
         select(column: 0)
         setChromeHidden(false)
         days.popToRootViewController(animated: false)
         let today = NoteRef.day(.today)
-        root.show(today)
+        pager.show(.today, animated: false)
         // Once laid out where today is.
-        DispatchQueue.main.async { root.writeAtTop(of: today) }
+        DispatchQueue.main.async { pager.sheet?.writeAtTop(of: today) }
     }
 
     func compose(from sheet: SheetController) {
@@ -939,7 +1011,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     /// The bar's pill of what links to the note shown, kept up: found off
     /// the main thread the first time, then known.
     func updateBacklinks() {
-        guard let sheet = selectedNavigation?.topViewController as? SheetController, !bar.isSearching,
+        guard let sheet = sheet(in: selectedNavigation?.topViewController), !bar.isSearching,
               let path = sheet.currentNotePath, let index = store.index else { return bar.showBacklinks(0) }
         if let cards = backlinkCards[path] { return bar.showBacklinks(cards.count) }
         guard countingBacklinks.insert(path).inserted else { return }
@@ -987,7 +1059,8 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         }
         guard !entries.isEmpty else { return nil }
         // Views over the circle held; notes along the pill.
-        var column = what == .home ? bar.frame(of: .home) : bar.pillFrame
+        // Over the field, each a copy of it, whatever was held.
+        var column = bar.pillFrame
         // Over the panel, not on it.
         column.origin.y = bar.panelTop
         let fan = NoteFan(entries: entries, from: bar.convert(bar.frame(of: what), to: view),
@@ -1002,7 +1075,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
     /// What links to the note shown, the newest nearest the thumb; past
     /// six, the last of them all.
     private func backlinkEntries() -> [NoteFan.Entry] {
-        guard let sheet = selectedNavigation?.topViewController as? SheetController, let path = sheet.currentNotePath,
+        guard let sheet = sheet(in: selectedNavigation?.topViewController), let path = sheet.currentNotePath,
               let cards = backlinkCards[path], !cards.isEmpty else { return [] }
         let most = 6
         let shown = cards.count > most ? Array(cards.prefix(most - 1)) : cards
@@ -1050,7 +1123,10 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         var focusColumn: Int?
         var focus: SheetController.Focus?
         let columns = columns.enumerated().map { c, column in
-            column.viewControllers.compactMap { $0 as? SheetController }.map { sheet -> Layout.Sheet in
+            column.viewControllers.compactMap { controller -> Layout.Sheet? in
+                // A view showing one note at a time: kept as what it is.
+                if let host = controller as? NoteHost { return Layout.Sheet(kind: host.rootKind, place: nil) }
+                guard let sheet = controller as? SheetController else { return nil }
                 if focus == nil, sheet === column.topViewController, let found = sheet.focus {
                     focus = found
                     focusColumn = c
@@ -1084,7 +1160,8 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         for (c, sheets) in layout.columns.enumerated() where columns.indices.contains(c) && sheets.first?.kind == tab(c).kind {
             let navigation = columns[c]
             for sheet in sheets.dropFirst() { navigation.pushViewController(makeSheet(sheet.kind), animated: false) }
-            for (s, sheet) in navigation.viewControllers.compactMap({ $0 as? SheetController }).enumerated() where sheets.indices.contains(s) {
+            for (s, controller) in navigation.viewControllers.enumerated() where sheets.indices.contains(s) {
+                guard let sheet = controller as? SheetController else { continue }
                 let focus = c == layout.focusColumn && s == sheets.count - 1 ? layout.focus : nil
                 sheet.restore(place: sheets[s].place, focus: focus)
             }
@@ -1145,7 +1222,7 @@ extension ColumnsController: PHPickerViewControllerDelegate {
                     try self.store.setCover(path, picture: data, extension: "jpg")
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                 } catch {
-                    (self.selectedNavigation?.topViewController as? SheetController)?.say("The cover could not be kept: \(error.localizedDescription)")
+                    (self.sheet(in: self.selectedNavigation?.topViewController))?.say("The cover could not be kept: \(error.localizedDescription)")
                 }
             }
         }

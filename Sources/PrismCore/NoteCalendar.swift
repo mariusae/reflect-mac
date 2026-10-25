@@ -67,6 +67,14 @@ public enum NoteCalendar {
         return stride(from: 0, to: cells.count, by: 7).map { Array(cells[$0..<($0 + 7)]) }
     }
 
+    /// The seven days of the week a day is in, from the calendar's first weekday.
+    public static func week(of day: Day, calendar: Calendar = .current) -> [Day] {
+        guard let date = calendar.date(from: DateComponents(year: day.year, month: day.month, day: day.day)) else { return [day] }
+        let lead = (calendar.component(.weekday, from: date) - calendar.firstWeekday + 7) % 7
+        let first = day.adding(-lead)
+        return (0..<7).map { first.adding($0) }
+    }
+
     /// The weekdays' short names, in the calendar's order: `M T W T F S S`.
     public static func weekdaySymbols(calendar: Calendar = .current) -> [String] {
         let symbols = calendar.veryShortStandaloneWeekdaySymbols

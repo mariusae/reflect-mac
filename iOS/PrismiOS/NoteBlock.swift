@@ -645,7 +645,8 @@ final class NoteBlock: UIView {
         header.titleLabel?.numberOfLines = 0
         header.titleLabel?.lineBreakMode = .byWordWrapping
         // Alone, a note whose first heading is its name needs no other.
-        header.isHidden = !showsHeader && titleIsHeading
+        // A day alone is headed by its sheet, large: no header of its own.
+        header.isHidden = !showsHeader && (titleIsHeading || ref.day != nil)
         // Flat, its age is in the header's small line.
         metaLabel.isHidden = header.isHidden || Card.flat
         headerMeasure = nil
@@ -797,7 +798,8 @@ final class NoteBlock: UIView {
         accessory?.frame = Card.flat ? CGRect(x: bounds.width - Self.side - 26, y: nameLine - 16, width: 32, height: 32)
             : CGRect(x: margin - 16, y: nameLine - 16, width: 32, height: 32)
         ringView.center = CGPoint(x: margin, y: nameLine)
-        trayView.isHidden = !(inboxMark && header.isHidden)
+        // Flat, its Done at the right says it is in the inbox: no tray there too.
+        trayView.isHidden = !(inboxMark && header.isHidden) || (Card.flat && accessory != nil)
         if !trayView.isHidden {
             trayView.image = UIImage(systemName: "tray", withConfiguration: UIImage.SymbolConfiguration(pointSize: round(storedMetrics.size * 0.7),
                                                                                                          weight: .medium))
