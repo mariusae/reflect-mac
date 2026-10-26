@@ -1623,7 +1623,24 @@ final class Column: NSView, OutlineTextViewNavigator {
     /// A week's number clicked, in the strip: its note, on this page.
     var onOpenWeek: ((Column, Week) -> Void)?
     /// How far down the page starts: under the week, when it is there.
-    private var stripRoom: CGFloat { weekStrip == nil ? 0 : WeekStrip.height + 8 }
+    private var stripRoom: CGFloat { weekStrip == nil ? 0 : WeekStrip.height - 22 }
+
+    /// What a day's page is called in the bar: Today, Yesterday, a weekday
+    /// this week, else its date — its whole date beside; a week by its days.
+    static func pageName(_ ref: NoteRef) -> (String, String?) {
+        if let week = GraphPaths.week(fromWeeklyPath: ref.path) { return ("Week \(week.week)", OpenQuickly.weekRange(week)) }
+        guard let day = ref.day, let date = day.date else { return (name(of: ref).title, nil) }
+        let today = Day.today
+        func format(_ template: String) -> String {
+            let formatter = DateFormatter()
+            formatter.setLocalizedDateFormatFromTemplate(template)
+            return formatter.string(from: date)
+        }
+        let near = (today.adding(-6)...today.adding(6)).contains(day)
+        let name = day == today ? "Today" : day == today.adding(-1) ? "Yesterday" : day == today.adding(1) ? "Tomorrow"
+            : format(near ? "EEEE" : day.year == today.year ? "MMMMd" : "MMMMdyyyy")
+        return (name, format(day.year == today.year ? "EEEEMMMMd" : "EEEEMMMMdyyyy"))
+    }
 
     /// The day before or after the one shown.
     func stepDay(_ step: Int) {
@@ -1914,8 +1931,16 @@ final class Column: NSView, OutlineTextViewNavigator {
         sticky.setScrolledUnder(scroll.contentView.bounds.minY > 2)
         // The block under the bar — a note, a group of tasks, a note linking
         // here — its own heading gone up under it, its card still there.
-        // A day's page names itself under its week: nothing in the bar.
-        guard !isWeb, weekStrip == nil, let block = blocks.last(where: { $0.frame.minY <= top + 4 }), let head = block.stickyTitle,
+        // A day's page: always named in the bar, over its week — Today, and its date.
+        if weekStrip != nil, let ref = entries.first {
+            let (name, when) = Self.pageName(ref)
+            sticky.ruled = false
+            sticky.show(name: name, when: when, titleFont: titleFont, whenFont: whenFont)
+            sticky.onClick = nil
+            return
+        }
+        sticky.ruled = true
+        guard !isWeb, let block = blocks.last(where: { $0.frame.minY <= top + 4 }), let head = block.stickyTitle,
               block.frame.minY + 44 < top, block.frame.maxY - top > 40 else {
             if sticky.shown != nil { needsLayout = true }
             sticky.show(name: nil, when: nil, titleFont: titleFont, whenFont: whenFont)
@@ -2618,10 +2643,14 @@ final class StickyHeader: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     /// No bar till a name is in it: then the page's colour behind it, a hairline under.
+    /// A hairline under it, when it names something scrolled up under it — not over a week.
+    var ruled = true { didSet { if ruled != oldValue { needsDisplay = true } } }
+
     override func draw(_ dirtyRect: NSRect) {
         guard shown != nil else { return }
         Ink.paper.setFill()
         bounds.fill()
+        guard ruled else { return }
         Ink.rule.setFill()
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }

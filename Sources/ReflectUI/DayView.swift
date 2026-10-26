@@ -175,6 +175,13 @@ package final class DayView: NSView, NSTextViewDelegate {
         // A day on its own page: named large — Today, a weekday this week —
         // its whole date over it in small capitals.
         if standsAlone {
+            // Named in the window's title bar, over its week: nothing over the page itself.
+            title.stringValue = ""
+            badge.isHidden = true
+            needsLayout = true
+            return
+        }
+        if false {
             let near = (today.adding(-6)...today.adding(6)).contains(day)
             let name = day == today ? "Today" : day == today.adding(-1) ? "Yesterday" : day == today.adding(1) ? "Tomorrow"
                 : Self.formatted(near ? "EEEE" : day.year == today.year ? "MMMMd" : "MMMMdyyyy", date)
@@ -262,7 +269,7 @@ package final class DayView: NSView, NSTextViewDelegate {
 
     private func editorTop(columnWidth: CGFloat) -> CGFloat {
         let cover = coverRoom(columnWidth: columnWidth)
-        guard ref.day != nil || !title.stringValue.isEmpty else { return cover + round(metrics.fontSize * 1.6) }
+        guard (ref.day != nil && !standsAlone) || !title.stringValue.isEmpty else { return cover + round(metrics.fontSize * 1.6) }
         return cover + round(metrics.fontSize * 2.2) + headerHeight + round(metrics.fontSize * 0.7)
     }
 
