@@ -52,7 +52,7 @@ final class LensList: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     /// Its top: the window's buttons, and the lenses after them.
-    static let barHeight: CGFloat = 52
+    static let barHeight: CGFloat = 44
 
     init() {
         super.init(frame: .zero)
@@ -72,6 +72,8 @@ final class LensList: NSView {
         field.action = #selector(searched)
         field.isHidden = true
         addSubview(field)
+        // Nothing of it past its glass.
+        clipsToBounds = true
     }
 
     @available(*, unavailable)
@@ -155,10 +157,13 @@ final class LensList: NSView {
             top = field.frame.maxY + 6
         }
         if let calendar {
+            // The month as wide as the list has room for: drawn smaller, not cut off.
             let size = CalendarView.size
             let scale = min(1, (bounds.width - 8) / size.width)
-            calendar.frame = NSRect(x: ((bounds.width - size.width * scale) / 2).rounded(), y: top - 18, width: size.width, height: size.height)
-            top = calendar.frame.maxY - 14
+            calendar.frame = NSRect(x: ((bounds.width - size.width * scale) / 2).rounded(), y: top - 18 * scale,
+                                    width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
+            calendar.bounds = NSRect(origin: .zero, size: size)
+            top = calendar.frame.maxY - 14 * scale
         }
         scroll.frame = NSRect(x: 0, y: top, width: bounds.width, height: max(0, bounds.height - top))
         let width = scroll.contentSize.width

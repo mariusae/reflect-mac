@@ -46,7 +46,9 @@ final class LensSwitcher: NSView {
 
     override func layout() {
         super.layout()
-        glass.frame = bounds
+        // A glass view hidden is drawn all the same: none, unless it floats.
+        glass.isHidden = !floats
+        glass.frame = floats ? bounds : .zero
         glass.cornerRadius = bounds.height / 2
         let inset: CGFloat = floats ? 6 : 0
         row.frame = bounds.insetBy(dx: inset, dy: inset)

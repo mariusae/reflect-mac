@@ -602,7 +602,7 @@ final class NotePane: NSView, OutlineTextViewNavigator {
 /// pointer.
 final class PaneChrome: NSView {
     /// The row they float in, at the pane's top.
-    static let height: CGFloat = 52
+    static let height: CGFloat = 2 * PrismWindow.barMiddle
     private static let capsule: CGFloat = 34
 
     var onBack: (() -> Void)?
@@ -627,7 +627,10 @@ final class PaneChrome: NSView {
     private let earlier = CloseButton(symbol: "chevron.left", pointSize: 10, toolTip: "The Day Before (⌃⌘←)")
     private let later = CloseButton(symbol: "chevron.right", pointSize: 10, toolTip: "The Day After (⌃⌘→)")
     private let month = CloseButton(symbol: "chevron.down", pointSize: 10, toolTip: "The Month")
-    private let faces = NSSegmentedControl(labels: ["Outline", "Schedule"], trackingMode: .selectOne, target: nil, action: nil)
+    private let faces = NSSegmentedControl(images: [
+        NSImage(systemSymbolName: "text.alignleft", accessibilityDescription: "Outline")!,
+        NSImage(systemSymbolName: "calendar.day.timeline.left", accessibilityDescription: "Schedule")!,
+    ], trackingMode: .selectOne, target: nil, action: nil)
     private let linked = NSButton()
     private let warning = CloseButton(symbol: "exclamationmark.triangle.fill", pointSize: 12, toolTip: "")
     private let menuButton = CloseButton(symbol: "ellipsis", pointSize: 13, toolTip: "This Note")

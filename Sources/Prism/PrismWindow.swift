@@ -22,6 +22,10 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     let session: Session
     private let root = WindowRoot()
     private let lenses = LensSwitcher()
+    /// By the window's buttons: the list out, or put away.
+    private let sidebarButton = CloseButton(symbol: "sidebar.left", pointSize: 14, toolTip: "Show or Hide the List (⌥⌘L)")
+    /// Under it, the list put away: glass, as the panes' controls have.
+    private let sidebarGlass = GlassCapsule()
     /// Behind the list: glass, inset from the window's edges.
     private let listGlass = NSGlassEffectView()
     private let list = LensList()
@@ -55,6 +59,11 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         root.addSubview(listGlass)
         root.addSubview(list)
         root.addSubview(lenses)
+        root.addSubview(sidebarGlass)
+        root.addSubview(sidebarButton)
+        sidebarButton.contentTintColor = Ink.text
+        sidebarButton.target = self
+        sidebarButton.action = #selector(toggleList(_:))
 
         let state = state ?? State()
         lens = state.lens
@@ -239,13 +248,10 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     // MARK: The lens, and its list
 
     /// A lens chosen in the rail: its list shown — chosen again, hidden.
-    private func choose(_ lens: Lens, keepShown: Bool = false) {
-        if lens == self.lens, listShown, !keepShown {
-            listShown = false
-        } else {
-            self.lens = lens
-            listShown = true
-        }
+    /// A lens chosen: its list shown — out, if it was put away.
+    private func choose(_ lens: Lens, keepShown: Bool = true) {
+        self.lens = lens
+        listShown = true
         lenses.lens = lens
         refreshList()
         layoutWindow()
@@ -506,11 +512,17 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
     // MARK: Layout
 
-    private var listWidth: CGFloat { listShown ? min(340, max(270, (window?.frame.width ?? 1000) * 0.28)) : 0 }
+    /// Never narrower than its top row: the window's buttons, the sidebar's, the lenses.
+    private var listWidth: CGFloat {
+        let least = Self.buttonsEnd + 28 + 6 + LensSwitcher.width + 14 - Self.inset
+        return listShown ? min(max(340, least), max(least, (window?.frame.width ?? 1000) * 0.28)) : 0
+    }
     /// Between the list's glass and the window's edges.
     private static let inset: CGFloat = 8
-    /// Where the window's buttons end: the controls start after them.
-    private static let buttonsEnd: CGFloat = 84
+    /// Where the window's buttons end: the sidebar's button after them, then the rest.
+    private static let buttonsEnd: CGFloat = 78
+    /// The middle of the window's top row: its buttons, the sidebar's, the lenses, every pane's controls.
+    static let barMiddle: CGFloat = 30
 
     private func layoutWindow() {
         let bounds = root.bounds
@@ -522,8 +534,12 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         list.frame = NSRect(x: inset, y: inset, width: listWidth, height: bounds.height - 2 * inset)
         // The lenses: along the list's top, past the window's buttons — or, it put away, floating at the foot.
         lenses.floats = !listShown
+        let middle = Self.barMiddle
+        sidebarGlass.isHidden = listShown
+        sidebarButton.frame = NSRect(x: Self.buttonsEnd, y: middle - 14, width: 28, height: 28)
+        sidebarGlass.frame = listShown ? .zero : sidebarButton.frame.insetBy(dx: -4, dy: -4)
         if listShown {
-            lenses.frame = NSRect(x: list.frame.minX + Self.buttonsEnd - inset, y: inset + (LensList.barHeight - LensSwitcher.side) / 2,
+            lenses.frame = NSRect(x: sidebarButton.frame.maxX + 6, y: middle - LensSwitcher.side / 2,
                                   width: LensSwitcher.width, height: LensSwitcher.side)
         } else {
             let size = lenses.preferredSize
@@ -538,7 +554,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         for (i, pane) in panes.enumerated() {
             pane.ruledLeft = i > 0
             // The first, with nothing at its left: clear of the window's buttons.
-            pane.leading = i == 0 && !listShown ? Self.buttonsEnd : 0
+            pane.leading = i == 0 && !listShown ? sidebarButton.frame.maxX + 12 : 0
         }
         commandBar.frame = bounds
         placeWindowButtons()
@@ -565,7 +581,14 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         choose(Lens.allCases[sender.tag], keepShown: true)
     }
 
-    @objc func toggleList(_ sender: Any?) { choose(lens) }
+    /// The list out, or put away: ⌥⌘L, or the sidebar's button by the window's.
+    @objc func toggleList(_ sender: Any?) {
+        listShown.toggle()
+        refreshList()
+        layoutWindow()
+        if listShown, lens == .search { list.focusSearch() }
+        session.writeWindows()
+    }
 
     @objc func goBack(_ sender: Any?) { activePane.goBack() }
     @objc func goForward(_ sender: Any?) { activePane.goForward() }

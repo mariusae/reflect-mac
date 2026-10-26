@@ -102,9 +102,11 @@ final class BottomBar: UIView, UITextFieldDelegate {
         wellButton.accessibilityLabel = "Search"
         wellButton.accessibilityHint = "The name of what is shown; tapped, search"
         well.addSubview(wellButton)
-        smallTitle.font = Typeface.current.heading(14, weight: .semibold)
+        smallTitle.font = Typeface.current.heading(15, weight: .semibold)
         smallTitle.textColor = Ink.text
         smallTitle.textAlignment = .center
+        // Its words kept in its middle as it grows and shrinks, not redrawn at once at the end's size.
+        smallTitle.contentMode = .center
         smallTitle.lineBreakMode = .byTruncatingTail
         smallTitle.alpha = 0
         well.addSubview(smallTitle)
@@ -278,11 +280,17 @@ final class BottomBar: UIView, UITextFieldDelegate {
             well.frame = panel.bounds
             well.backgroundColor = .clear
             well.layer.cornerRadius = Self.smallHeight / 2
-            smallTitle.font = Typeface.current.heading(14, weight: .semibold)
             smallTitle.frame = well.bounds.insetBy(dx: 14, dy: 0)
             smallTitle.alpha = 1
             wellButton.isUserInteractionEnabled = false
-            for view in rowMarks + [magnifier, placeholder, field, closeButton] as [UIView] { view.alpha = 0 }
+            for view in [magnifier, placeholder, field, closeButton] as [UIView] { view.alpha = 0 }
+            // The lenses drawn in with the glass, evenly, as they fade — not left where they were.
+            let marks = rowMarks
+            let slot = w / CGFloat(marks.count)
+            for (i, mark) in marks.enumerated() {
+                mark.frame = CGRect(x: CGFloat(i) * slot, y: Self.smallHeight - 8, width: slot, height: Self.smallHeight)
+                mark.alpha = 0
+            }
             placeBubble(width: width)
             return
         }
@@ -305,7 +313,6 @@ final class BottomBar: UIView, UITextFieldDelegate {
         magnifier.alpha = isSearching || !titled ? 1 : 0
         placeholder.frame = CGRect(x: 38, y: 0, width: max(0, fieldBounds.width - 46), height: fieldBounds.height)
         placeholder.alpha = isSearching || titled ? 0 : 1
-        smallTitle.font = Typeface.current.heading(16, weight: .semibold)
         smallTitle.frame = fieldBounds.insetBy(dx: 16, dy: 0)
         smallTitle.alpha = !isSearching && titled ? 1 : 0
         wellButton.frame = fieldBounds
