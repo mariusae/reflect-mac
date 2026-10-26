@@ -282,6 +282,8 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         if let path = environment["PRISM_INBOX_ADD"] { controller.toggleInboxForScript(path) }
         if let path = environment["PRISM_INBOX_REMOVE"] { controller.removeFromInboxForScript(path) }
         if environment["PRISM_INBOX"] == "1" { controller.showInbox(nil) }
+        // `PRISM_THEN_CLOSE=1`: the column worked in closed, a moment after.
+        if environment["PRISM_THEN_CLOSE"] == "1" { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { controller.closeColumn(nil) } }
         // `PRISM_THEN_TODAY=1`: ⌘D a moment after — in the column worked in.
         if environment["PRISM_THEN_TODAY"] == "1" { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { controller.goToday(nil) } }
         // `PRISM_LIST_STEP`: ↓ pressed so many times in the list column, a moment after.

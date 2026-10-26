@@ -419,6 +419,20 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     private func close(_ column: Column) {
         guard columns.count > 1, let index = columns.firstIndex(where: { $0 === column }) else { return }
+        // A list and its note are one column: closed together — unless what
+        // is let go is the list alone, made part of the note no more.
+        if !closingList, index > 0, columns[index - 1].isList {
+            closingList = true
+            defer { closingList = false }
+            close(columns[index - 1])
+            return close(column)
+        }
+        if !closingList, column.isList, index + 1 < columns.count, columns.count > 2 {
+            closingList = true
+            defer { closingList = false }
+            close(columns[index + 1])
+            return close(column)
+        }
         column.saveAll()
         column.removeFromSuperview()
         columns.remove(at: index)
@@ -426,6 +440,9 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         columnsChanged()
         if let view = active?.current { window?.makeFirstResponder(view.editor) }
     }
+
+    /// Within a list's closing with its note: each closed alone.
+    private var closingList = false
 
     private func columnsChanged() {
         page.needsLayout = true
@@ -1907,6 +1924,9 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     /// column, to show something else in — a list is not a column of its own.
     private func wholeColumn(_ column: Column) -> Column {
         guard let i = columns.firstIndex(where: { $0 === column }) else { return column }
+        // The list alone let go here, not its note with it.
+        closingList = true
+        defer { closingList = false }
         if column.isList {
             guard i + 1 < columns.count else { return column }
             let note = columns[i + 1]
