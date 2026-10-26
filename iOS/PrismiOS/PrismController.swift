@@ -419,6 +419,8 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         saveAll()
         if lens != .search { lensBeforeSearch = lens }
         bar.setSearching(true)
+        // Searching always opens on searching: not on a note found the last time, left on top of it.
+        stacks[.search]?.popToRootViewController(animated: false)
         show(.search)
         placeBar()
         UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0) { self.view.layoutIfNeeded() }
