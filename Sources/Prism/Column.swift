@@ -2059,6 +2059,11 @@ final class Column: NSView, OutlineTextViewNavigator {
     private var settled = false
 
     @objc private func scrolled() {
+        // A list scrolled under a still pointer: the row now under it lit, no other.
+        if isList, let window {
+            let point = window.mouseLocationOutsideOfEventStream
+            for case let row as NoteListRow in blocks { row.setHovering(row.convert(row.bounds, to: nil).contains(point)) }
+        }
 
         scrubber.update(visible: scroll.contentView.bounds)
         // Within a screen of either end, the window slides along.

@@ -87,11 +87,27 @@ final class NoteListRow: NSView, ColumnBlock {
 
     override func updateTrackingAreas() {
         trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect, .assumeInside],
+                                       owner: self))
         super.updateTrackingAreas()
     }
-    override func mouseEntered(with event: NSEvent) { hovering = true }
+    /// One lit at a time: a move too quick may tell one row it was left
+    /// before telling the next it was entered — or not tell it at all.
+    override func mouseEntered(with event: NSEvent) {
+        for case let row as NoteListRow in superview?.subviews ?? [] where row !== self { row.hovering = false }
+        hovering = true
+    }
     override func mouseExited(with event: NSEvent) { hovering = false }
+    func setHovering(_ on: Bool) { hovering = on }
+    override func mouseMoved(with event: NSEvent) {
+        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+        if inside != hovering { inside ? mouseEntered(with: event) : mouseExited(with: event) }
+    }
+    /// Scrolled under the pointer, or moved: lit as the pointer now is.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        hovering = false
+    }
     override func mouseDown(with event: NSEvent) {}
     override func mouseUp(with event: NSEvent) {
         if bounds.contains(convert(event.locationInWindow, from: nil)) { onChoose?(ref) }
