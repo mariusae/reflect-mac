@@ -392,7 +392,11 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
     }
 
     /// Read down into a page: the bar gathered to the name of what is shown.
-    func setChromeHidden(_ hidden: Bool) { bar.setSmall(hidden) }
+    func setChromeHidden(_ hidden: Bool) {
+        bar.setSmall(hidden)
+        // The floating controls over the page with it.
+        NotificationCenter.default.post(name: .prismChromeHidden, object: hidden)
+    }
 
     /// The name of what is shown, for the bar gathered small.
     private func updateBarTitle() {

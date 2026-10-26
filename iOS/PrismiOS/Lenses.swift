@@ -19,7 +19,7 @@ extension LensPage {
         bar.top = top
         bar.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: top + PaneBar.height)
         view.bringSubviewToFront(bar)
-        return bar.frame.maxY
+        return bar.contentTop
     }
 }
 
@@ -123,8 +123,11 @@ final class NoteListController: UIViewController, LensPage {
             y += NoteSummaryRow.height
         }
         list.frame = CGRect(x: 0, y: top, width: width, height: view.bounds.height - top)
+        // Under the floating controls at first; scrolled up under them.
+        list.contentInset.top = PaneBar.height
+        list.verticalScrollIndicatorInsets.top = PaneBar.height
         list.contentSize = CGSize(width: width, height: y + 140)
-        empty.frame = CGRect(x: 20, y: top + 60, width: width - 40, height: 30)
+        empty.frame = CGRect(x: 20, y: top + PaneBar.height + 60, width: width - 40, height: 30)
     }
 }
 
@@ -273,6 +276,7 @@ final class TasksController: UIViewController, LensPage {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let top = layOutBar()
+        sheet.additionalSafeAreaInsets.top = PaneBar.height
         sheet.view.frame = CGRect(x: 0, y: top, width: view.bounds.width, height: view.bounds.height - top)
     }
 }
@@ -352,6 +356,8 @@ final class SearchController: UIViewController, LensPage {
         super.viewDidLayoutSubviews()
         let top = layOutBar()
         let rest = CGRect(x: 0, y: top, width: view.bounds.width, height: view.bounds.height - top)
+        finder.additionalSafeAreaInsets.top = PaneBar.height
+        results?.additionalSafeAreaInsets.top = PaneBar.height
         finder.view.frame = rest
         results?.view.frame = rest
     }

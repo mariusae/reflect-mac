@@ -2,10 +2,11 @@ import UIKit
 import PrismCore
 
 /// The bar along the bottom, as a quiet browser's: one glass panel. Over,
-/// a soft field to search in, tapped; under, the lenses in a row — Daily,
-/// the inbox, the tasks, the pinned — the one shown marked, and + to write
-/// in today, held to speak. Searching, the panel is the field alone, an ✕
-/// beside it; read down into a note, it gathers to a small pill of its name.
+/// a field with the name of what is shown in it — as a browser's address —
+/// tapped, to search; under, the lenses in a row — Daily, the inbox, the
+/// tasks, the pinned — the one shown marked, and + to write in today, held
+/// to speak. Searching, the panel is the field alone, an ✕ beside it; read
+/// down into a note, it gathers to a small pill of its name.
 final class BottomBar: UIView, UITextFieldDelegate {
     /// A lens chosen — the one shown chosen again: back to its start.
     var onLens: ((Lens) -> Void)?
@@ -99,6 +100,7 @@ final class BottomBar: UIView, UITextFieldDelegate {
         well.addSubview(placeholder)
         wellButton.addAction(UIAction { [weak self] _ in self?.onSearch?() }, for: .touchUpInside)
         wellButton.accessibilityLabel = "Search"
+        wellButton.accessibilityHint = "The name of what is shown; tapped, search"
         well.addSubview(wellButton)
         smallTitle.font = Typeface.current.heading(14, weight: .semibold)
         smallTitle.textColor = Ink.text
@@ -276,6 +278,7 @@ final class BottomBar: UIView, UITextFieldDelegate {
             well.frame = panel.bounds
             well.backgroundColor = .clear
             well.layer.cornerRadius = Self.smallHeight / 2
+            smallTitle.font = Typeface.current.heading(14, weight: .semibold)
             smallTitle.frame = well.bounds.insetBy(dx: 14, dy: 0)
             smallTitle.alpha = 1
             wellButton.isUserInteractionEnabled = false
@@ -285,7 +288,6 @@ final class BottomBar: UIView, UITextFieldDelegate {
         }
         panel.cornerConfiguration = .uniformCorners(radius: .fixed(Self.radius))
         well.backgroundColor = Ink.text.withAlphaComponent(0.06)
-        smallTitle.alpha = 0
         wellButton.isUserInteractionEnabled = !isSearching
         let panelHeight = isSearching ? Self.searchHeight : Self.height
         panel.frame = CGRect(x: Self.side, y: height - panelHeight, width: width - 2 * Self.side, height: panelHeight)
@@ -296,10 +298,16 @@ final class BottomBar: UIView, UITextFieldDelegate {
         closeButton.frame = CGRect(x: inner - inset - closeSide, y: inset, width: closeSide, height: Self.fieldHeight)
         closeButton.alpha = isSearching ? 1 : 0
         let fieldBounds = well.bounds
+        // The name of what is shown, in the field, as an address is — its
+        // magnifier only while searching, or with no name to show.
+        let titled = !(smallTitle.names.first ?? "").isEmpty
         magnifier.frame = CGRect(x: 10, y: 0, width: 24, height: fieldBounds.height)
-        magnifier.alpha = 1
+        magnifier.alpha = isSearching || !titled ? 1 : 0
         placeholder.frame = CGRect(x: 38, y: 0, width: max(0, fieldBounds.width - 46), height: fieldBounds.height)
-        placeholder.alpha = isSearching ? 0 : 1
+        placeholder.alpha = isSearching || titled ? 0 : 1
+        smallTitle.font = Typeface.current.heading(16, weight: .semibold)
+        smallTitle.frame = fieldBounds.insetBy(dx: 16, dy: 0)
+        smallTitle.alpha = !isSearching && titled ? 1 : 0
         wellButton.frame = fieldBounds
         field.frame = CGRect(x: 38, y: 0, width: max(0, fieldBounds.width - 46), height: fieldBounds.height)
         field.alpha = isSearching ? 1 : 0

@@ -31,13 +31,22 @@ enum PlaceNames {
     }
 }
 
-// MARK: - The pane's bar
+// MARK: - The pane's controls
 
-/// Over every pane, the same, in the same order: back — and forward, when
-/// there is a way forward — what is shown, a day's two faces, how many link
-/// to it, and ⋯. Back held: the way back, to go to any of it.
+extension Notification.Name {
+    /// Read down into a page: the floating controls out of the way — or, read back up, in again.
+    static let prismChromeHidden = Notification.Name("PrismChromeHidden")
+}
+
+/// Over every pane, floating on glass, the same in the same places: at the
+/// left, back — and forward, when there is a way forward; at the right, a
+/// day's two faces, how many link to what is shown, and ⋯. What is shown is
+/// named in the bar at the foot, not here. Read down into the page, they go;
+/// read back up, they come again. Back held: the way back, to go to any of it.
 final class PaneBar: UIView {
+    /// The room the controls take over the page, under the clock.
     static let height: CGFloat = 52
+    private static let capsule: CGFloat = 44
 
     var onBack: (() -> Void)?
     var onForward: (() -> Void)?
@@ -48,16 +57,21 @@ final class PaneBar: UIView {
     /// Back held: where it would go back to.
     var backMenu: (() -> UIMenu?)?
 
+    private static func glass() -> UIVisualEffectView {
+        let view = UIVisualEffectView(effect: UIGlassEffect())
+        view.cornerConfiguration = .capsule()
+        return view
+    }
+    private let leading = PaneBar.glass()
+    private let trailing = PaneBar.glass()
     private let back = UIButton(type: .system)
     private let forward = UIButton(type: .system)
-    private let title = UILabel()
-    private let detail = UILabel()
     private let faces = UISegmentedControl(items: [
         UIImage(systemName: "text.alignleft") as Any, UIImage(systemName: "calendar.day.timeline.left") as Any,
     ])
     private let linked = UIButton(type: .system)
     private let more = UIButton(type: .system)
-    private let rule = UIView()
+    private(set) var isTucked = false
 
     var showsBack = false { didSet { setNeedsLayout() } }
     var canGoForward = false { didSet { setNeedsLayout() } }
@@ -87,20 +101,13 @@ final class PaneBar: UIView {
 
     init() {
         super.init(frame: .zero)
-        backgroundColor = Ink.page
-        back.setImage(Self.mark("chevron.left", size: 19), for: .normal)
+        back.setImage(Self.mark("chevron.left", size: 18), for: .normal)
         back.accessibilityLabel = "Back"
         back.addAction(UIAction { [weak self] _ in self?.onBack?() }, for: .touchUpInside)
         back.addInteraction(UIContextMenuInteraction(delegate: self))
-        forward.setImage(Self.mark("chevron.right", size: 19), for: .normal)
+        forward.setImage(Self.mark("chevron.right", size: 18), for: .normal)
         forward.accessibilityLabel = "Forward"
         forward.addAction(UIAction { [weak self] _ in self?.onForward?() }, for: .touchUpInside)
-        title.font = Typeface.current.heading(17, weight: .bold)
-        title.textColor = Ink.text
-        title.lineBreakMode = .byTruncatingTail
-        detail.font = Typeface.current.body(12)
-        detail.textColor = Ink.secondary
-        detail.lineBreakMode = .byTruncatingTail
         faces.selectedSegmentIndex = 0
         faces.accessibilityLabel = "Outline or Schedule"
         faces.addAction(UIAction { [weak self] _ in
@@ -111,7 +118,7 @@ final class PaneBar: UIView {
         var linksStyle = UIButton.Configuration.plain()
         linksStyle.image = Self.mark("arrow.turn.up.left", size: 15)
         linksStyle.imagePadding = 4
-        linksStyle.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6)
+        linksStyle.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 4)
         linked.configuration = linksStyle
         linked.accessibilityLabel = "Linked From"
         linked.addAction(UIAction { [weak self] _ in self?.onLinked?() }, for: .touchUpInside)
@@ -122,59 +129,92 @@ final class PaneBar: UIView {
             done(self?.menu?().children ?? [])
         }])
         for view in [back, forward, linked, more] as [UIView] { view.tintColor = Ink.text }
-        rule.backgroundColor = Ink.rule
-        for view in [back, forward, title, detail, faces, linked, more, rule] as [UIView] { addSubview(view) }
+        addSubview(leading)
+        addSubview(trailing)
+        for view in [back, forward] as [UIView] { leading.contentView.addSubview(view) }
+        for view in [faces, linked, more] as [UIView] { trailing.contentView.addSubview(view) }
+        NotificationCenter.default.addObserver(self, selector: #selector(chromeHidden(_:)), name: .prismChromeHidden, object: nil)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    /// What is shown, said aloud: the bar at the foot shows it.
     func show(title text: String, detail words: String?) {
-        title.text = text
-        detail.text = words
-        setNeedsLayout()
+        accessibilityLabel = [text, words].compactMap { $0 }.joined(separator: ", ")
     }
 
     /// Its row's top: under the clock.
     var top: CGFloat = 0 { didSet { if top != oldValue { setNeedsLayout() } } }
+    /// Where a page starts: under the clock — the controls float over its top.
+    var contentTop: CGFloat { top }
+
+    @objc private func chromeHidden(_ note: Notification) {
+        setTucked(note.object as? Bool ?? false)
+    }
+
+    /// Out of the way, read down into the page; back, read up.
+    func setTucked(_ tucked: Bool, animated: Bool = true) {
+        guard tucked != isTucked else { return }
+        isTucked = tucked
+        let change = {
+            for capsule in [self.leading, self.trailing] {
+                capsule.alpha = tucked ? 0 : 1
+                capsule.transform = tucked ? CGAffineTransform(translationX: 0, y: -12).scaledBy(x: 0.92, y: 0.92) : .identity
+            }
+        }
+        guard animated else { return change() }
+        UIView.animate(withDuration: 0.32, delay: 0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0,
+                       options: [.beginFromCurrentState, .allowUserInteraction], animations: change)
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let rowY = top, rowHeight = Self.height
-        var x: CGFloat = 8
+        let side = Self.capsule
+        let y = top + (Self.height - side) / 2
+        let transforms = [leading.transform, trailing.transform]
+        leading.transform = .identity
+        trailing.transform = .identity
+        defer {
+            leading.transform = transforms[0]
+            trailing.transform = transforms[1]
+        }
+        // At the left: back, and forward after it.
+        var x: CGFloat = 0
         back.isHidden = !showsBack
         if showsBack {
-            back.frame = CGRect(x: x, y: rowY, width: 40, height: rowHeight)
+            back.frame = CGRect(x: x, y: 0, width: side, height: side)
             x = back.frame.maxX
         }
         forward.isHidden = !canGoForward
         if canGoForward {
-            forward.frame = CGRect(x: x - 6, y: rowY, width: 36, height: rowHeight)
+            forward.frame = CGRect(x: x - (showsBack ? 6 : 0), y: 0, width: side, height: side)
             x = forward.frame.maxX
         }
-        if !showsBack && !canGoForward { x = NoteBlock.side }
-        var right = bounds.width - 8
-        more.frame = CGRect(x: right - 40, y: rowY, width: 40, height: rowHeight)
-        right = more.frame.minX
-        linked.isHidden = linkedCount == nil || linkedCount == 0
-        if !linked.isHidden {
-            let width = linked.intrinsicContentSize.width
-            linked.frame = CGRect(x: right - width, y: rowY, width: width, height: rowHeight)
-            right = linked.frame.minX - 2
-        }
+        leading.isHidden = x == 0
+        leading.frame = CGRect(x: 16, y: y, width: x, height: side)
+        // At the right: the faces, how many link here, ⋯ — in that order.
+        var width: CGFloat = 4
         faces.isHidden = face == nil
         if !faces.isHidden {
-            faces.frame = CGRect(x: right - 92, y: rowY + (rowHeight - 30) / 2, width: 88, height: 30)
-            right = faces.frame.minX - 8
+            faces.frame = CGRect(x: width + 2, y: (side - 32) / 2, width: 84, height: 32)
+            width = faces.frame.maxX + 2
         }
-        let hasDetail = detail.text?.isEmpty == false
-        let titleHeight: CGFloat = 22, detailHeight: CGFloat = 15
-        let block = titleHeight + (hasDetail ? detailHeight : 0)
-        let y0 = rowY + (rowHeight - block) / 2
-        title.frame = CGRect(x: x + 2, y: y0, width: max(0, right - x - 6), height: titleHeight)
-        detail.frame = CGRect(x: x + 2, y: y0 + titleHeight, width: max(0, right - x - 6), height: hasDetail ? detailHeight : 0)
-        rule.frame = CGRect(x: 0, y: bounds.height - 1 / max(traitCollection.displayScale, 1), width: bounds.width,
-                            height: 1 / max(traitCollection.displayScale, 1))
+        linked.isHidden = linkedCount == nil || linkedCount == 0
+        if !linked.isHidden {
+            let w = linked.intrinsicContentSize.width
+            linked.frame = CGRect(x: width, y: 0, width: w, height: side)
+            width = linked.frame.maxX
+        }
+        more.frame = CGRect(x: width, y: 0, width: 40, height: side)
+        width = more.frame.maxX + 2
+        trailing.frame = CGRect(x: bounds.width - 16 - width, y: y, width: width, height: side)
+    }
+
+    /// Only the controls are the bar's, to the touch: the page under the rest.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        guard !isTucked else { return false }
+        return (!leading.isHidden && leading.frame.insetBy(dx: -4, dy: -4).contains(point)) || trailing.frame.insetBy(dx: -4, dy: -4).contains(point)
     }
 }
 
@@ -246,7 +286,8 @@ final class NoteController: UIViewController {
         let top = view.safeAreaInsets.top
         bar.top = top
         bar.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: top + PaneBar.height)
-        page?.view.frame = CGRect(x: 0, y: bar.frame.maxY, width: view.bounds.width, height: view.bounds.height - bar.frame.maxY)
+        // From under the clock: the controls float over its top.
+        page?.view.frame = CGRect(x: 0, y: bar.contentTop, width: view.bounds.width, height: view.bounds.height - bar.contentTop)
         view.bringSubviewToFront(bar)
     }
 
@@ -302,6 +343,7 @@ final class NoteController: UIViewController {
         }
         let made = makePage(place) { [weak self] place, row in self?.go(place, row: row) }
         addChild(made)
+        made.additionalSafeAreaInsets.top = PaneBar.height
         view.insertSubview(made.view, belowSubview: bar)
         made.didMove(toParent: self)
         page = made

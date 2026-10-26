@@ -3,9 +3,11 @@ import ReflectCore
 import ReflectUI
 import PrismCore
 
-/// A window on the graph: the rail of lenses down its left, the list the
-/// lens chosen gathers, and the note — or two side by side, the second
-/// opened with ⌘ held. As many windows as wanted, each its own.
+/// A window on the graph: the list the lens chosen gathers, on glass at its
+/// left, the lenses along its top — or, put away, on a capsule at the foot —
+/// and the note, the whole height, its controls floating over its top — or
+/// two side by side, the second opened with ⌘ held. As many windows as
+/// wanted, each its own.
 final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
     /// What a window was left showing, to show again.
     struct State: Codable {
@@ -19,7 +21,9 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
     let session: Session
     private let root = WindowRoot()
-    private let rail = Rail()
+    private let lenses = LensSwitcher()
+    /// Behind the list: glass, inset from the window's edges.
+    private let listGlass = NSGlassEffectView()
     private let list = LensList()
     private var panes: [NotePane] = []
     private var activeIndex = 0
@@ -48,8 +52,9 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         window.delegate = self
         window.contentView = root
         root.layoutHandler = { [weak self] in self?.layoutWindow() }
+        root.addSubview(listGlass)
         root.addSubview(list)
-        root.addSubview(rail)
+        root.addSubview(lenses)
 
         let state = state ?? State()
         lens = state.lens
@@ -70,11 +75,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             window.center()
         }
 
-        rail.onLens = { [weak self] lens in self?.choose(lens) }
-        rail.onNow = { [weak self] in self?.showToday(face: .schedule) }
-        rail.onReview = { [weak self] view in self?.showReview(from: view) }
-        rail.onSync = { [weak self] in self?.session.syncNow() }
-        rail.onNewNote = { [weak self] in self?.newNote(nil) }
+        lenses.onLens = { [weak self] lens in self?.choose(lens) }
         list.face = session.face
         list.typography = session.face.typography()
         list.onChoose = { [weak self] item, beside in self?.open(item.path, beside: beside, fromList: true) }
@@ -103,11 +104,10 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
                 self.activate(index)
             }
         }
-        rail.lens = lens
-        rail.listShown = listShown
-        rail.inboxCount = session.index.inbox.count
-        rail.toReview = session.toReview
-        rail.now = session.now
+        lenses.lens = lens
+        lenses.inboxCount = session.index.inbox.count
+        showStatus()
+        tick(session.now)
         updatePanes()
         refreshList()
         layoutWindow()
@@ -154,8 +154,10 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             open(path, beside: beside)
         }
         pane.onClose = { [weak self] pane in self?.closePane(pane) }
-        pane.onShowDays = { [weak self] in self?.choose(.daily, keepShown: true) }
-        root.addSubview(pane, positioned: .below, relativeTo: list)
+        pane.onGoTo = { [weak self] pane, view in self?.openCommandBar("", from: view) }
+        pane.onNow = { [weak self] in self?.showToday(face: .schedule) }
+        pane.onStatus = { [weak self] view in self?.showStatusMenu(from: view) }
+        root.addSubview(pane, positioned: .below, relativeTo: listGlass)
         panes.append(pane)
         return pane
     }
@@ -165,6 +167,8 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         activeIndex = index
         updatePanes()
         refreshList()
+        showStatus()
+        tick(session.now)
     }
 
     private func updatePanes() {
@@ -242,8 +246,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             self.lens = lens
             listShown = true
         }
-        rail.lens = lens
-        rail.listShown = listShown
+        lenses.lens = lens
         refreshList()
         layoutWindow()
         if listShown, lens == .search { list.focusSearch() }
@@ -252,7 +255,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
     /// The list, as the lens gathers it now.
     func refreshList() {
-        rail.inboxCount = session.index.inbox.count
+        lenses.inboxCount = session.index.inbox.count
         guard listShown else { return }
         list.selected = activePane.place.path
         switch lens {
@@ -397,13 +400,18 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     /// Go ▸ Move to Heading (⌘\): ⌘K on the note's headings.
     @objc func moveToHeading(_ sender: Any?) { openCommandBar("#") }
 
-    private func openCommandBar(_ query: String) {
+    /// ⌘K: dropped from the name of the pane worked in, as an address bar's.
+    private func openCommandBar(_ query: String, from view: NSView? = nil) {
         session.save()
         headingPane = activePane
         if commandBar.superview == nil {
             commandBar.frame = root.bounds
             root.addSubview(commandBar)
         }
+        root.layoutSubtreeIfNeeded()
+        let source = view ?? activePane.titleAnchor
+        let frame = commandBar.convert(source.bounds, from: source)
+        commandBar.anchor = NSPoint(x: frame.midX, y: (commandBar.isFlipped ? frame.minY : frame.maxY) + 0)
         commandBar.open(face: session.face, query: query)
     }
 
@@ -455,33 +463,73 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     func noteMoved(from old: String, to new: String) { panes.forEach { $0.noteMoved(from: old, to: new) } }
     func discard(_ path: String) { panes.forEach { $0.discard(path) } }
     func noteTrashed(_ path: String) { panes.forEach { $0.noteTrashed(path) } }
-    func showSync(_ status: SyncController.Status) { rail.showSync(status) }
-    func showReview(_ paths: [String]) { rail.toReview = paths }
+    func showSync(_ status: SyncController.Status) { showStatus() }
+    func showReview(_ paths: [String]) { showStatus() }
 
-    func tick(_ now: NowPill.Now?) {
-        rail.now = now
-        panes.forEach { $0.tick() }
+    /// Something to look at — the sync gone wrong, notes to review — said
+    /// by a warning on the pane worked in; nothing, said by nothing.
+    private func showStatus() {
+        var lines: [String] = []
+        if case .failed(let message) = session.syncStatus { lines.append("Sync failed: " + message) }
+        if !session.toReview.isEmpty { lines.append("\(session.toReview.count) \(session.toReview.count == 1 ? "note" : "notes") to review") }
+        let status = lines.isEmpty ? nil : lines.joined(separator: " · ")
+        for (i, pane) in panes.enumerated() { pane.status = i == activeIndex ? status : nil }
     }
 
-    private func showReview(from view: NSView) {
-        let menu = NSMenu()
-        for path in session.toReview {
-            let item = ClosureMenuItem(title: session.name(of: path).title) { [weak self] in self?.open(path) }
-            menu.addItem(item)
+    /// The block it is now, in the name's pill of the pane worked in.
+    func tick(_ now: NowPill.Now?) {
+        for (i, pane) in panes.enumerated() {
+            pane.now = i == activeIndex ? now : nil
+            pane.tick()
         }
-        menu.popUp(positioning: nil, at: NSPoint(x: view.bounds.maxX + 4, y: 0), in: view)
+    }
+
+    private func showStatusMenu(from view: NSView) {
+        let menu = NSMenu()
+        if case .failed(let message) = session.syncStatus {
+            let failed = NSMenuItem(title: "Sync failed: " + message, action: nil, keyEquivalent: "")
+            failed.isEnabled = false
+            menu.addItem(failed)
+            menu.addItem(ClosureMenuItem(title: "Sync Now") { [weak self] in self?.session.syncNow() })
+        }
+        if !session.toReview.isEmpty {
+            if menu.numberOfItems > 0 { menu.addItem(.separator()) }
+            let head = NSMenuItem(title: "Notes to Review", action: nil, keyEquivalent: "")
+            head.isEnabled = false
+            menu.addItem(head)
+            for path in session.toReview {
+                menu.addItem(ClosureMenuItem(title: session.name(of: path).title) { [weak self] in self?.open(path) })
+            }
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height + 4), in: view)
     }
 
     // MARK: Layout
 
-    private var listWidth: CGFloat { listShown ? min(340, max(260, ((window?.frame.width ?? 1000) - Rail.width) * 0.3)) : 0 }
+    private var listWidth: CGFloat { listShown ? min(340, max(270, (window?.frame.width ?? 1000) * 0.28)) : 0 }
+    /// Between the list's glass and the window's edges.
+    private static let inset: CGFloat = 8
+    /// Where the window's buttons end: the controls start after them.
+    private static let buttonsEnd: CGFloat = 84
 
     private func layoutWindow() {
         let bounds = root.bounds
-        rail.frame = NSRect(x: 0, y: 0, width: Rail.width, height: bounds.height)
+        let inset = Self.inset
         list.isHidden = !listShown
-        list.frame = NSRect(x: Rail.width, y: 0, width: listWidth, height: bounds.height)
-        let left = Rail.width + listWidth
+        listGlass.isHidden = !listShown
+        listGlass.frame = listShown ? NSRect(x: inset, y: inset, width: listWidth, height: bounds.height - 2 * inset) : .zero
+        listGlass.cornerRadius = 16
+        list.frame = NSRect(x: inset, y: inset, width: listWidth, height: bounds.height - 2 * inset)
+        // The lenses: along the list's top, past the window's buttons — or, it put away, floating at the foot.
+        lenses.floats = !listShown
+        if listShown {
+            lenses.frame = NSRect(x: list.frame.minX + Self.buttonsEnd - inset, y: inset + (LensList.barHeight - LensSwitcher.side) / 2,
+                                  width: LensSwitcher.width, height: LensSwitcher.side)
+        } else {
+            let size = lenses.preferredSize
+            lenses.frame = NSRect(x: 16, y: bounds.height - 16 - size.height, width: size.width, height: size.height)
+        }
+        let left = listShown ? listGlass.frame.maxX + inset / 2 : 0
         let width = (bounds.width - left) / CGFloat(panes.count)
         for (i, pane) in panes.enumerated() {
             pane.frame = NSRect(x: (left + CGFloat(i) * width).rounded(), y: 0, width: (i == panes.count - 1 ? bounds.width - left - CGFloat(i) * width : width).rounded(),
@@ -489,7 +537,8 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         }
         for (i, pane) in panes.enumerated() {
             pane.ruledLeft = i > 0
-            pane.showsWeek = !(listShown && lens == .daily)
+            // The first, with nothing at its left: clear of the window's buttons.
+            pane.leading = i == 0 && !listShown ? Self.buttonsEnd : 0
         }
         commandBar.frame = bounds
         placeWindowButtons()
@@ -500,7 +549,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         guard let window, !window.styleMask.contains(.fullScreen) else { return }
         let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].compactMap { window.standardWindowButton($0) }
         guard let bar = buttons.first?.superview, let container = bar.superview else { return }
-        let height = PaneBar.height
+        let height = PaneChrome.height
         let frame = NSRect(x: container.frame.minX, y: window.frame.height - height, width: container.frame.width, height: height)
         if container.frame != frame { container.frame = frame }
         for button in buttons {

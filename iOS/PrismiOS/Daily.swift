@@ -58,6 +58,8 @@ final class DayPager: UIViewController, UIPageViewControllerDataSource, UIPageVi
         addChild(pages)
         view.addSubview(pages.view)
         pages.didMove(toParent: self)
+        // The controls float over the day's top: it starts under them, and scrolls up under them.
+        pages.additionalSafeAreaInsets.top = PaneBar.height
         pages.setViewControllers([page(for: day)], direction: .forward, animated: false)
         pages.view.layer.cornerCurve = .continuous
         pages.view.clipsToBounds = true
@@ -235,7 +237,7 @@ final class DayPager: UIViewController, UIPageViewControllerDataSource, UIPageVi
     func showCalendar(_ shown: Bool) { settle(at: shown ? monthHeight : 0, animated: true) }
 
     private func prepareOver() {
-        let top = bar.frame.maxY
+        let top = bar.contentTop
         if strip == nil {
             let strip = WeekStripView(day: day, marks: marks())
             strip.onChoose = { [weak self] day in self?.show(day, animated: false) }
@@ -266,7 +268,7 @@ final class DayPager: UIViewController, UIPageViewControllerDataSource, UIPageVi
     /// The day so far down under the bar, and what is over it shown as much.
     private func place(_ amount: CGFloat) {
         reveal = max(0, amount)
-        let top = bar.frame.maxY
+        let top = bar.contentTop
         pages.view.frame = CGRect(x: 0, y: top + reveal, width: view.bounds.width, height: max(0, view.bounds.height - top - reveal))
         pages.view.layer.cornerRadius = min(28, reveal)
         let week = weekHeight, month = monthHeight

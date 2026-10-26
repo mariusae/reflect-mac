@@ -23,7 +23,7 @@ struct ListSection: Equatable {
     var items: [ListItem]
 }
 
-/// The list beside the notes: what the lens chosen in the rail gathers — a
+/// The list beside the notes: what the lens chosen gathers — a
 /// month over the days, for Daily; a field over what is found, for Search.
 /// A row clicked opens its note; ↑ ↓ go along, ↩ into the note.
 final class LensList: NSView {
@@ -51,7 +51,8 @@ final class LensList: NSView {
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
-    static let barHeight: CGFloat = 46
+    /// Its top: the window's buttons, and the lenses after them.
+    static let barHeight: CGFloat = 52
 
     init() {
         super.init(frame: .zero)
@@ -189,26 +190,8 @@ final class LensList: NSView {
         list.frame = NSRect(x: 0, y: 0, width: width, height: max(y + 24, scroll.contentSize.height))
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        Ink.shelf.setFill()
-        bounds.fill()
-        Ink.paper.setFill()
-        NSRect(x: 0, y: 0, width: bounds.width, height: Self.barHeight).fill()
-        Ink.rule.setFill()
-        NSRect(x: 0, y: Self.barHeight - 1, width: bounds.width, height: 1).fill()
-        NSRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height).fill()
-        let font = typography.headingFont(size: 15, weight: .bold)
-        let title = NSAttributedString(string: lens.title, attributes: [.font: font, .foregroundColor: Ink.text])
-        let size = title.size()
-        title.draw(at: NSPoint(x: 20, y: ((Self.barHeight - size.height) / 2).rounded()))
-        let count = rows.count
-        if lens != .daily, count > 0 {
-            var label = typography.label(size: 13)
-            label[.foregroundColor] = Ink.faint
-            let text = NSAttributedString(string: "\(count)", attributes: label)
-            text.draw(at: NSPoint(x: 20 + size.width + 8, y: ((Self.barHeight - text.size().height) / 2).rounded() + 1))
-        }
-    }
+    /// On glass of the window's: its top the lenses', and the window's buttons'.
+    override func draw(_ dirtyRect: NSRect) {}
 
     override var mouseDownCanMoveWindow: Bool { false }
 

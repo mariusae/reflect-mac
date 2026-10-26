@@ -20,7 +20,9 @@ final class Finder: NSView, NSTextFieldDelegate {
     private var face: Typeface = .lato
     /// What the field asks for, empty.
     var placeholder = "Go to a note"
-    var hintText = "↩ Open   ⌘↩ Beside   ⇧⌘↩ New Column"
+    var hintText = "↩ Open   ⌘↩ Beside"
+    /// Where its card's top middle goes, opened from a title: nil, high in the middle.
+    var anchor: NSPoint? { didSet { needsLayout = true } }
     private var rowHeight: CGFloat { places.contains { $0.trail != nil } ? 54 : 40 }
 
     private static let limit = 9
@@ -118,8 +120,14 @@ final class Finder: NSView, NSTextFieldDelegate {
         let width = min(600, bounds.width - 48)
         let fieldHeight: CGFloat = 60
         let height = fieldHeight + (rows.isEmpty ? 0 : 1 + 8 + CGFloat(rows.count) * rowHeight + 8)
-        card.frame = NSRect(x: floor((bounds.width - width) / 2), y: bounds.height - floor(bounds.height * 0.18) - height,
-                            width: width, height: height)
+        if let anchor {
+            // Dropped from the title it was opened from: under it, about its middle.
+            let x = min(max(16, floor(anchor.x - width / 2)), bounds.width - 16 - width)
+            card.frame = NSRect(x: x, y: anchor.y - height, width: width, height: height)
+        } else {
+            card.frame = NSRect(x: floor((bounds.width - width) / 2), y: bounds.height - floor(bounds.height * 0.18) - height,
+                                width: width, height: height)
+        }
         let fieldSize = field.intrinsicContentSize.height
         hint.attributedStringValue = NSAttributedString(string: hintText, attributes: [
             .font: face.font(size: 11.5), .foregroundColor: Ink.faint,
