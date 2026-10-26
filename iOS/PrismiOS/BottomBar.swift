@@ -66,6 +66,17 @@ final class BottomBar: UIView, UITextFieldDelegate {
     private(set) var isSmall = false
     /// The lens shown: its mark filled.
     var lens: Lens = .daily { didSet { if lens != oldValue { styleLenses() } } }
+    /// The block on now, of today's: about Daily's mark, a ring running down — how much is left, of how long.
+    var now: (left: TimeInterval, total: TimeInterval, title: String)? {
+        didSet {
+            nowRing.fraction = now.map { max(0, min(1, $0.left / max(1, $0.total))) }
+            lensButtons[.daily]?.accessibilityValue = now.map { now in
+                let minutes = Int((now.left / 60).rounded(.up))
+                return "Now: \(now.title.isEmpty ? "a block" : now.title), \(minutes) minutes left"
+            }
+        }
+    }
+    private let nowRing = NowRingView()
 
     private static func mark(_ name: String, size: CGFloat = 19, weight: UIImage.SymbolWeight = .regular) -> UIImage? {
         UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: size, weight: weight))
@@ -135,6 +146,7 @@ final class BottomBar: UIView, UITextFieldDelegate {
             lensButtons[lens] = button
         }
         styleLenses()
+        content.addSubview(nowRing)
         writeButton.setImage(Self.mark("plus", size: 21), for: .normal)
         writeButton.tintColor = Ink.text
         writeButton.accessibilityLabel = "Write in Today"
@@ -291,6 +303,8 @@ final class BottomBar: UIView, UITextFieldDelegate {
                 mark.frame = CGRect(x: CGFloat(i) * slot, y: Self.smallHeight - 8, width: slot, height: Self.smallHeight)
                 mark.alpha = 0
             }
+            if let daily = lensButtons[.daily] { nowRing.center = CGPoint(x: daily.frame.midX, y: daily.frame.midY) }
+            nowRing.alpha = 0
             placeBubble(width: width)
             return
         }
@@ -325,6 +339,10 @@ final class BottomBar: UIView, UITextFieldDelegate {
         for (i, mark) in marks.enumerated() {
             mark.frame = CGRect(x: inset + CGFloat(i) * slot, y: rowY, width: slot, height: rowHeight)
             mark.alpha = isSearching ? 0 : 1
+        }
+        if let daily = lensButtons[.daily] {
+            nowRing.frame = CGRect(x: daily.frame.midX - 18, y: daily.frame.midY - 18, width: 36, height: 36)
+            nowRing.alpha = daily.alpha
         }
         placeBubble(width: width)
     }
@@ -369,5 +387,61 @@ final class ShortLabel: UILabel {
 
     func width(within room: CGFloat) -> CGFloat {
         names.lazy.map(measure).first { $0 <= room } ?? room
+    }
+}
+
+/// The block on now, about Daily's mark: unlike a note's ring of how far
+/// its tasks are along — dark, filling — a heavier ring in now's red, full
+/// at the block's start and running down to its end, a bead at its tip as
+/// on a clock's hand; the rest of the circle a faint track.
+final class NowRingView: UIView {
+    /// How much of the block is left, 0 to 1: nil, none on.
+    var fraction: Double? { didSet { if fraction != oldValue { update() } } }
+    private let track = CAShapeLayer()
+    private let arc = CAShapeLayer()
+    private let bead = CAShapeLayer()
+    private static let width: CGFloat = 2.5
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        for layer in [track, arc, bead] {
+            layer.fillColor = nil
+            self.layer.addSublayer(layer)
+        }
+        track.lineWidth = Self.width
+        arc.lineWidth = Self.width
+        arc.lineCap = .round
+        isHidden = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        update()
+    }
+
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        update()
+    }
+
+    private func update() {
+        guard let fraction else { return isHidden = true }
+        isHidden = false
+        let color = Ink.now.resolvedColor(with: traitCollection)
+        let radius = min(bounds.width, bounds.height) / 2 - Self.width / 2
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        track.path = UIBezierPath(arcCenter: center, radius: radius, startAngle: 0, endAngle: 2 * .pi, clockwise: true).cgPath
+        track.strokeColor = color.withAlphaComponent(0.16).cgColor
+        // From twelve o'clock, round as a clock goes, as much as is left.
+        let start = -CGFloat.pi / 2, end = start + 2 * .pi * CGFloat(fraction)
+        arc.path = UIBezierPath(arcCenter: center, radius: radius, startAngle: start, endAngle: end, clockwise: true).cgPath
+        arc.strokeColor = color.cgColor
+        let tip = CGPoint(x: center.x + radius * cos(end), y: center.y + radius * sin(end))
+        bead.path = UIBezierPath(ovalIn: CGRect(x: tip.x - 2.75, y: tip.y - 2.75, width: 5.5, height: 5.5)).cgPath
+        bead.fillColor = color.cgColor
     }
 }

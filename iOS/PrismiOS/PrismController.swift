@@ -54,6 +54,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             }
         }
         observe()
+        startNow()
         openForScript()
         QuickActions.onPending = { [weak self] in self?.openQuickAction() }
         DispatchQueue.main.async { [weak self] in self?.openQuickAction() }
@@ -453,6 +454,37 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             bar.field.resignFirstResponder()
             (stacks[.search]?.viewControllers.first as? SearchController)?.searchEverything(query)
         }
+    }
+
+    // MARK: The block on now
+
+    private var nowTimer: Timer?
+
+    /// The block of today's on now, looked for each second: a ring about Daily, running down.
+    private func startNow() {
+        tickNow()
+        nowTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tickNow() }
+        }
+    }
+
+    /// Today's note, as last read: read again when it changes, or the day does.
+    private var todayText: (day: Day, revision: Int, text: String)?
+
+    private func tickNow() {
+        let today = Day.today
+        if todayText?.day != today || todayText?.revision != store.revision {
+            todayText = (today, store.revision, store.text(GraphPaths.dailyPath(for: today)))
+        }
+        let date = Date()
+        let seconds = date.timeIntervalSince(Calendar.current.startOfDay(for: date))
+        let minutes = seconds / 60
+        guard let text = todayText?.text,
+              let block = DayBlocks.blocks(in: text).last(where: { Double($0.start) <= minutes && minutes < Double($0.end) }) else {
+            if bar.now != nil { bar.now = nil }
+            return
+        }
+        bar.now = (Double(block.end) * 60 - seconds, Double(block.duration) * 60, InlineMarkup.plainText(block.title))
     }
 
     // MARK: Keeping up

@@ -287,6 +287,8 @@ enum Ink {
     static let accent = dynamic(hex(0x0095f6), hex(0x4cb5f9))
     static let pill = dynamic(UIColor(red: 0.15, green: 0.36, blue: 0.82, alpha: 0.09), UIColor(red: 0.52, green: 0.68, blue: 1, alpha: 0.14))
     static let week = dynamic(UIColor(red: 0.78, green: 0.52, blue: 0.12, alpha: 1), UIColor(red: 0.93, green: 0.7, blue: 0.32, alpha: 1))
+    /// Now: the block on, its ring running down about Daily — the Mac's red too.
+    static let now = dynamic(UIColor(red: 0.88, green: 0.27, blue: 0.22, alpha: 1), UIColor(red: 1.0, green: 0.42, blue: 0.36, alpha: 1))
     static let marked = dynamic(UIColor(red: 1, green: 0.86, blue: 0.3, alpha: 0.45), UIColor(red: 0.85, green: 0.7, blue: 0.2, alpha: 0.35))
 }
 

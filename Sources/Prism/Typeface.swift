@@ -297,6 +297,9 @@ enum Ink {
     static let codeBack = dynamic(hex(0x2b2724, alpha: 0.04), hex(0xece6dc, alpha: 0.06))
     static let accent = dynamic(NSColor(srgbRed: 0.15, green: 0.36, blue: 0.82, alpha: 1),
                                 NSColor(srgbRed: 0.52, green: 0.68, blue: 1, alpha: 1))
+    /// Now: the block on, its ring running down about Daily; the line across today's hours.
+    static let now = dynamic(NSColor(srgbRed: 0.88, green: 0.27, blue: 0.22, alpha: 1),
+                             NSColor(srgbRed: 1.0, green: 0.42, blue: 0.36, alpha: 1))
     /// Weeks, among the days: a warm ochre.
     static let week = dynamic(NSColor(srgbRed: 0.78, green: 0.52, blue: 0.12, alpha: 1),
                               NSColor(srgbRed: 0.93, green: 0.7, blue: 0.32, alpha: 1))

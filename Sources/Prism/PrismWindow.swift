@@ -164,7 +164,6 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         }
         pane.onClose = { [weak self] pane in self?.closePane(pane) }
         pane.onGoTo = { [weak self] pane, view in self?.openCommandBar("", from: view) }
-        pane.onNow = { [weak self] in self?.showToday(face: .schedule) }
         pane.onStatus = { [weak self] view in self?.showStatusMenu(from: view) }
         root.addSubview(pane, positioned: .below, relativeTo: listGlass)
         panes.append(pane)
@@ -482,12 +481,10 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         for (i, pane) in panes.enumerated() { pane.status = i == activeIndex ? status : nil }
     }
 
-    /// The block it is now, in the name's pill of the pane worked in.
+    /// The block it is now: a ring about the Daily lens, running down.
     func tick(_ now: NowPill.Now?) {
-        for (i, pane) in panes.enumerated() {
-            pane.now = i == activeIndex ? now : nil
-            pane.tick()
-        }
+        lenses.now = now
+        panes.forEach { $0.tick() }
     }
 
     private func showStatusMenu(from view: NSView) {

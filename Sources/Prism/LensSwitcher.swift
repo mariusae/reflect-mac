@@ -10,6 +10,8 @@ final class LensSwitcher: NSView {
     var onLens: ((Lens) -> Void)?
     var lens: Lens = .daily { didSet { if lens != oldValue { buttons.forEach { $0.isChosen = $0.lens == lens } } } }
     var inboxCount = 0 { didSet { buttons.first { $0.lens == .inbox }?.badge = inboxCount } }
+    /// The block on now: about Daily's mark, a ring running down.
+    var now: NowPill.Now? { didSet { if now != oldValue { buttons.first { $0.lens == .daily }?.now = now } } }
 
     private var buttons: [LensButton] = []
     private let glass = NSGlassEffectView()
@@ -64,6 +66,16 @@ private final class LensButton: NSView {
     var onClick: (() -> Void)?
     var isChosen = false { didSet { needsDisplay = true } }
     var badge = 0 { didSet { if badge != oldValue { needsDisplay = true } } }
+    var now: NowPill.Now? {
+        didSet {
+            guard now != oldValue else { return }
+            needsDisplay = true
+            toolTip = now.map { now in
+                let name = InlineMarkup.plainText(now.block.title)
+                return "\(lens.title) (⌘\(lens.key)) — now: \(name.isEmpty ? "New Block" : name), \(BlockerClock.countdown(now.remaining)) left"
+            } ?? "\(lens.title) (⌘\(lens.key))"
+        }
+    }
     private var hovering = false { didSet { needsDisplay = true } }
 
     override var isFlipped: Bool { true }
@@ -104,6 +116,7 @@ private final class LensButton: NSView {
             let size = tinted.size
             tinted.draw(in: NSRect(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2, width: size.width, height: size.height))
         }
+        if let now { NowRing.draw(now, in: bounds.insetBy(dx: 1.5, dy: 1.5)) }
         guard badge > 0 else { return }
         let text = NSAttributedString(string: "\(badge)", attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .bold), .foregroundColor: NSColor.white])
         let size = text.size()
@@ -125,5 +138,36 @@ extension NSImage {
         }
         image.isTemplate = false
         return image
+    }
+}
+
+/// The block on now, about Daily's mark: unlike a note's ring of how far
+/// its tasks are along — dark, filling — a heavier ring in now's red, full
+/// at the block's start and running down to its end, a bead at its tip as
+/// on a clock's hand; the rest of the circle a faint track.
+@MainActor
+enum NowRing {
+    static func draw(_ now: NowPill.Now, in rect: NSRect, flipped: Bool = true) {
+        let total = Double(max(1, now.block.duration)) * 60
+        let left = max(0, min(1, now.remaining / total))
+        let width: CGFloat = 2.5
+        let radius = min(rect.width, rect.height) / 2 - width / 2
+        let center = NSPoint(x: rect.midX, y: rect.midY)
+        let track = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius, width: 2 * radius, height: 2 * radius))
+        track.lineWidth = width
+        Ink.now.withAlphaComponent(0.16).setStroke()
+        track.stroke()
+        // From twelve o'clock, round as a clock goes, as much as is left.
+        let start: CGFloat = flipped ? -90 : 90
+        let end = start + (flipped ? 1 : -1) * 360 * CGFloat(left)
+        let arc = NSBezierPath()
+        arc.appendArc(withCenter: center, radius: radius, startAngle: start, endAngle: end, clockwise: !flipped)
+        arc.lineWidth = width
+        arc.lineCapStyle = .round
+        Ink.now.setStroke()
+        arc.stroke()
+        let tip = NSPoint(x: center.x + radius * cos(end * .pi / 180), y: center.y + radius * sin(end * .pi / 180))
+        Ink.now.setFill()
+        NSBezierPath(ovalIn: NSRect(x: tip.x - 2.75, y: tip.y - 2.75, width: 5.5, height: 5.5)).fill()
     }
 }

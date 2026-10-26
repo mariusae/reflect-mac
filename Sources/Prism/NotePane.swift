@@ -25,8 +25,6 @@ final class NotePane: NSView, OutlineTextViewNavigator {
     var onClose: ((NotePane) -> Void)?
     /// Its name clicked, or ⌘K: the way to go anywhere, dropped from the name.
     var onGoTo: ((NotePane, NSView) -> Void)?
-    /// The block it is now, clicked: today's hours.
-    var onNow: (() -> Void)?
     /// Notes to review, or the sync failed: its warning clicked.
     var onStatus: ((NSView) -> Void)?
 
@@ -51,8 +49,6 @@ final class NotePane: NSView, OutlineTextViewNavigator {
     var isActive = false
     /// Room at the left of the controls: the window's buttons, over this pane.
     var leading: CGFloat = 0 { didSet { if leading != oldValue { chrome.leading = leading } } }
-    /// The block it is now, shown in the name's pill: the pane worked in only.
-    var now: NowPill.Now? { didSet { if now != oldValue { chrome.now = now } } }
     /// Something to look at — notes to review, a sync gone wrong — said by a warning.
     var status: String? { didSet { if status != oldValue { chrome.status = status } } }
     /// Beside another pane, on its right: a rule between them.
@@ -95,7 +91,6 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         }
         chrome.onStep = { [weak self] by in self?.stepDay(by) }
         chrome.onMonth = { [weak self] view in self?.showMonth(from: view) }
-        chrome.onNow = { [weak self] in self?.onNow?() }
         chrome.onStatus = { [weak self] view in self?.onStatus?(view) }
         NotificationCenter.default.addObserver(self, selector: #selector(typed(_:)), name: NSText.didChangeNotification, object: nil)
         show()
@@ -614,7 +609,6 @@ final class PaneChrome: NSView {
     var onTitle: ((NSView) -> Void)?
     var onStep: ((Int) -> Void)?
     var onMonth: ((NSView) -> Void)?
-    var onNow: (() -> Void)?
     var onStatus: ((NSView) -> Void)?
 
     private let left = GlassCapsule()
@@ -660,12 +654,6 @@ final class PaneChrome: NSView {
             needsLayout = true
         }
     }
-    var now: NowPill.Now? {
-        didSet {
-            title.now = now
-            if (now == nil) != (oldValue == nil) { needsLayout = true }
-        }
-    }
     var status: String? {
         didSet {
             warning.toolTip = status
@@ -691,7 +679,6 @@ final class PaneChrome: NSView {
             guard let self else { return }
             onTitle?(middle)
         }
-        title.onNow = { [weak self] in self?.onNow?() }
         for view in [earlier, title, later, month] as [NSView] { middle.content.addSubview(view) }
         faces.segmentStyle = .automatic
         faces.controlSize = .small
@@ -844,15 +831,11 @@ final class GlassCapsule: NSView {
 }
 
 /// What a pane shows, named in its middle capsule: the name, and — a day's
-/// date, a note's age — after it; the block it is now, how far along, as a
-/// fill behind it and the minutes left. Clicked: the way to go anywhere.
+/// date, a note's age — after it. Clicked: the way to go anywhere.
 final class TitleLabel: NSView {
     var onClick: (() -> Void)?
-    var onNow: (() -> Void)?
-    var now: NowPill.Now? { didSet { if now != oldValue { needsDisplay = true; toolTip = tip } } }
     private var name = NSAttributedString()
     private var detail = NSAttributedString()
-    private var nowFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
 
     override var isFlipped: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
@@ -865,45 +848,14 @@ final class TitleLabel: NSView {
         detail = NSAttributedString(string: when.map { "  " + $0 } ?? "", attributes: [
             .font: Typography.font(typography.bodyFamily, face: typography.bodyFace, size: 12.5), .foregroundColor: Ink.secondary,
         ])
-        toolTip = tip
+        toolTip = "Go to… (⌘K)"
         needsDisplay = true
     }
 
-    private var tip: String {
-        var tip = "Go to… (⌘K)"
-        if let now {
-            let name = InlineMarkup.plainText(now.block.title)
-            tip = (name.isEmpty ? "New Block" : name) + " — " + BlockerClock.countdown(now.remaining) + " left · " + tip
-        }
-        return tip
-    }
-
-    private var minutes: NSAttributedString? {
-        guard let now else { return nil }
-        let left = Int((now.remaining / 60).rounded(.up))
-        let text = left >= 60 ? "\(left / 60)h \(left % 60)m" : "\(left)m"
-        return NSAttributedString(string: text, attributes: [.font: nowFont, .foregroundColor: WeekGrid.color(for: now.block)])
-    }
-
-    var fittingWidth: CGFloat {
-        ceil(name.size().width + detail.size().width) + (minutes.map { ceil($0.size().width) + 14 } ?? 0)
-    }
+    var fittingWidth: CGFloat { ceil(name.size().width + detail.size().width) }
 
     override func draw(_ dirtyRect: NSRect) {
-        var right = bounds.width
-        if let now, let minutes {
-            // How far along the block: a fill along the foot, in its colour.
-            let total = Double(max(1, now.block.duration)) * 60
-            let done = max(0, min(1, 1 - now.remaining / total))
-            let color = WeekGrid.color(for: now.block)
-            color.withAlphaComponent(0.25).setFill()
-            NSBezierPath(roundedRect: NSRect(x: 0, y: bounds.height - 6, width: bounds.width, height: 2), xRadius: 1, yRadius: 1).fill()
-            color.setFill()
-            NSBezierPath(roundedRect: NSRect(x: 0, y: bounds.height - 6, width: bounds.width * done, height: 2), xRadius: 1, yRadius: 1).fill()
-            let size = minutes.size()
-            right -= ceil(size.width) + 6
-            minutes.draw(at: NSPoint(x: right + 6, y: ((bounds.height - size.height) / 2).rounded()))
-        }
+        let right = bounds.width
         let whole = NSMutableAttributedString(attributedString: name)
         whole.append(detail)
         let height = whole.size().height
@@ -918,7 +870,6 @@ final class TitleLabel: NSView {
     override func mouseUp(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         guard bounds.contains(point) else { return }
-        if let minutes, point.x > bounds.width - minutes.size().width - 10 { return onNow?() ?? () }
         onClick?()
     }
 }

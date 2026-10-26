@@ -414,7 +414,7 @@ final class WeekGrid: NSView, TypographyTaking {
         if let i = days.firstIndex(of: today) {
             let minute = TimeBlocksPage.nowMinutes
             let y = y(minute)
-            let red = NSColor.systemRed
+            let red = Ink.now
             red.setFill()
             let column = columnRect(i)
             NSRect(x: column.minX, y: y - 0.75, width: column.width, height: 1.5).fill()
