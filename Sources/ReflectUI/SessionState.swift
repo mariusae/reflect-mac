@@ -132,6 +132,8 @@ package final class SessionState {
         package var keyNote: String?
         /// For each note, the notes linking to it whose links are folded away.
         package var backlinkFolds: [String: [String]]?
+        /// Prism's windows, as it left them: its own JSON, which this does not read.
+        package var prismWindows: String?
     }
 
     private var graphs: [String: Graph] = [:]

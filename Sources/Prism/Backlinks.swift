@@ -19,55 +19,11 @@ protocol ColumnBlock: NSView {
 
 extension ColumnBlock {
     var stickyTitle: (title: String, when: String?)? { nil }
+    func scrubMarks(listed: Bool) -> [ScrubMark] { [] }
 }
 
-extension DayView: ColumnBlock {
-    var stickyTitle: (title: String, when: String?)? {
-        (Column.name(of: ref).title, Column.when(of: ref))
-    }
+extension DayView: ColumnBlock {}
 
-    func scrubMarks(listed: Bool) -> [ScrubMark] {
-        let name = Column.name(of: ref)
-        var marks: [ScrubMark] = []
-        if listed {
-            marks.append(ScrubMark(y: 0, title: name.title, detail: name.detail, rank: 3,
-                                   isWeek: GraphPaths.week(fromWeeklyPath: ref.path) != nil))
-        }
-        marks += Self.outlineMarks(in: editor).map {
-            ScrubMark(y: $0.y, title: $0.title, detail: listed ? name.title : nil, rank: $0.rank)
-        }
-        return marks
-    }
-
-    /// Where each heading is in an outline, and each topic — a top-level
-    /// item with items under it — from the top of the view it is in.
-    static func outlineMarks(in editor: OutlineTextView) -> [(y: CGFloat, title: String, rank: Int)] {
-        guard let layout = editor.layoutManager, let container = editor.textContainer else { return [] }
-        let rows = editor.rows
-        let ranges = editor.paragraphRanges
-        var marks: [(CGFloat, String, Int)] = []
-        for (i, row) in rows.enumerated() where i < ranges.count {
-            let rank: Int
-            if case .heading = row.kind {
-                rank = 2
-            } else if row.depth == 0, row.kind.isListItem, row.isFolded || (i + 1 < rows.count && rows[i + 1].depth > 0) {
-                rank = 1
-            } else {
-                continue
-            }
-            let title = InlineMarkup.plainText(row.text)
-            guard !title.isEmpty else { continue }
-            let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: ranges[i].location, length: max(1, ranges[i].length)),
-                                           actualCharacterRange: nil)
-            let y = editor.frame.minY + editor.textContainerOrigin.y + layout.boundingRect(forGlyphRange: glyphs, in: container).minY
-            marks.append((y, title, rank))
-        }
-        return marks
-    }
-}
-
-/// A column's name, in small capitals, and how many are in it in a pill
-/// beside it — the rest is clear from what is under it.
 final class ColumnLabel: NSView {
     private let label = NSTextField(labelWithString: "")
     private let pill = NSView()
@@ -146,44 +102,6 @@ final class ColumnLabel: NSView {
     }
 }
 
-/// The head of a column of many — the inbox, the tasks: its name, and how
-/// many there are in it.
-final class InboxHeader: NSView, ColumnBlock {
-    private let label: ColumnLabel
-    var metrics: OutlineMetrics { didSet { label.metrics = metrics; needsLayout = true } }
-    var count = 0 { didSet { label.count = count } }
-
-    override var isFlipped: Bool { true }
-
-    init(metrics: OutlineMetrics, title: String = "Inbox") {
-        self.metrics = metrics
-        label = ColumnLabel(title, metrics: metrics)
-        super.init(frame: .zero)
-        wantsLayer = true
-        addSubview(label)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    private var column: NSRect {
-        let column = min(metrics.columnWidth, bounds.width - 48)
-        return NSRect(x: ((bounds.width - column) / 2).rounded(), y: 0, width: column, height: 0)
-    }
-
-    func desiredHeight(width: CGFloat) -> CGFloat {
-        round(metrics.fontSize * 1.2) + label.intrinsicContentSize.height + round(metrics.fontSize * 0.2)
-    }
-
-    override func layout() {
-        super.layout()
-        let x = column.minX + metrics.indent - 2
-        label.frame = NSRect(x: x, y: round(metrics.fontSize * 1.2), width: column.maxX - x, height: label.intrinsicContentSize.height)
-    }
-
-    func scrubMarks(listed: Bool) -> [ScrubMark] { [] }
-}
-
 /// Over a topic's backlinks, under the topic: how many notes link to it.
 final class InlineBacklinksHeader: NSView, ColumnBlock {
     private let label: ColumnLabel
@@ -193,7 +111,7 @@ final class InlineBacklinksHeader: NSView, ColumnBlock {
 
     init(count: Int, metrics: OutlineMetrics) {
         self.metrics = metrics
-        label = ColumnLabel("Backlinks", metrics: metrics)
+        label = ColumnLabel("Linked from", metrics: metrics)
         label.count = count
         super.init(frame: .zero)
         addSubview(label)
@@ -214,63 +132,6 @@ final class InlineBacklinksHeader: NSView, ColumnBlock {
     func scrubMarks(listed: Bool) -> [ScrubMark] {
         [ScrubMark(y: round(metrics.fontSize * 1.6), title: "Backlinks", detail: nil, rank: 2)]
     }
-}
-
-/// The head of a backlinks column: the note whose links these are, and how
-/// many notes link to it.
-final class BacklinksHeader: NSView, ColumnBlock {
-    private let kicker: ColumnLabel
-    private let title = NSTextField(labelWithString: "")
-    private let metrics: OutlineMetrics
-    var onOpen: ((_ newColumn: Bool) -> Void)?
-
-    override var isFlipped: Bool { true }
-
-    init(note: String, count: Int?, metrics: OutlineMetrics) {
-        self.metrics = metrics
-        kicker = ColumnLabel("Backlinks", metrics: metrics)
-        kicker.count = count
-        super.init(frame: .zero)
-        let typography = metrics.typography
-        title.stringValue = note
-        title.font = Typography.font(typography.headingFamily, face: typography.headingFace,
-                                     size: round(metrics.fontSize * 1.45), weight: .bold)
-        title.lineBreakMode = .byTruncatingTail
-        addSubview(kicker)
-        addSubview(title)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    private func column(_ width: CGFloat) -> NSRect {
-        let column = min(metrics.columnWidth, width - 48)
-        return NSRect(x: ((width - column) / 2).rounded(), y: 0, width: column, height: 0)
-    }
-
-    func desiredHeight(width: CGFloat) -> CGFloat {
-        round(metrics.fontSize * 2.2) + ceil(kicker.intrinsicContentSize.height) + 4 + ceil(title.intrinsicContentSize.height)
-            + round(metrics.fontSize * 0.6)
-    }
-
-    override func layout() {
-        super.layout()
-        let column = column(bounds.width)
-        let x = column.minX + metrics.indent - 2
-        var y = round(metrics.fontSize * 2.2)
-        let kickerHeight = ceil(kicker.intrinsicContentSize.height)
-        kicker.frame = NSRect(x: x, y: y, width: column.maxX - x, height: kickerHeight)
-        y += kickerHeight + 4
-        title.frame = NSRect(x: x, y: y, width: column.maxX - x, height: ceil(title.intrinsicContentSize.height))
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        if title.frame.contains(convert(event.locationInWindow, from: nil)) {
-            onOpen?(event.modifierFlags.contains(.command))
-        }
-    }
-
-    func scrubMarks(listed: Bool) -> [ScrubMark] { [] }
 }
 
 /// A note among others — linking to one, or found by a search: its name — a

@@ -32,11 +32,6 @@ extension HeadBlock {
     func goLive() {}
 }
 
-extension GapBlock {
-    var isLive: Bool { true }
-    func goLive() {}
-}
-
 extension NoteBlock: SheetBlock {
     var editors: [OutlineEditor] { isLive ? [editor] : [] }
 
@@ -153,7 +148,10 @@ final class SliceBlock: UIView, SheetBlock {
         title.contentHorizontalAlignment = .leading
         title.setAttributedTitle(Card.flat ? Card.flatHeader(path: path, name: Self.name(path, store: store), store: store, size: metrics.size)
                                      : Card.header(name: Self.name(path, store: store), meta: nil, size: metrics.size), for: .normal)
-        title.titleLabel?.lineBreakMode = .byTruncatingMiddle
+        // Flat: its when over its name, two lines; the when not said again at the right.
+        title.titleLabel?.numberOfLines = Card.flat ? 2 : 1
+        title.titleLabel?.lineBreakMode = Card.flat ? .byTruncatingTail : .byTruncatingMiddle
+        metaLabel.isHidden = Card.flat
         title.addAction(UIAction { [weak self] _ in self?.onOpen?() }, for: .touchUpInside)
         addSubview(title)
     }
@@ -327,6 +325,7 @@ final class SliceBlock: UIView, SheetBlock {
         return height + Card.bottom - 4
     }
 
+
     override func layoutSubviews() {
         super.layoutSubviews()
         // Not yet as wide as it will be: text laid out at no width never ends.
@@ -353,62 +352,4 @@ final class SliceBlock: UIView, SheetBlock {
             y += editor.rowsHeight(width: width) + 4
         }
     }
-}
-
-/// Days in the timeline with no note: a `⋯` and the dates it stands for,
-/// tapped to show the last few of them, empty, to write in.
-final class GapBlock: UIView, SheetBlock {
-    let gap: TimelineGap
-    private let button = UIButton(type: .system)
-    var onReveal: ((TimelineGap) -> Void)?
-    var onHeightChange: (() -> Void)?
-    var onCaretMove: (() -> Void)?
-    var editors: [OutlineEditor] { [] }
-
-    init(gap: TimelineGap, metrics: PhoneMetrics) {
-        self.gap = gap
-        super.init(frame: .zero)
-        // Flat, in the small capitals every label is in.
-        let label = Card.flat ? Card.label(size: metrics.size) : nil
-        let font = (label?[.font] as? UIFont) ?? metrics.face.heading(round(metrics.size * 0.78), weight: .medium)
-        let title = NSMutableAttributedString()
-        // The dots on the middle of the words beside them, not their baseline.
-        if let dots = UIImage(systemName: "ellipsis", withConfiguration: UIImage.SymbolConfiguration(pointSize: round(metrics.size * 0.9), weight: .bold))?
-            .withTintColor(Card.flat ? Ink.label : Ink.secondary, renderingMode: .alwaysOriginal) {
-            let attachment = NSTextAttachment(image: dots)
-            attachment.bounds = CGRect(x: 0, y: ((font.capHeight - dots.size.height) / 2).rounded(), width: dots.size.width, height: dots.size.height)
-            title.append(NSAttributedString(attachment: attachment))
-        }
-        title.append(NSAttributedString(string: "  " + (label == nil ? Self.describe(gap) : Self.describe(gap).uppercased()),
-                                        attributes: label ?? [.font: font, .foregroundColor: Ink.faint]))
-        button.setAttributedTitle(title, for: .normal)
-        button.contentHorizontalAlignment = .leading
-        button.accessibilityLabel = "Show " + Self.describe(gap)
-        button.addAction(UIAction { [weak self] _ in
-            guard let self else { return }
-            UISelectionFeedbackGenerator().selectionChanged()
-            onReveal?(self.gap)
-        }, for: .touchUpInside)
-        addSubview(button)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    /// `Sep 21 – 25 · 5 days`, or the one day it is.
-    static func describe(_ gap: TimelineGap) -> String {
-        guard let from = gap.from.date, let to = gap.to.date else { return "" }
-        if gap.count == 1 { return Formats.date("EEEMMMd").string(from: from) }
-        return Formats.interval(gap.from.year == gap.to.year ? "MMMd" : "MMMdyyyy").string(from: from, to: to) + " · \(gap.count) days"
-    }
-
-    func height(width: CGFloat) -> CGFloat { 52 }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        button.frame = CGRect(x: NoteBlock.side, y: 4, width: bounds.width - 2 * NoteBlock.side, height: bounds.height - 8)
-    }
-
-    func save() {}
-    func notesChanged(_ paths: Set<String>) {}
 }

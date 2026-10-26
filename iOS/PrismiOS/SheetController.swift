@@ -2,65 +2,40 @@ import UIKit
 import ReflectCore
 import PrismCore
 
-/// What a sheet shows: the days, a note on its own, or a view of many.
+/// What a sheet shows: a note — what links to it at its end — or the
+/// tasks, or what a search found.
 enum SheetKind: Hashable, Codable {
-    case timeline
     case note(String)
-    case backlinks(String)
-    case inbox
     case tasks
     case search(String)
-    /// The pinned notes, in their order.
-    case pinned
 }
 
-/// A sheet of a column: notes one under another, each editable where it is
-/// — the timeline's days, oldest at the top, each week before its days; or
-/// a note on its own — with a scrubber down the right edge whose ticks are
-/// the days and what is in them, to drag along with the thumb.
+/// A page of blocks one under another, each editable where it is: a note
+/// whole, and under it the rows that link to it; or the pieces of notes a
+/// lens gathers — the tasks, what was found — each written back into its
+/// own note.
 final class SheetController: UIViewController, UIScrollViewDelegate {
     let store: PrismStore
     private(set) var kind: SheetKind
-    /// Whether it lists notes, each a card that shows it as asked — not
-    /// one note alone, always whole.
-    var listsNotes: Bool { if case .note = kind { false } else { true } }
     let scroll = UIScrollView()
-    /// A swipe left over a note: what links to it.
-    fileprivate let backlinkSwipe = UIPanGestureRecognizer()
     private let content = UIView()
-    private let scrubber = ScrubberView()
     private(set) var blocks: [SheetBlock] = []
     private var metrics: PhoneMetrics
-    /// Asked to open a note — alone, on this column's stack — or a link.
-    var onOpen: ((SheetKind) -> Void)?
-    /// A note opened at a row — by its place among all the note's rows —
-    /// shown and marked a moment.
-    var onOpenAt: ((String, Int) -> Void)?
+    /// Asked to open a note — at a row, by its place among all the note's
+    /// rows, to show and mark a moment.
+    var onOpen: ((String, Int?) -> Void)?
     var onLink: ((String) -> Void)?
-    /// Asked for the sheet's menu, and for a new note.
-    var menu: ((SheetController) -> UIMenu)?
-    /// Asked for a listed note's own menu.
-    var noteMenu: ((SheetController, String) -> UIMenu)?
-    var onCompose: (() -> Void)?
-    /// Asked to go to a note or a day.
-    var onFind: (() -> Void)?
-    /// Asked to set a note's frontmatter key — `inbox`, `topic` — or take it away.
+    /// Asked to set a note's frontmatter key — `inbox` — or take it away.
     var onFlag: ((String, String, String?) -> Void)?
-
-    /// The timeline's entries, and the window of them shown.
-    private var entries: [NoteRef] = []
-    private var shown: Range<Int> = 0..<0
-    private static let span = 40
-    private static let step = 20
-    /// The note to bring to the top once laid out.
-    private var target: NoteRef?
+    /// How many notes link to the note shown, once found: its bar's count.
+    var onLinkedCount: ((Int) -> Void)?
+    private(set) var linkedCount: Int?
 
     // MARK: Where it was left
 
     /// Where a sheet is scrolled to: the block at the top of the screen —
     /// by its note's path, or its place among the blocks — and how far
-    /// into it. Kept as that, not as a distance down the sheet, so it
-    /// holds however the notes above grow, shrink or are built.
+    /// into it.
     struct Place: Codable, Equatable {
         var path: String?
         var index: Int
@@ -74,7 +49,6 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         var location: Int
     }
 
-    /// Where it is scrolled to now.
     var place: Place? {
         guard !blocks.isEmpty else { return nil }
         let top = scroll.contentOffset.y + scroll.adjustedContentInset.top
@@ -82,7 +56,6 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         return Place(path: Self.path(of: blocks[index]), index: index, offset: top - blocks[index].frame.minY)
     }
 
-    /// Where the caret is now, when it is in this sheet.
     var focus: Focus? {
         for block in blocks {
             guard let path = Self.path(of: block) else { continue }
@@ -97,22 +70,15 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         (block as? NoteBlock)?.ref.path ?? (block as? SliceBlock)?.path
     }
 
-    /// Where to be scrolled to, and where the caret goes, once laid out —
-    /// for lists found off the main thread, once what was there is there.
     private var pendingPlace: Place?
     private var pendingFocus: Focus?
-    /// Told when where it is scrolled to, or the caret, may have changed.
-    var onStateChange: (() -> Void)?
 
     func restore(place: Place?, focus: Focus?) {
         pendingPlace = place
         pendingFocus = focus
-        // A day in the timeline: the window put about it first.
-        if case .timeline = kind, let path = place?.path, Timeline.day(of: NoteRef(path: path)) != nil { target = NoteRef(path: path) }
         if isViewLoaded { relayout() }
     }
 
-    /// The block a place names, when it is there.
     private func block(for place: Place) -> SheetBlock? {
         if let path = place.path { return blocks.first { Self.path(of: $0) == path } }
         return blocks.indices.contains(place.index) ? blocks[place.index] : nil
@@ -121,7 +87,6 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     private func applyPending() {
         if let place = pendingPlace, let block = block(for: place) {
             pendingPlace = nil
-            target = nil
             if !block.isLive { block.goLive() }
             let wanted = block.frame.minY + place.offset - scroll.adjustedContentInset.top
             scroll.contentOffset.y = max(-scroll.adjustedContentInset.top,
@@ -140,10 +105,9 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         }
     }
 
-    init(kind: SheetKind, store: PrismStore, around target: NoteRef? = nil) {
+    init(kind: SheetKind, store: PrismStore) {
         self.kind = kind
         self.store = store
-        self.target = target
         metrics = PhoneMetrics(face: .current, size: PhoneState.size)
         super.init(nibName: nil, bundle: nil)
     }
@@ -153,28 +117,15 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        if StallWatch.enabled { StallWatch.mark("sheet load \(kind)") }
-        defer { if StallWatch.enabled { StallWatch.mark("sheet loaded \(kind)") } }
         view.backgroundColor = Ink.page
         scroll.delegate = self
         scroll.alwaysBounceVertical = true
         scroll.keyboardDismissMode = .interactive
         scroll.contentInsetAdjustmentBehavior = .always
         scroll.showsVerticalScrollIndicator = false
+        scroll.topEdgeEffect.isHidden = true
         view.addSubview(scroll)
         scroll.addSubview(content)
-        // No outline scrubber down the side: never shown.
-        // Under the clock, the page plain: not the system's blur of what
-        // scrolls beneath, which half shows it.
-        scroll.topEdgeEffect.isHidden = true
-        statusShade.backgroundColor = Ink.page
-        statusShade.isUserInteractionEnabled = false
-        view.addSubview(statusShade)
-        scrubber.onScrub = { [weak self] y in self?.scrub(to: y) }
-        // No title over the content: the buttons alone, as in Threads.
-        navigationItem.title = nil
-        navigationItem.backButtonDisplayMode = .minimal
-        navigationItem.largeTitleDisplayMode = .never
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardMoved(_:)),
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         // Pulled down: a sync, now.
@@ -194,35 +145,8 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
                 }
             }
         }, for: .valueChanged)
-        scroll.refreshControl = onPullDown == nil ? refresh : nil
-        // Swiped left over a note: what links to it.
-        backlinkSwipe.maximumNumberOfTouches = 1
-        backlinkSwipe.addTarget(self, action: #selector(swipedToBacklinks(_:)))
-        backlinkSwipe.delegate = self
-        scroll.addGestureRecognizer(backlinkSwipe)
-        // The menu at the right of a tab's first sheet; deeper, Back on the
-        // left and the note's ⋯. Search is the bottom bar's.
-        let menuItems = UIMenu(children: [
-            UIDeferredMenuElement.uncached { [weak self] done in
-                guard let self, let menu = self.menu?(self) else { return done([]) }
-                done(menu.children)
-            },
-        ])
-        if navigationController?.viewControllers.first === self || navigationController == nil {
-            let menu = UIBarButtonItem(image: UIImage(systemName: "line.3.horizontal"), menu: menuItems)
-            menu.accessibilityLabel = "Menu"
-            navigationItem.rightBarButtonItems = [menu]
-            menuButton = (menu, "line.3.horizontal")
-        } else {
-            let more = UIBarButtonItem(image: UIImage(systemName: "ellipsis"), menu: menuItems)
-            more.accessibilityLabel = "More"
-            navigationItem.rightBarButtonItems = [more]
-            menuButton = (more, "ellipsis")
-        }
-        showSyncing(syncing)
-        if case .search(let query) = kind { setUpSearch(query) }
-        // A note opened anew — not put back as the sheet was left — where
-        // it was last read to, and typed in, if it was.
+        scroll.refreshControl = pullsToSync ? refresh : nil
+        // A note opened anew where it was last read to, and typed in, if it was.
         if restoresPlace, case .note(let path) = kind, pendingPlace == nil, pendingFocus == nil, let place = PhoneState.place(path) {
             pendingPlace = Place(path: path, index: 0, offset: place.offset)
             if place.editing { pendingFocus = Focus(path: path, editor: 0, location: place.caret) }
@@ -230,29 +154,15 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         reload()
     }
 
-    // MARK: Syncing
-
-    /// The button the menu hangs on, and its own symbol.
-    private var menuButton: (item: UIBarButtonItem, symbol: String)?
-    /// Whether a sync is under way.
-    var syncing = false
-
-    /// While a sync runs, the menu's button is the sync arrows, turning.
-    func showSyncing(_ on: Bool) {
-        syncing = on
-        guard let (item, symbol) = menuButton else { return }
-        item.removeAllSymbolEffects()
-        item.image = UIImage(systemName: on ? "arrow.triangle.2.circlepath" : symbol)
-        if on { item.addSymbolEffect(.rotate.byLayer, options: .repeat(.continuous)) }
-        item.accessibilityValue = on ? "Syncing" : nil
-    }
+    /// Pulled down at its top: a sync — not on a day's page, where it is the week.
+    var pullsToSync = true
+    /// Opened where it was last read to — not a day's page, which opens at its top.
+    var restoresPlace = true
 
     /// Whether it is going away: the keyboard leaving then is not the
     /// reader putting it away.
     private var disappearing = false
 
-    /// Where each note shown was left: the one at the top, how far into it;
-    /// the one typed in, the caret, and that it was.
     private func rememberPlaces() {
         guard pendingPlace == nil, let place, let path = place.path, blocks.indices.contains(place.index),
               blocks[place.index] is NoteBlock else { return }
@@ -261,18 +171,14 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        if StallWatch.enabled { StallWatch.mark("viewWillAppear \(kind)") }
         if let changes = unseenChanges, isViewLoaded {
             unseenChanges = nil
-            // Its window not yet set: taken in on the next turn.
             DispatchQueue.main.async { self.notesChanged(changes) }
         }
     }
 
     // MARK: A row marked
 
-    /// A row to show and mark once the sheet is up, by its place among all
-    /// its note's rows.
     private var pendingMark: Int?
 
     func mark(unfoldedRow row: Int) {
@@ -287,7 +193,6 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         relayout()
         let editor = block.editor
         guard let index = editor.row(unfolded: row) else { return }
-        // A third of the way down the screen, then marked.
         let rect = scroll.convert(editor.rowRect(index), from: editor)
         let visible = scroll.bounds.inset(by: scroll.adjustedContentInset)
         let top = -scroll.adjustedContentInset.top
@@ -299,16 +204,11 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         if pendingMark != nil { markPending() }
-        if StallWatch.enabled { StallWatch.mark("viewDidAppear \(kind)") }
         disappearing = false
-        if case .search(let query) = kind, query.isEmpty {
-            DispatchQueue.main.async { self.navigationItem.searchController?.searchBar.becomeFirstResponder() }
-        }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        if StallWatch.enabled { StallWatch.mark("viewWillDisappear \(kind)") }
         disappearing = true
         rememberPlaces()
         for case let note as NoteBlock in blocks where note.isLive {
@@ -317,12 +217,9 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         saveAll()
     }
 
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        // A new note left: named after its title, or gone when blank.
-        if isMovingFromParent || navigationController?.isBeingDismissed == true, case .note(let path) = kind {
-            store.settleNewNote(path)
-        }
+    /// A note let go: a new one named after its title, or gone when blank.
+    func settle() {
+        if case .note(let path) = kind { _ = store.settleNewNote(path) }
     }
 
     /// Something gone wrong, said for a moment over the foot of the page.
@@ -343,26 +240,8 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         UIView.animate(withDuration: 0.3, delay: 3, options: []) { label.alpha = 0 } completion: { _ in label.removeFromSuperview() }
     }
 
-    // MARK: The search field
-
-    private var searchTimer: Timer?
-
-    private func setUpSearch(_ query: String) {
-        let search = UISearchController(searchResultsController: nil)
-        search.obscuresBackgroundDuringPresentation = false
-        search.hidesNavigationBarDuringPresentation = false
-        search.searchBar.text = query
-        search.searchBar.placeholder = "Find in notes"
-        search.searchBar.autocapitalizationType = .none
-        search.searchBar.delegate = self
-        navigationItem.searchController = search
-        navigationItem.hidesSearchBarWhenScrolling = false
-        navigationItem.preferredSearchBarPlacement = .stacked
-    }
-
     // MARK: The keyboard
 
-    /// The keyboard, up or down: the page's foot above it.
     @objc private func keyboardMoved(_ note: Notification) {
         guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect, let window = view.window else { return }
         let local = view.convert(window.convert(frame, from: nil), from: nil)
@@ -387,36 +266,23 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         }
     }
 
-    private var titleText: String {
-        switch kind {
-        case .timeline: "Daily"
-        case .note(let path): store.index?.entry(path)?.title ?? GraphPaths.day(fromDailyPath: path).map(NoteBlock.dayTitle) ?? path
-        case .backlinks(let path): "Linked to " + (store.index?.entry(path)?.title ?? path)
-        case .inbox: "Inbox"
-        case .tasks: "Tasks"
-        case .pinned: "Pinned"
-        case .search: "Search"
-        }
-    }
-
     // MARK: Contents
 
-    /// The notes shown whole: the timeline's days, a note on its own, the inbox's.
     private var noteBlocks: [NoteBlock] { blocks.compactMap { $0 as? NoteBlock } }
+
+    /// The note shown — the sheet's own — when it is one.
+    var notePath: String? { if case .note(let path) = kind { path } else { nil } }
 
     /// A note deleted: the cards showing it never write it again.
     func discard(_ path: String) {
         noteBlocks.filter { $0.ref.path == path }.forEach { $0.discard() }
     }
 
-    /// Whether a note has done items to move below the rest.
     func canMoveDoneToBottom(in path: String) -> Bool {
         var rows = noteBlocks.first(where: { $0.ref.path == path })?.liveEditor?.rows ?? OutlineMarkdown.parse(store.text(path)).rows
         return OutlineEditing.moveAllDoneToBottom(&rows)
     }
 
-    /// Every list in a note with its done items below the rest: in its
-    /// editor, to be undone there, when it is shown whole; else on disk.
     func moveDoneToBottom(in path: String) {
         if let editor = noteBlocks.first(where: { $0.ref.path == path })?.liveEditor {
             editor.moveAllDoneToBottom()
@@ -428,18 +294,16 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         store.write(OutlineMarkdown.serialize(outline), path: path)
     }
 
-    /// A new row at the top of a note shown here, the caret in it — or its
-    /// one empty row, when it has nothing in it yet.
-    func writeAtTop(of ref: NoteRef) {
-        guard let block = noteBlocks.first(where: { $0.ref == ref }) else { return }
+    /// A new row at the top of the note, the caret in it — or its one
+    /// empty row, when it has nothing in it yet.
+    func writeAtTop() {
+        guard let block = noteBlocks.first else { return }
         if !block.isLive { block.goLive() }
         let editor = block.editor
         var rows = editor.rows
-        // Under its title, when its first row is one.
         let at = rows.first.map { if case .heading(1) = $0.kind { return 1 } else { return 0 } } ?? 0
         editor.becomeFirstResponder()
         if rows.indices.contains(at), rows[at].text.isEmpty {
-            // Its first row empty already: that one, not another.
             editor.setCaret(OutlineKeys.Caret(row: at, offset: 0))
         } else {
             rows.insert(.blank, at: min(at, rows.count))
@@ -449,10 +313,10 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         DispatchQueue.main.async { self.reveal(block) }
     }
 
-    /// A row with words in it, first in a note — its first row, when that
-    /// is empty — not typed in: written, and shown.
-    func addAtTop(of ref: NoteRef, text: String) {
-        guard let block = noteBlocks.first(where: { $0.ref == ref }) else { return }
+    /// A row with words in it, first in the note — its first row, when
+    /// that is empty — not typed in: written, and shown.
+    func addAtTop(text: String) {
+        guard let block = noteBlocks.first else { return }
         if !block.isLive { block.goLive() }
         let editor = block.editor
         var rows = editor.rows
@@ -470,58 +334,44 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         let row = min(at, rows.count - 1)
         DispatchQueue.main.async {
             self.reveal(block)
-            // Once in sight: what came in, marked a moment.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { editor.flashRow(row) }
         }
     }
 
+    /// The first editor, the caret in it: a new note's title, to type.
+    func focusFirst() {
+        guard let block = noteBlocks.first else { return }
+        if !block.isLive { block.goLive() }
+        block.editor.becomeFirstResponder()
+    }
+
     func reload() {
         switch kind {
-        case .timeline:
-            guard let graph = store.graph, let index = store.index else { return }
-            entries = Timeline.entries(graph: graph, index: index, including: target, revealed: store.revealedDays)
-            let center = target.flatMap(entries.firstIndex(of:)) ?? entries.count - 1
-            let low = max(0, min(center - Self.span / 2, entries.count - Self.span))
-            shown = low..<min(entries.count, low + Self.span)
-            setBlocks(Array(entries[shown]), showsHeaders: true)
         case .note(let path):
-            // A day alone: headed large — Today, and its date over it.
-            let head = GraphPaths.day(fromDailyPath: path).map { [Self.dayHead($0, metrics: metrics)] } ?? []
-            setBlocks([NoteRef(path: path)], showsHeaders: false, before: head)
-            refreshTopic(path)
-        case .inbox:
-            refreshInbox()
+            setBlocks(note: path)
+            refreshLinked(path)
         case .tasks:
             refreshTasks()
-        case .pinned:
-            refreshPinned()
-        case .backlinks(let path):
-            refreshBacklinks(path)
         case .search(let query):
             find(query)
         }
     }
 
-    /// The notes shown, those still shown kept as they are; after them, any
+    /// The note shown, kept as it is when it is already; after it, any
     /// other blocks given.
-    private func setBlocks(_ refs: [NoteRef], showsHeaders: Bool, before: [SheetBlock] = [], after: [SheetBlock] = []) {
-        var existing: [NoteRef: NoteBlock] = [:]
-        for block in noteBlocks { existing[block.ref] = block }
-        let notes: [SheetBlock] = refs.map { ref in
-            if let gap = ref.gap {
-                let block = GapBlock(gap: gap, metrics: metrics)
-                block.onReveal = { [weak self] gap in self?.store.reveal(Timeline.reveal(gap)) }
-                return block
+    private func setBlocks(note path: String?, before: [SheetBlock] = [], after: [SheetBlock] = []) {
+        var notes: [SheetBlock] = []
+        if let path {
+            if let block = noteBlocks.first(where: { $0.ref.path == path }) {
+                notes = [block]
+            } else {
+                let ref = NoteRef(path: path)
+                let block = NoteBlock(ref: ref, store: store, metrics: metrics, showsHeader: false, live: true)
+                block.onLink = { [weak self] link in self?.onLink?(link) }
+                notes = [block]
             }
-            if let block = existing.removeValue(forKey: ref) { return block }
-            // Among many, a note is built once it comes near; alone, at once.
-            let block = NoteBlock(ref: ref, store: store, metrics: metrics, showsHeader: showsHeaders, live: refs.count == 1)
-            block.onOpen = { [weak self] in self?.onOpen?(.note(ref.path)) }
-            block.onLink = { [weak self] link in self?.onLink?(link) }
-            if refs.count > 1 { block.noteMenu = { [weak self] in self.flatMap { $0.noteMenu?($0, ref.path) } } }
-            return block
         }
-        let kept = Set(notes.map(ObjectIdentifier.init))
+        let kept = Set((notes + before + after).map(ObjectIdentifier.init))
         for block in blocks where !kept.contains(ObjectIdentifier(block)) {
             block.save()
             block.removeFromSuperview()
@@ -535,10 +385,8 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
                 if let note = block as? NoteBlock, note.editor.isFirstResponder {
                     PhoneState.setPlace(note.ref.path, caret: note.editor.selectedRange.location, editing: true)
                 }
-                self.onStateChange?()
             }
             if let note = block as? NoteBlock {
-                // The keyboard put away by the reader: not typed in when next opened.
                 note.onEditingEnd = { [weak self, weak note] in
                     guard let self, let note, !self.disappearing else { return }
                     PhoneState.setPlace(note.ref.path, caret: note.editor.selectedRange.location, editing: false)
@@ -546,12 +394,10 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             }
             if let slices = block as? SliceBlock {
                 let path = slices.path
-                // What links here, opened: at the link, when it says where.
+                // What links here, opened at the link; else the note.
                 let start = slices.slices.first?.start
-                slices.onOpen = { [weak self] in
-                    guard let self else { return }
-                    if case .backlinks = kind, let start { onOpenAt?(path, start) } else { onOpen?(.note(path)) }
-                }
+                let linked = notePath != nil
+                slices.onOpen = { [weak self] in self?.onOpen?(path, linked ? start : nil) }
                 slices.onLink = { [weak self] link in self?.onLink?(link) }
             }
             content.addSubview(block)
@@ -560,87 +406,27 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         relayout()
     }
 
-    /// The pieces of notes found, a block a note.
     private func sliceBlocks(_ found: [(path: String, slices: [NoteSlice], editable: Bool)]) -> [SheetBlock] {
         found.map { SliceBlock(path: $0.path, slices: $0.slices, editable: $0.editable, store: store, metrics: metrics) }
     }
 
-    /// Whether something here is typed in: lists are not redone under it.
     private var isTyping: Bool { blocks.contains { $0.editors.contains(where: \.isFirstResponder) } }
 
     // MARK: The inbox
 
-    private var inboxShown: [String]?
-
-    private func refreshInbox() {
-        guard let index = store.index else { return }
-        let paths = index.inbox.map(\.path)
-        guard paths != inboxShown || blocks.isEmpty else { return }
-        inboxShown = paths
-        // The notes alone, no heading over them; when there are none, a word saying so.
-        let head = paths.isEmpty ? [HeadBlock(title: "Inbox", kicker: "Nothing to deal with", metrics: metrics)] : []
-        setBlocks(paths.map(NoteRef.init(path:)), showsHeaders: true, before: head)
-    }
-
-    /// Every note here that is in the inbox — in any view — with its Done
-    /// before its name; outside the inbox itself, its tray after it.
+    /// The note shown, when it is in the inbox: its Done before its name.
     private func updateInbox() {
         guard let index = store.index else { return }
-        let inInboxView = if case .inbox = kind { true } else { false }
         for block in noteBlocks {
             let path = block.ref.path
-            block.setInbox(index.entry(path)?.isInInbox == true, marked: !inInboxView) { [weak self, weak block] in
+            block.setInbox(index.entry(path)?.isInInbox == true, marked: true) { [weak self, weak block] in
                 guard let self, let block else { return }
-                checkOff(block, path: path)
+                block.save()
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                block.checkAccessory()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in self?.onFlag?(path, "inbox", nil) }
             }
         }
-    }
-
-    /// Done with a note in the inbox: its ring filled, then the card swept
-    /// off to the side, and those after it closing up as it is taken out.
-    private func checkOff(_ block: NoteBlock, path: String) {
-        block.save()
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
-        block.checkAccessory()
-        // Elsewhere than the inbox, the note stays: its check and tray go.
-        guard case .inbox = kind else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in self?.onFlag?(path, "inbox", nil) }
-            return
-        }
-        UIView.animate(withDuration: 0.32, delay: 0.3, options: [.curveEaseIn]) {
-            block.transform = CGAffineTransform(translationX: -block.bounds.width * 1.1, y: 0).rotated(by: -0.04)
-            block.alpha = 0
-        } completion: { [weak self] _ in
-            guard let self else { return }
-            animatesNextLayout = true
-            onFlag?(path, "inbox", nil)
-            // Not taken out after all: back as it was.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak block] in
-                guard let block, block.superview != nil, self.noteBlocks.contains(where: { $0 === block }) else { return }
-                UIView.animate(withDuration: 0.25) {
-                    block.transform = .identity
-                    block.alpha = 1
-                }
-            }
-        }
-    }
-
-    /// The next layout eased into, not jumped to: a card just taken out.
-    private var animatesNextLayout = false
-
-    // MARK: Pinned
-
-    private var pinnedShown: [String]?
-
-    /// The pinned notes, whole, one after another in their pinned order.
-    private func refreshPinned() {
-        guard let index = store.index else { return }
-        let paths = index.pinned.map(\.path)
-        guard paths != pinnedShown || blocks.isEmpty else { return }
-        pinnedShown = paths
-        let head = HeadBlock(title: "Pinned", kicker: paths.isEmpty ? "Pin a note from its ⋯ menu" : "\(paths.count) \(paths.count == 1 ? "note" : "notes")",
-                             metrics: metrics)
-        setBlocks(paths.map(NoteRef.init(path:)), showsHeaders: true, before: [head])
     }
 
     // MARK: Tasks
@@ -650,8 +436,6 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     /// The open tasks, in Reflect's groups, each with what is under it.
     private func refreshTasks() {
         guard let graph = store.graph, let index = store.index else { return }
-        // Every note's tasks gathered, and cut out with what is under them,
-        // off the main thread; only the blocks made on it.
         DispatchQueue.global(qos: .userInitiated).async {
             let tasks = index.tasks()
             let signature = tasks.map { "\($0.notePath)#\($0.ordinal)#\($0.text)" }
@@ -667,7 +451,6 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             }
             var groups: [(label: String, runs: [(path: String, slices: [NoteSlice], editable: Bool)])] = []
             for group in Tasks.group(tasks, today: .today) {
-                // A note's tasks together, as long as they come one after another.
                 var runs: [(path: String, slices: [NoteSlice], editable: Bool)] = []
                 for task in group.tasks {
                     guard let slice = slices["\(task.notePath)#\(task.ordinal)"] else { continue }
@@ -681,19 +464,19 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
                 guard let self, self.kind == .tasks, !self.isTyping, signature != self.tasksShown || self.blocks.isEmpty else { return }
                 self.tasksShown = signature
                 var after: [SheetBlock] = []
+                if tasks.isEmpty { after.append(HeadBlock(title: "Nothing to do", kicker: nil, metrics: self.metrics, isGroup: true)) }
                 for group in groups {
                     after.append(HeadBlock(title: group.label, kicker: nil, metrics: self.metrics, isGroup: true))
                     after += self.sliceBlocks(group.runs)
                 }
-                let head = HeadBlock(title: "Tasks", kicker: tasks.isEmpty ? "Nothing to do" : "\(tasks.count) to do", metrics: self.metrics)
-                self.setBlocks([], showsHeaders: true, before: [head], after: after)
+                self.setBlocks(note: nil, after: after)
             }
         }
     }
 
-    // MARK: What links to a note
+    // MARK: What links to the note
 
-    private var backlinksShown: [BacklinkSource]?
+    private var linkedShown: [BacklinkSource]?
 
     /// What links to a note, looked for off the main thread.
     private func linked(to path: String, then show: @escaping ([BacklinkSource], [(path: String, slices: [NoteSlice], editable: Bool)]) -> Void) {
@@ -709,34 +492,29 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         }
     }
 
-    private func refreshBacklinks(_ path: String) {
+    /// Every note followed by what links to it — the one place links are
+    /// shown from their other end.
+    private func refreshLinked(_ path: String) {
         linked(to: path) { [weak self] sources, found in
-            guard let self, self.kind == .backlinks(path), !self.isTyping, sources != self.backlinksShown || self.blocks.isEmpty else { return }
-            self.backlinksShown = sources
-            let head = HeadBlock(title: SliceBlock.name(path, store: self.store),
-                                 kicker: found.isEmpty ? "Nothing links here" : "Linked from \(found.count) \(found.count == 1 ? "note" : "notes")",
-                                 metrics: self.metrics)
-            self.setBlocks([], showsHeaders: true, before: [head], after: self.sliceBlocks(found))
+            guard let self, self.kind == .note(path), !self.isTyping else { return }
+            if self.linkedCount != found.count {
+                self.linkedCount = found.count
+                self.onLinkedCount?(found.count)
+            }
+            guard sources != self.linkedShown || self.blocks.count == 1 else { return }
+            self.linkedShown = sources
+            let after: [SheetBlock] = found.isEmpty ? [] : [LinkedHead(count: found.count, metrics: self.metrics)] + self.sliceBlocks(found)
+            self.setBlocks(note: path, after: after)
         }
     }
 
-    /// A topic — a note that says it is one, or says nothing but its name —
-    /// shown with what links to it, under it.
-    private func refreshTopic(_ path: String) {
-        guard GraphPaths.day(fromDailyPath: path) == nil, let note = noteBlocks.first else { return }
-        let isTopic = store.index?.entry(path)?.isTopic == true
-            || note.savedText.utf16.count < 2_000 && Backlinks.isEmpty(note.editor.rows)
-        guard isTopic else {
-            if blocks.count > 1 { setBlocks([note.ref], showsHeaders: false) }
-            return
-        }
-        linked(to: path) { [weak self] sources, found in
-            guard let self, self.kind == .note(path), !self.isTyping, sources != self.backlinksShown || self.blocks.count == 1 else { return }
-            self.backlinksShown = sources
-            let head = HeadBlock(title: "Linked here", kicker: found.isEmpty ? "Nothing yet" : "\(found.count) \(found.count == 1 ? "note" : "notes")",
-                                 metrics: self.metrics, isGroup: true)
-            self.setBlocks([NoteRef(path: path)], showsHeaders: false, after: [head] + self.sliceBlocks(found))
-        }
+    /// To what links here, at the note's end.
+    func scrollToLinked() {
+        guard let head = blocks.first(where: { $0 is LinkedHead }) else { return }
+        relayout()
+        let top = -scroll.adjustedContentInset.top
+        let bottom = max(top, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+        scroll.setContentOffset(CGPoint(x: 0, y: min(max(head.frame.minY - scroll.adjustedContentInset.top, top), bottom)), animated: true)
     }
 
     // MARK: Search
@@ -750,21 +528,21 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         searching += 1
         let generation = searching
         guard !words.isEmpty, let index = store.index else {
-            return setBlocks([], showsHeaders: true)
+            return setBlocks(note: nil)
         }
         DispatchQueue.global(qos: .userInitiated).async {
             let found = NoteSearch.find(words, in: index)
             DispatchQueue.main.async { [weak self] in
                 guard let self, generation == self.searching else { return }
-                let head = HeadBlock(title: query, kicker: found.isEmpty ? "Nothing found" : "\(found.count == 60 ? "60+" : String(found.count)) notes",
-                                     metrics: self.metrics, isGroup: true)
-                self.setBlocks([], showsHeaders: true, before: [head], after: self.sliceBlocks(found.map { ($0.path, $0.slices, $0.editable) }))
+                let head = HeadBlock(title: found.isEmpty ? "Nothing found" : "\(found.count == 60 ? "60+" : String(found.count)) notes",
+                                     kicker: nil, metrics: self.metrics, isGroup: true)
+                self.setBlocks(note: nil, before: [head], after: self.sliceBlocks(found.map { ($0.path, $0.slices, $0.editable) }))
             }
         }
     }
 
-    /// Takes in what changed on disk.
-    /// Changes to take in once it is seen: a sheet out of sight does no work.
+    // MARK: Keeping up
+
     private var unseenChanges: Set<String>?
 
     func notesChanged(_ paths: Set<String>) {
@@ -775,30 +553,10 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         for block in blocks { block.notesChanged(paths) }
         defer { updateInbox() }
         switch kind {
-        case .timeline:
-            guard let graph = store.graph, let index = store.index else { return }
-            // Notes already in it changed: nothing new to place.
-            if !paths.isEmpty, paths.allSatisfy({ entries.contains(NoteRef(path: $0)) && graph.exists(path: $0) }) { return relayout() }
-            // A new day or week, in its place; the window kept on the same days.
-            let new = Timeline.entries(graph: graph, index: index, revealed: store.revealedDays)
-            guard new != entries, !shown.isEmpty else { return relayout() }
-            let first = entries[shown.lowerBound], last = entries[shown.upperBound - 1]
-            entries = new
-            let low = entries.firstIndex(of: first) ?? 0
-            let high = (entries.firstIndex(of: last) ?? entries.count - 1) + 1
-            shown = low..<max(low, high)
-            setBlocks(Array(entries[shown]), showsHeaders: true)
-        case .inbox:
-            refreshInbox()
-        case .pinned:
-            refreshPinned()
         case .tasks:
             if !isTyping { refreshTasks() }
-        case .backlinks(let path):
-            refreshBacklinks(path)
-            relayout()
         case .note(let path):
-            refreshTopic(path)
+            refreshLinked(path)
             relayout()
         case .search:
             relayout()
@@ -820,242 +578,56 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         }
     }
 
-    /// The page's own colour under the status bar.
-    private let statusShade = UIView()
-
     override func viewDidLayoutSubviews() {
-        // Its own top's: none for a sheet under a list, clear of the clock.
-        statusShade.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: view.safeAreaInsets.top)
-        view.bringSubviewToFront(statusShade)
         super.viewDidLayoutSubviews()
-        if StallWatch.enabled { StallWatch.mark("sheet layout \(kind)") }
-        defer { if StallWatch.enabled { StallWatch.mark("sheet laid out \(kind)") } }
         scroll.frame = view.bounds
-        let safe = view.safeAreaInsets
-        // Clear of the tab bar's place at the foot.
-        let foot: CGFloat = 24
-        scrubber.frame = CGRect(x: view.bounds.width - 28, y: safe.top + 12, width: 28, height: view.bounds.height - safe.top - safe.bottom - 24 - foot)
         relayout()
     }
 
-    /// Lays the notes out one under another, the one at the top of the
+    /// Lays the blocks out one under another, the one at the top of the
     /// screen kept where it is, however those above it grew or shrank.
-    private var separators: [UIView] = []
-    static let rulesBetween = false
-
     func relayout() {
-        defer {
-            // The note at the top may be another now: its name, at the top.
-            if currentNotePath != lastCurrentNote {
-                lastCurrentNote = currentNotePath
-                    onCurrentNote?()
-            }
-        }
         let width = view.bounds.width
         guard width > 0 else { return }
         let top = scroll.contentOffset.y + scroll.adjustedContentInset.top
         let anchor = blocks.last { $0.frame.minY <= top && $0.frame.height > 0 }.map { ($0, top - $0.frame.minY) }
         var y: CGFloat = 0
-        // A hairline across between the notes of a list, as between posts.
-        var rules = 0
-        let eased = animatesNextLayout
-        animatesNextLayout = false
-        for (i, block) in blocks.enumerated() {
+        for block in blocks {
             let height = block.height(width: width)
-            let frame = CGRect(x: 0, y: y, width: width, height: height)
-            if eased, block.frame != frame {
-                UIView.animate(withDuration: 0.38, delay: 0, usingSpringWithDamping: 0.88, initialSpringVelocity: 0) { block.frame = frame }
-            } else {
-                block.frame = frame
-            }
+            block.frame = CGRect(x: 0, y: y, width: width, height: height)
             y += height
-            // No rule between cards: the space above each header parts them.
-            let next = blocks.indices.contains(i + 1) ? blocks[i + 1] : nil
-            if Self.rulesBetween, let next, !(block is HeadBlock), !(next is HeadBlock), height > 0 {
-                if separators.count == rules {
-                    let rule = UIView()
-                    rule.backgroundColor = Ink.rule
-                    content.addSubview(rule)
-                    separators.append(rule)
-                }
-                separators[rules].frame = CGRect(x: 0, y: y - 0.5, width: width, height: 1 / max(view.traitCollection.displayScale, 1))
-                separators[rules].isHidden = false
-                rules += 1
-            }
         }
-        for rule in separators.dropFirst(rules) { rule.isHidden = true }
-        if case .timeline = kind, shown.upperBound == entries.count { y += max(0, view.bounds.height - 320) }
+        // Room under the last, to read it clear of the bar.
+        y += 40
         content.frame = CGRect(x: 0, y: 0, width: width, height: y)
         scroll.contentSize = content.frame.size
-        let placing = pendingPlace != nil
-        if placing || pendingFocus != nil { applyPending() }
-        // Just put where it was left: no other place to keep.
-        if placing && pendingPlace == nil {
-            setNeedsMarks()
-            wakeNearby()
+        if pendingPlace != nil || pendingFocus != nil {
+            applyPending()
             return
         }
-        if let target, let block = noteBlocks.first(where: { $0.ref == target }) {
-            self.target = nil
-            scroll.contentOffset.y = max(-scroll.adjustedContentInset.top, min(block.frame.minY - scroll.adjustedContentInset.top,
-                                                                              scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom))
-        } else if let (block, offset) = anchor, blocks.contains(where: { $0 === block }) {
+        if let (block, offset) = anchor, blocks.contains(where: { $0 === block }) {
             let wanted = block.frame.minY + offset - scroll.adjustedContentInset.top
             if abs(wanted - scroll.contentOffset.y) > 0.5, !scroll.isDragging, !scroll.isDecelerating {
                 scroll.contentOffset.y = wanted
             }
         }
-        setNeedsMarks()
-        wakeNearby()
+        for block in blocks where !block.isLive && block.frame.intersects(scroll.bounds) { block.goLive() }
     }
 
-    // MARK: The scrubber's marks, when things settle
+    // MARK: Scrolling
 
-    private var marksPending = false
-
-    /// The scrubber's marks found again — every heading of every note shown —
-    /// once what changed has settled, and not while scrolling: not for each
-    /// keystroke or frame.
-    private func setNeedsMarks() {
-        guard !marksPending else { return }
-        marksPending = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            guard let self else { return }
-            self.marksPending = false
-            if self.scroll.isDragging || self.scroll.isDecelerating { return self.setNeedsMarks() }
-            self.refreshMarks()
-        }
-    }
-
-    // MARK: Building notes as they come near
-
-    private var waking = false
-    private var lastWake: CGFloat = -.greatestFiniteMagnitude
-    private var lastWakeHeight: CGFloat = 0
-
-    /// The notes on screen built now; those within a screen and a half,
-    /// one a turn of the run loop — nearest first — so no frame waits on
-    /// more than one.
-    private func wakeNearby() {
-        guard scroll.bounds.height > 0 else { return }
-        let seen = scroll.bounds
-        let near = seen.insetBy(dx: 0, dy: -seen.height * 2.5)
-        let middle = seen.midY
-        // In sight and not built: built now — it is wanted this frame.
-        // One being built ahead is left to come in — a moment, off this
-        // thread — not built twice.
-        let visible = blocks.filter { !$0.isLive && $0.frame.intersects(seen) && ($0 as? NoteBlock)?.preparing != true }
-        if !visible.isEmpty {
-            visible.forEach { $0.goLive() }
-            setNeedsRelayout()
-        }
-        // Gone out of sight: hidden, the tiles its text drew let go. Far
-        // away: its editor let go too, the text kept to put back when it
-        // comes near — the memory a long scroll takes bounded.
-        let drawn = seen
-        let far = seen.insetBy(dx: 0, dy: -seen.height * 4)
-        for case let note as NoteBlock in blocks {
-            if note.isLive, !note.frame.intersects(far) { note.sleep() }
-            let hidden = note.isLive && !note.frame.intersects(drawn) && !note.editor.isFirstResponder
-            if note.isHidden != hidden { note.isHidden = hidden }
-        }
-        // Coming near: built ahead, off the main thread, nearest first —
-        // looked for again once the page has moved some.
-        guard abs(seen.minY - lastWake) > 60 || !visible.isEmpty || lastWakeHeight != scroll.contentSize.height else { return }
-        lastWake = seen.minY
-        lastWakeHeight = scroll.contentSize.height
-        let width = view.bounds.width
-        for block in blocks.filter({ !$0.isLive && $0.frame.intersects(near) })
-            .sorted(by: { abs($0.frame.midY - middle) < abs($1.frame.midY - middle) }) {
-            block.prepareLive(width: width)
-        }
-    }
-
-    // MARK: The scrubber
-
-    private func refreshMarks() {
-        var marks: [ScrubberView.Mark] = []
-        let height = max(scroll.contentSize.height, 1)
-        let listed: Bool = { if case .note = kind { return false } else { return true } }()
-        for block in blocks {
-            // Each note of many, by its name.
-            if listed, let note = block as? NoteBlock {
-                let isWeek = GraphPaths.week(fromWeeklyPath: note.ref.path) != nil
-                let name = note.ref.day.map(NoteBlock.dayTitle) ?? (isWeek ? "Week" : SliceBlock.name(note.ref.path, store: store))
-                marks.append(.init(fraction: block.frame.minY / height, title: name, rank: 2, isWeek: isWeek))
-            } else if let slices = block as? SliceBlock {
-                marks.append(.init(fraction: block.frame.minY / height, title: SliceBlock.name(slices.path, store: store), rank: 2, isWeek: false))
-            }
-            for editor in block.editors {
-                for heading in editor.headings {
-                    let glyph = editor.outlineLayout.glyphIndexForCharacter(at: heading.location)
-                    let y = block.frame.minY + editor.frame.minY + editor.outlineLayout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
-                    marks.append(.init(fraction: y / height, title: InlineMarkup.plainText(heading.text), rank: 1, isWeek: false))
-                }
-            }
-        }
-        scrubber.marks = marks
-        scrubber.isHidden = marks.count < 3
-    }
-
-    /// The thumb on the scrubber: the page taken to that place in it.
-    private func scrub(to fraction: CGFloat) {
-        let height = scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
-        scroll.contentOffset.y = max(-scroll.adjustedContentInset.top, fraction * max(height, 0))
-    }
-
-    // MARK: Scrolling to the window's ends
-
-    /// To the top of the sheet, as a tap on the status bar goes.
     func scrollToTop() {
         scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: -scroll.adjustedContentInset.top), animated: true)
     }
 
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        rememberPlaces()
-        onStateChange?()
-    }
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { rememberPlaces() }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        // Pulled down well past the top: what is above it — a calendar, a list.
-        if let onPullDown, scroll.contentOffset.y < -(scroll.adjustedContentInset.top + 70) { onPullDown() }
-        if !decelerate {
-            rememberPlaces()
-            onStateChange?()
-        }
+        if !decelerate { rememberPlaces() }
     }
 
     /// Told to hide the chrome — reading down — or bring it back.
     var onChromeHidden: ((Bool) -> Void)?
-    /// Pulled down past its top — set, in place of a sync: what is over it,
-    /// shown — the month over a day, the list over a note.
-    var onPullDown: (() -> Void)? {
-        didSet { if isViewLoaded, onPullDown != nil { scroll.refreshControl = nil } }
-    }
-    /// Opened where it was last read to — not a day's page, which opens at its top.
-    var restoresPlace = true
-
-    /// A swipe to the left over a note: what links to it — not where a swipe
-    /// across turns the page.
-    var allowsBacklinkSwipe = true
-
-    /// A day, headed alone: its name as it is to today — Today, Yesterday,
-    /// a weekday this week, else its date — and its full date over it.
-    static func dayHead(_ day: Day, metrics: PhoneMetrics) -> HeadBlock {
-        let today = Day.today
-        let date = day.date ?? Date()
-        let title: String
-        switch day {
-        case today: title = "Today"
-        case today.adding(-1): title = "Yesterday"
-        case today.adding(1): title = "Tomorrow"
-        default:
-            let near = (today.adding(-6)...today.adding(6)).contains(day)
-            title = Formats.date(near ? "EEEE" : day.year == today.year ? "MMMMd" : "MMMMdyyyy").string(from: date)
-        }
-        let kicker = Formats.date(day.year == today.year ? "EEEEMMMMd" : "EEEEMMMMdyyyy").string(from: date)
-        return HeadBlock(title: title, kicker: kicker, metrics: metrics)
-    }
     private var lastScrollY: CGFloat = 0
     private var chromeTravel: CGFloat = 0
 
@@ -1070,184 +642,50 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             chromeTravel = 0
             return onChromeHidden?(false) ?? ()
         }
-        // The same way a while, before it counts.
         chromeTravel = (delta > 0) == (chromeTravel > 0) ? chromeTravel + delta : delta
         if chromeTravel > 24 { onChromeHidden?(true) } else if chromeTravel < -12 { onChromeHidden?(false) }
     }
 
-    /// The note being read: the sheet's own, alone; among many, the one
-    /// across the middle of the screen. None for what links to a note, which lists
-    /// them already.
-    var currentNotePath: String? {
-        switch kind {
-        case .note(let path): return path
-        case .backlinks: return nil
-        default:
-            guard isViewLoaded else { return nil }
-            // The one across the middle of what shows between the top and the bar.
-            let inset = scroll.adjustedContentInset
-            let middle = scroll.contentOffset.y + inset.top + (scroll.bounds.height - inset.top - inset.bottom) / 2
-            let notes = noteBlocks
-            return (notes.last { $0.frame.minY <= middle } ?? notes.first)?.ref.path
-        }
-    }
-
-    /// Told when the note at the top changes, as the sheet scrolls.
-    var onCurrentNote: (() -> Void)?
-    private var lastCurrentNote: String?
-
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        let current = currentNotePath
-        if current != lastCurrentNote {
-            lastCurrentNote = current
-            onCurrentNote?()
-        }
         followForChrome()
-        scrubber.visible = scroll.contentOffset.y / max(scroll.contentSize.height, 1)
-        wakeNearby()
-        guard case .timeline = kind, !shown.isEmpty, !relayoutPending else { return }
-        let offset = scroll.contentOffset.y
-        if offset < scroll.bounds.height, shown.lowerBound > 0 {
-            slide(earlier: true)
-        } else if offset > scroll.contentSize.height - 2 * scroll.bounds.height, shown.upperBound < entries.count {
-            slide(earlier: false)
-        }
-    }
-
-    private func slide(earlier: Bool) {
-        var low = shown.lowerBound, high = shown.upperBound
-        if earlier {
-            low = max(0, low - Self.step)
-            high = min(high, low + Self.span + Self.step)
-        } else {
-            high = min(entries.count, high + Self.step)
-            low = max(low, high - Self.span - Self.step)
-        }
-        guard low..<high != shown else { return }
-        shown = low..<high
-        setBlocks(Array(entries[shown]), showsHeaders: true)
-    }
-
-    /// Brings a day of the timeline to the top, the window moved to it.
-    func show(_ ref: NoteRef, asLeft: Bool = false) {
-        guard case .timeline = kind else { return }
-        // A day with no note yet: in the timeline, empty, to write in.
-        if let day = ref.day, store.graph?.exists(path: ref.path) == false { store.reveal([day]) }
-        // Gone to: where it was last read to, and typed in, if it was.
-        if asLeft, let place = PhoneState.place(ref.path) {
-            if !entries.contains(ref) || !entries[shown].contains(ref) {
-                target = ref
-                reload()
-            }
-            restore(place: Place(path: ref.path, index: 0, offset: place.offset),
-                    focus: place.editing ? Focus(path: ref.path, editor: 0, location: place.caret) : nil)
-            return
-        }
-        if !entries.contains(ref) || !entries[shown].contains(ref) {
-            target = ref
-            reload()
-        } else {
-            target = ref
-            relayout()
+        for block in blocks where !block.isLive && block.frame.intersects(scroll.bounds.insetBy(dx: 0, dy: -scroll.bounds.height)) {
+            block.goLive()
         }
     }
 }
 
-/// The scrubber: ticks down the right edge — a long one for each day, a
-/// short one for each heading — dragged along with the thumb, a tick of the
-/// phone at each day passed, the day said beside the thumb.
-final class ScrubberView: UIView {
-    struct Mark: Equatable {
-        var fraction: CGFloat
-        var title: String
-        var rank: Int
-        var isWeek: Bool
-    }
+/// Over what links to a note, at its end: a hairline, and how many.
+final class LinkedHead: UIView, SheetBlock {
+    private let label = UILabel()
+    private let rule = UIView()
+    var onHeightChange: (() -> Void)?
+    var onCaretMove: (() -> Void)?
+    var editors: [OutlineEditor] { [] }
+    var isLive: Bool { true }
+    func goLive() {}
 
-    var marks: [Mark] = [] { didSet { if marks != oldValue { setNeedsDisplay() } } }
-    /// Whether its marks show: only while a thumb is on it, and a moment
-    /// after. Else it is a faint line at the edge.
-    private var revealed = false {
-        didSet {
-            guard revealed != oldValue else { return }
-            UIView.transition(with: self, duration: 0.18, options: [.transitionCrossDissolve, .allowUserInteraction]) {
-                self.setNeedsDisplay()
-                self.layer.displayIfNeeded()
-            }
-        }
-    }
-    private var hideTimer: Timer?
-    /// Where the screen's top is, from 0 to 1.
-    var visible: CGFloat = 0
-    /// Dragged: where along it the thumb is, from 0 to 1.
-    var onScrub: ((CGFloat) -> Void)?
-    private let label = PaddedLabel()
-    private let haptics = UISelectionFeedbackGenerator()
-    private var lastMark: Int?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isOpaque = false
-        backgroundColor = .clear
-        label.isHidden = true
-        label.backgroundColor = Ink.shelf
-        label.textColor = Ink.text
-        label.font = .systemFont(ofSize: 14, weight: .semibold)
-        label.layer.cornerRadius = 9
-        label.lineBreakMode = .byTruncatingTail
-        label.numberOfLines = 1
-        label.layer.masksToBounds = true
+    init(count: Int, metrics: PhoneMetrics) {
+        super.init(frame: .zero)
+        rule.backgroundColor = Ink.rule
+        addSubview(rule)
+        label.attributedText = NSAttributedString(string: "LINKED FROM \(count) \(count == 1 ? "NOTE" : "NOTES")", attributes: Card.label(size: metrics.size))
         addSubview(label)
-        clipsToBounds = false
-        addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(dragged(_:))).with { $0.minimumPressDuration = 0 })
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    override func draw(_ rect: CGRect) {
-        // At rest: nothing — it shows when a thumb is on it.
-        guard revealed else { return }
-        for mark in marks {
-            let y = 6 + mark.fraction * (bounds.height - 12)
-            let length: CGFloat = mark.rank == 2 ? 12 : 6
-            (mark.isWeek ? Ink.week : mark.rank == 2 ? Ink.secondary : Ink.faint).setFill()
-            UIBezierPath(roundedRect: CGRect(x: bounds.width - 6 - length, y: y - 0.75, width: length, height: 1.5), cornerRadius: 0.75).fill()
-        }
+    func height(width: CGFloat) -> CGFloat { 64 }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let side = NoteBlock.side
+        rule.frame = CGRect(x: side, y: 24, width: bounds.width - 2 * side, height: 1 / max(traitCollection.displayScale, 1))
+        label.frame = CGRect(x: side, y: 36, width: bounds.width - 2 * side, height: 20)
     }
 
-    @objc private func dragged(_ gesture: UILongPressGestureRecognizer) {
-        let y = gesture.location(in: self).y
-        let fraction = min(1, max(0, (y - 6) / max(bounds.height - 12, 1)))
-        switch gesture.state {
-        case .began, .changed:
-            hideTimer?.invalidate()
-            revealed = true
-            onScrub?(fraction)
-            // The day the thumb is at, said beside it, and felt as it passes.
-            let nearest = marks.indices.filter { marks[$0].rank == 2 }.min { abs(marks[$0].fraction - fraction) < abs(marks[$1].fraction - fraction) }
-            if let nearest {
-                if nearest != lastMark { haptics.selectionChanged() }
-                lastMark = nearest
-                label.text = marks[nearest].title
-                label.sizeToFit()
-                // No wider than the screen leaves it, left of the scrubber:
-                // a long title cut short, not run off the edge.
-                let room = max(80, frame.minX - 16 - 12)
-                let width = min(label.bounds.width, room)
-                label.frame = CGRect(x: -width - 12, y: y - label.bounds.height / 2, width: width, height: label.bounds.height)
-                label.isHidden = false
-            }
-        default:
-            label.isHidden = true
-            lastMark = nil
-            // Its marks a moment longer, then the faint line again.
-            hideTimer?.invalidate()
-            hideTimer = Timer.scheduledTimer(withTimeInterval: 0.9, repeats: false) { [weak self] _ in
-                MainActor.assumeIsolated { self?.revealed = false }
-            }
-        }
-    }
+    func save() {}
+    func notesChanged(_ paths: Set<String>) {}
 }
 
 /// A label with room round its words.
@@ -1271,68 +709,5 @@ extension PhoneState {
     static var size: CGFloat {
         get { UserDefaults.standard.object(forKey: "TextSize") as? CGFloat ?? 16 }
         set { UserDefaults.standard.set(newValue, forKey: "TextSize") }
-    }
-}
-
-// MARK: Backlinks, swiped to
-
-extension SheetController: UIGestureRecognizerDelegate {
-    /// The note under a point in the sheet, by its path — not the backlinks'
-    /// own sheet's, which lists them already.
-    fileprivate func notePath(at point: CGPoint) -> String? {
-        if case .backlinks = kind { return nil }
-        let inContent = scroll.convert(point, to: content)
-        guard let block = blocks.first(where: { $0.frame.contains(inContent) }) else { return nil }
-        return (block as? NoteBlock)?.ref.path
-    }
-
-    @objc fileprivate func swipedToBacklinks(_ gesture: UIPanGestureRecognizer) {
-        guard gesture.state == .ended else { return }
-        // Far enough, or fast enough, across.
-        guard gesture.translation(in: scroll).x < -50 || gesture.velocity(in: scroll).x < -500,
-              let path = notePath(at: gesture.location(in: scroll)) else { return }
-        UISelectionFeedbackGenerator().selectionChanged()
-        saveAll()
-        onOpen?(.backlinks(path))
-    }
-
-    /// Begun moving left more than down, over a note — not one being typed
-    /// in, whose rows a swipe moves in and out, nor on a carousel, which a
-    /// swipe turns.
-    func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
-        guard gesture === backlinkSwipe, let pan = gesture as? UIPanGestureRecognizer else { return true }
-        guard allowsBacklinkSwipe else { return false }
-        let velocity = pan.velocity(in: scroll)
-        guard velocity.x < 0, -velocity.x > abs(velocity.y) * 1.5 else { return false }
-        let point = pan.location(in: scroll)
-        guard notePath(at: point) != nil else { return false }
-        let inContent = scroll.convert(point, to: content)
-        if let block = blocks.first(where: { $0.frame.contains(inContent) }) as? NoteBlock {
-            let editor = block.editor
-            if editor.isFirstResponder || editor.hasCarousel(at: scroll.convert(point, to: editor)) { return false }
-        }
-        return true
-    }
-
-    /// Alongside the scrolling: a swipe across is not a scroll down.
-    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-        gesture === backlinkSwipe && other === scroll.panGestureRecognizer
-    }
-}
-
-extension SheetController: UISearchBarDelegate {
-    func searchBar(_ searchBar: UISearchBar, textDidChange text: String) {
-        searchTimer?.invalidate()
-        searchTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.find(text)
-            }
-        }
-    }
-
-    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
-        searchTimer?.invalidate()
-        find(searchBar.text ?? "")
-        searchBar.resignFirstResponder()
     }
 }

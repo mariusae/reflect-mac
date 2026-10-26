@@ -59,7 +59,7 @@ struct RootView: View {
                 ConnectView(appName: "Prism", clone: store.clone)
             }
         } else {
-            ColumnsView(store: store, scheduler: scheduler)
+            PrismView(store: store, scheduler: scheduler)
                 .ignoresSafeArea()
         }
     }

@@ -10,7 +10,7 @@ import ReflectGit2
 /// asked (⌘R).
 @MainActor
 final class PrismApp: NSObject, NSApplicationDelegate {
-    private var controller: PrismWindowController?
+    private var session: Session?
     private var settings: SettingsWindowController?
     /// Where the Prism browser extension sends the pages it captures.
     private var captureServer: CaptureServer?
@@ -25,16 +25,27 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         Appearance.current = appearance
     }
 
-    /// View ▸ Page: flat, or cards.
-    @objc func choosePage(_ sender: NSMenuItem) {
-        PageStyle.flat = sender.representedObject as? String == "flat"
-        controller?.typographyChanged()
+    /// View ▸ Typeface.
+    @objc func chooseTypeface(_ sender: NSMenuItem) {
+        guard let face = Typeface(rawValue: sender.representedObject as? String ?? "") else { return }
+        session?.face = face
+    }
+
+    @objc func biggerText(_ sender: Any?) { session.map { $0.size = min(26, $0.size + 1) } }
+    @objc func smallerText(_ sender: Any?) { session.map { $0.size = max(11, $0.size - 1) } }
+    @objc func actualSizeText(_ sender: Any?) { session.map { $0.size = CGFloat($0.face.defaults.size) } }
+
+    /// File ▸ New Window (⇧⌘N): another window on the graph, on today.
+    @objc func newWindow(_ sender: Any?) {
+        guard let session else { return }
+        session.newWindow().showWindow(nil)
+        session.writeWindows()
     }
 
     /// Prism ▸ Settings: the typography window.
     @objc func showSettings(_ sender: Any?) {
-        guard let controller else { return }
-        let settings = settings ?? SettingsWindowController(prism: controller)
+        guard let session else { return }
+        let settings = settings ?? SettingsWindowController(session: session)
         self.settings = settings
         settings.showWindow(nil)
     }
@@ -51,12 +62,12 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         let scripted = environment["PRISM_SNAP"] != nil || environment["PRISM_CAPTURE_SCRIPT"] != nil
         let server = CaptureServer(app: "Prism", port: scripted ? 47_822 : 47_821,
                                    tokensKey: scripted ? "CaptureTokens (scripts)" : "CaptureTokens", isScripted: scripted)
-        server.graphName = { [weak self] in self?.controller?.graph.root.lastPathComponent ?? "" }
+        server.graphName = { [weak self] in self?.session?.graph.root.lastPathComponent ?? "" }
         server.onCapture = { [weak self] page, screenshot in
-            guard let controller = self?.controller else { throw CocoaError(.fileWriteUnknown) }
-            return try controller.capture(page, screenshot: screenshot)
+            guard let session = self?.session else { throw CocoaError(.fileWriteUnknown) }
+            return try session.capture(page, screenshot: screenshot)
         }
-        server.onOpen = { [weak self] path in self?.controller?.openCaptured(path) }
+        server.onOpen = { [weak self] path in self?.session?.openCaptured(path) }
         server.start()
         captureServer = server
 
@@ -99,40 +110,40 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             showGitHub(nil)
             return
         }
-        guard let controller else { return }
+        guard let session else { return }
         if environment["PRISM_SNAP"] != nil {
-            runScript(controller, environment)
+            runScript(session, environment)
             return
         }
         // `PRISM_CAPTURE_SCRIPT=1`: the capture server alone, for a script
         // to send pages to — no window, nothing brought forward.
         if environment["PRISM_CAPTURE_SCRIPT"] != nil { return }
-        controller.showWindow(nil)
+        session.restoreWindows()
+        session.windows.forEach { $0.showWindow(nil) }
         NSApp.activate()
     }
 
-    /// Opens a graph in a window; one open before is let go. Prism's own
-    /// clone it keeps in step itself; a folder another app keeps, only
-    /// when asked.
+    /// Opens a graph; one open before is let go. Prism's own clone it
+    /// keeps in step itself; a folder another app keeps, only when asked.
     private func start(_ graph: Graph, ownsSync: Bool) {
         closeGraph()
-        let controller = PrismWindowController(graph: graph)
-        if ownsSync { controller.ownSync(prepare: graph.root == GitHubGraph.root ? GitHubGraph.prepare : {}) }
-        self.controller = controller
+        let session = Session(graph: graph)
+        if ownsSync { session.ownSync(prepare: graph.root == GitHubGraph.root ? GitHubGraph.prepare : {}) }
+        self.session = session
         if graph.root == GitHubGraph.root {
-            relay = GitHubGraph.listen { [weak controller] in controller?.syncForPush() }
+            relay = GitHubGraph.listen { [weak session] in session?.syncForPush() }
         }
     }
 
-    /// The graph open let go: written, and its window closed.
+    /// The graph open let go: written, and its windows closed.
     private func closeGraph() {
         relay?.stop()
         relay = nil
-        guard let controller else { return }
-        controller.save()
-        controller.endSync()
-        controller.window?.close()
-        self.controller = nil
+        guard let session else { return }
+        session.save()
+        session.endSync()
+        session.windows.forEach { $0.window?.close() }
+        self.session = nil
         settings?.close()
         settings = nil
     }
@@ -146,11 +157,11 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         let window = GitHubWindowController(onCloned: { [weak self] in
             guard let self else { return }
             start(GitHubGraph.graph(), ownsSync: true)
-            controller?.showWindow(nil)
-        }, onOpenFolder: controller == nil ? { [weak self] in
+            session?.frontWindow?.showWindow(nil)
+        }, onOpenFolder: session == nil ? { [weak self] in
             guard let self, let root = chooseFolder() else { return }
             start(Graph(root: root), ownsSync: false)
-            controller?.showWindow(nil)
+            session?.frontWindow?.showWindow(nil)
         } : nil, closeGraph: { [weak self] in self?.closeGraph() })
         gitHub = window
         window.showWindow(nil)
@@ -180,194 +191,50 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         return url
     }
 
-    /// `PRISM_SNAP=<png>`: draws the window, without showing it, to a
-    /// picture, then quits. `PRISM_NOTE` is the note to go to (a graph
-    /// path), `PRISM_FACE`, `PRISM_SIZE` and `PRISM_LINE` (line height, in ems) the type, `PRISM_DARK=1` the
-    /// dark appearance; `PRISM_TYPE` text typed at the note's end (a newline
-    /// for Return, a carriage return for ⇧Return), `PRISM_SELECT` the first such text in the note selected, `PRISM_FOLLOW` `[[titles]]` followed
-    /// as plain clicks (`|` between), `PRISM_HEADER` a note whose header in the timeline is clicked, `PRISM_BACK=1` Back, `PRISM_SWITCH` ⌘E's cards
-    /// opened and moved so many, `PRISM_SHEETS=1` the stacks printed, `PRISM_DRAG`
-    /// and `PRISM_DRAGSHOW` (`column:index|top:fraction`) a sheet dragged there, `PRISM_COLLAPSE` a note
-    /// whose rows are all collapsed, `PRISM_COLUMN` a `[[title]]` opened in a column of its
-    /// own, `PRISM_MOVE` a note whose first item is moved to the end of the
-    /// last column's, `PRISM_BACKLINKS` a note whose backlinks get a column,
-    /// `PRISM_TIMELINE=1` a timeline column opened, `PRISM_INBOX_ADD` a note
-    /// put in the inbox (or taken out) as from the Note menu, `PRISM_INBOX_REMOVE`
-    /// one taken out as by its ×, `PRISM_INBOX=1` an inbox column opened; `PRISM_FIND` a query for the finder (`PRISM_FIND_COLUMN=1`: its first
-    /// result chosen with ⌘↩), `PRISM_HOVER` a
-    /// place down the scrubber (0 to 1) hovered, `PRISM_SCROLL` steps of
-    /// scrolling, up for under 0, `PRISM_SETTINGS_SNAP` where to draw the Settings
-    /// window, `PRISM_SIDEBAR=1` the
-    /// sidebar out, `PRISM_CLICKBOX=<n>` the nth checkbox of `PRISM_NOTE`
-    /// clicked with the caret at its top, and the scroll before and after printed. `PRISM_BAR` the
-    /// last column's sheet bar shown, and one of its kinds (`inbox`, `tasks`…) chosen, unless `show`.
-    /// Graph ▸ Notes to Review: the notes a sync left with both sides in
-    /// them, each to open — filled as the menu opens.
-    private static let review = ReviewMenu()
-
-    private static func reviewItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "Notes to Review", action: nil, keyEquivalent: "")
-        let menu = NSMenu(title: "Notes to Review")
-        menu.delegate = review
-        item.submenu = menu
-        return item
-    }
-
-    private func runScript(_ controller: PrismWindowController, _ environment: [String: String]) {
+    /// `PRISM_SNAP=<png>`: the first window drawn, without showing it, to a
+    /// picture, then quits. `PRISM_NOTE` the note to go to (a graph path),
+    /// `PRISM_BESIDE` one opened beside it, `PRISM_LENS` the lens chosen,
+    /// `PRISM_LIST=0` the list put away, `PRISM_SEARCH` words searched for,
+    /// `PRISM_SCHEDULE=1` today's hours, `PRISM_TYPE` text typed at the
+    /// note's end, `PRISM_LIST_STEP` ↓ pressed in the list so many times,
+    /// `PRISM_FIND` ⌘K on a query, `PRISM_FACE`, `PRISM_SIZE` the type,
+    /// `PRISM_DARK=1` the dark appearance, `PRISM_WAIT` seconds to wait first.
+    private func runScript(_ session: Session, _ environment: [String: String]) {
         if environment["PRISM_DARK"] == "1" { NSApp.appearance = NSAppearance(named: .darkAqua) }
         if environment["PRISM_DARK"] == "0" { NSApp.appearance = NSAppearance(named: .aqua) }
-        controller.window?.setFrame(NSRect(x: -4000, y: 0, width: Double(environment["PRISM_WIDTH"] ?? "") ?? 1040, height: 760),
-                                    display: false)
-        controller.window?.contentView?.layoutSubtreeIfNeeded()
-        // `PRISM_CARD_MODES=<path>=summary,<path>=collapsed`: notes' cards shown so, not kept.
-        CardModes.persists = false
-        for pair in (environment["PRISM_CARD_MODES"] ?? "").split(separator: ",") {
-            let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
-            if parts.count == 2, let mode = CardMode(rawValue: parts[1]) { CardModes.set(mode, for: parts[0]) }
-        }
-        if let face = environment["PRISM_FACE"].flatMap(Typeface.init(rawValue:)) { controller.face = face }
-        // `PRISM_HEADING_CASE`: headings set so — family, bold, smallCaps, caps.
-        if let option = environment["PRISM_HEADING_CASE"].flatMap(HeadingCase.init(rawValue:)) {
-            var settings = controller.face.settings
-            settings.headingCase = option
-            controller.face.settings = settings
-            controller.typographyChanged()
-        }
-        if let size = environment["PRISM_SIZE"].flatMap(Double.init) { controller.size = CGFloat(size) }
-        if let line = environment["PRISM_LINE"].flatMap(Double.init) {
-            var settings = controller.face.settings
-            settings.lineHeight = line
-            controller.face.settings = settings
-            controller.typographyChanged()
-        }
-        if let note = environment["PRISM_NOTE"] { controller.open(note) }
-        if let text = environment["PRISM_TYPE"] {
-            controller.typeForScript(text, in: environment["PRISM_NOTE"] ?? GraphPaths.dailyPath(for: .today))
-        }
-        if let text = environment["PRISM_SELECT"] {
-            controller.selectForScript(text, in: environment["PRISM_NOTE"] ?? GraphPaths.dailyPath(for: .today))
-        }
-        // `PRISM_TRASH=<path>`: a note moved to the Trash, as from the Note menu, unasked.
-        if let path = environment["PRISM_TRASH"] { controller.trash(path) }
-        // `PRISM_OPEN_BACKLINK=<path>|<link>`: a note opened from what links to another, at the link.
-        if let spec = environment["PRISM_OPEN_BACKLINK"], let bar = spec.firstIndex(of: "|") {
-            controller.openBacklink(String(spec[..<bar]), at: String(spec[spec.index(after: bar)...]))
-        }
-        // `PRISM_BACKLINK_FAN=1`: every note's stack of what links to it, dealt out, a moment after it is found.
-        if environment["PRISM_BACKLINK_FAN"] == "1" {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { controller.spreadBacklinksForScript() }
-        }
-        if let path = environment["PRISM_COLLAPSE"] { controller.collapseAllForScript(in: path) }
-        for title in (environment["PRISM_FOLLOW"] ?? "").split(separator: "|") { controller.followForScript(String(title)) }
-        if let path = environment["PRISM_HEADER"] { controller.openAloneForScript(path) }
-        if environment["PRISM_BACK"] == "1" { controller.goBack(nil) }
-        // `column:index|top:fraction`: a sheet dragged there, and let go — or, for DRAGSHOW, shown on the way.
-        for (key, perform) in [("PRISM_DRAG", true), ("PRISM_DRAGSHOW", false)] {
-            let parts = (environment[key] ?? "").split(separator: ":")
-            guard parts.count == 3, let column = Int(parts[0]), let fraction = Double(parts[2]) else { continue }
-            controller.dragForScript(column: column, index: Int(parts[1]), at: CGFloat(fraction), perform: perform)
-        }
-        if environment["PRISM_FOLLOW"] != nil || environment["PRISM_BACK"] != nil || environment["PRISM_SHEETS"] != nil
-            || environment["PRISM_HEADER"] != nil
-            || environment["PRISM_DRAG"] != nil {
-            print(controller.sheetsForScript)
-        }
-        if let moves = environment["PRISM_SWITCH"].flatMap(Int.init) {
-            controller.switchForScript(moves: moves, pick: environment["PRISM_SWITCH_PICK"] == "1")
-        }
-        for title in (environment["PRISM_COLUMN"] ?? "").split(separator: "|") { controller.openInColumnForScript(String(title)) }
-        if environment["PRISM_COLUMN"] != nil { print(controller.sheetsForScript) }
-        if let path = environment["PRISM_MOVE"] { controller.moveRowForScript(from: path) }
-        if environment["PRISM_TIMELINE"] == "1" { controller.showTimeline(nil) }
-        if let path = environment["PRISM_INBOX_ADD"] { controller.toggleInboxForScript(path) }
-        if let path = environment["PRISM_INBOX_REMOVE"] { controller.removeFromInboxForScript(path) }
-        if environment["PRISM_INBOX"] == "1" { controller.showInbox(nil) }
-        // `PRISM_THEN_CLOSE=1`: the column worked in closed, a moment after.
-        if environment["PRISM_THEN_CLOSE"] == "1" { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { controller.closeColumn(nil) } }
-        // `PRISM_THEN_TODAY=1`: ⌘D a moment after — in the column worked in.
-        if environment["PRISM_THEN_TODAY"] == "1" { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { controller.goToday(nil) } }
-        // `PRISM_LIST_STEP`: ↓ pressed so many times in the list column, a moment after.
-        if let steps = environment["PRISM_LIST_STEP"].flatMap(Int.init) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { controller.stepListForScript(steps) }
-        }
-        if environment["PRISM_TASKS"] == "1" { controller.showTasks(nil) }
-        // `PRISM_BLOCKS=1`: a day's time blocks, in a column.
-        if environment["PRISM_BLOCKS"] == "1" {
-            let blocks = controller.timeBlocksForScript()
-            // `PRISM_BLOCKS_DROP=<path>#<ordinal>@<minute>`: a task dropped on the day.
-            if let spec = environment["PRISM_BLOCKS_DROP"], let at = spec.lastIndex(of: "@"), let hash = spec.lastIndex(of: "#"),
-               let ordinal = Int(spec[spec.index(after: hash)..<at]), let minute = Int(spec[spec.index(after: at)...]), let blocks {
-                blocks.place(task: String(spec[..<hash]), ordinal: ordinal, on: blocks.day, start: minute)
-            }
-            if let spec = environment["PRISM_BLOCKS_MOVE"] { blocks?.moveForScript(spec) }
-            if let n = environment["PRISM_BLOCKS_EDIT"].flatMap(Int.init) { blocks?.editForScript(n) }
-        }
-        // `PRISM_THEN_OPEN=<path>`: opened, as by ⌘O, a moment after — wherever the keyboard is.
-        if let path = environment["PRISM_THEN_OPEN"] { DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { controller.open(path) } }
-        // `PRISM_ASIDE_HIDE=1`: what is beside the column worked in, put away.
-        if environment["PRISM_ASIDE_HIDE"] == "1" { controller.toggleAside(nil) }
-        for choice in (environment["PRISM_BAR"] ?? "").split(separator: "|") { controller.sheetBarForScript(String(choice)) }
-        if let steps = environment["PRISM_STACK"] { controller.stackForScript(steps) }
-        // `PRISM_CALENDAR_SNAP=<png>`: the calendar, this month, drawn.
-        if let path = environment["PRISM_CALENDAR_SNAP"] {
-            controller.calendarSnapshotForScript(to: URL(fileURLWithPath: path), dark: environment["PRISM_DARK"] == "1")
-        }
-        if let path = environment["PRISM_OPEN_PAGE"] { controller.openPageForScript(path) }
-        if let query = environment["PRISM_HEADINGS"] { controller.headingsForScript(query) }
-        if let query = environment["PRISM_RECENT"] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { controller.recentForScript(query, go: environment["PRISM_RECENT_GO"] == "1") }
-        }
-        // `PRISM_WRITE_TODAY`: ⌘N, then these words typed in the row it makes (`|` between presses).
-        if let words = environment["PRISM_WRITE_TODAY"] {
-            for (i, text) in words.split(separator: "|").enumerated() {
-                DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.6) {
-                    controller.writeToday(nil)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        (controller.window?.firstResponder as? NSTextView)?.insertText(String(text), replacementRange: NSRange(location: NSNotFound, length: 0))
-                    }
-                }
+        if let face = environment["PRISM_FACE"].flatMap(Typeface.init(rawValue:)) { session.face = face }
+        if let size = environment["PRISM_SIZE"].flatMap(Double.init) { session.size = CGFloat(size) }
+        session.restoreWindows()
+        guard let window = session.windows.first else { exit(1) }
+        window.window?.setFrame(NSRect(x: -4000, y: 0, width: Double(environment["PRISM_WIDTH"] ?? "") ?? 1180,
+                                       height: Double(environment["PRISM_HEIGHT"] ?? "") ?? 780), display: false)
+        window.window?.orderBack(nil)
+        window.window?.contentView?.layoutSubtreeIfNeeded()
+        if let lens = environment["PRISM_LENS"].flatMap(Lens.init(rawValue:)) { window.chooseForScript(lens) }
+        if environment["PRISM_LIST"] == "0" { window.toggleList(nil) }
+        if let note = environment["PRISM_NOTE"] { window.open(note) }
+        if let note = environment["PRISM_BESIDE"] { window.open(note, beside: true) }
+        if environment["PRISM_SCHEDULE"] == "1" { window.showSchedule(nil) }
+        if let query = environment["PRISM_SEARCH"] { window.searchForScript(query) }
+        if let text = environment["PRISM_TYPE"], let editor = window.activePaneForScript.note?.editor {
+            window.window?.makeFirstResponder(editor)
+            editor.enter(from: .bottom, x: .greatestFiniteMagnitude, scrolling: false)
+            for (i, line) in text.components(separatedBy: "\n").enumerated() {
+                if i > 0 { editor.insertNewline(nil) }
+                editor.insertText(line, replacementRange: editor.selectedRange())
             }
         }
-        if let peek = environment["PRISM_PEEK"] { controller.peekForScript(pointingAt: Int(peek)) }
-        if environment["PRISM_KEY"] == "1" { controller.becomeKeyForScript() }
-        if environment["PRISM_SYNC"] == "1" { controller.syncNow(nil) }
-        if let title = environment["PRISM_NEW"] { controller.newNoteForScript(title: title) }
-        if environment["PRISM_BLANK"] == "1" { controller.blankNoteForScript() }
-        // `PRISM_SEARCH_NOTES=1`: the search showing the notes found, whole.
-        if let notes = environment["PRISM_SEARCH_NOTES"] { Column.searchShowsNotes = notes == "1" }
-        if let query = environment["PRISM_SEARCH"] { controller.searchForScript(query) }
-        if let words = environment["PRISM_SEARCH_TYPE"] {
-            controller.typeSearchForScript(words, enter: environment["PRISM_ENTER"] == "1")
+        if let steps = environment["PRISM_LIST_STEP"].flatMap(Int.init) { window.stepListForScript(steps) }
+        if let query = environment["PRISM_FIND"] { window.commandBarForScript(query) }
+        // `PRISM_BLOCKS_DROP=<path>#<ordinal>@<minute>`: a task dropped on the day's hours.
+        if let spec = environment["PRISM_BLOCKS_DROP"], let at = spec.lastIndex(of: "@"), let hash = spec.lastIndex(of: "#"),
+           let ordinal = Int(spec[spec.index(after: hash)..<at]), let minute = Int(spec[spec.index(after: at)...]),
+           let schedule = window.activePaneForScript.scheduleForScript {
+            schedule.place(task: String(spec[..<hash]), ordinal: ordinal, on: schedule.day, start: minute)
         }
-        if environment["PRISM_WEEK"] == "1" { controller.goThisWeek(nil) }
-        if let title = environment["PRISM_CARD"] { print("card:", LinkCard.noteSource?(title)?.ref.path ?? "no note") }
-        if environment["PRISM_INBOX_SHEET"] == "1" { controller.showInboxSheet(nil) }
-        if environment["PRISM_TICK"] == "1" { controller.tickFirstTaskForScript() }
-        if let nth = environment["PRISM_CLICKBOX"].flatMap(Int.init), let note = environment["PRISM_NOTE"] { controller.clickBoxForScript(in: note, nth: nth) }
-        if let path = environment["PRISM_BACKLINKS"] { controller.showBacklinksForScript(path) }
-        if let text = environment["PRISM_TYPE_BACKLINK"] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { controller.typeInBacklinkForScript(text) }
-        }
-        if environment["PRISM_FOLD"] == "1" {
-            // Once the backlinks are found, in the background.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { controller.foldFirstBacklinkForScript() }
-        }
-        if let hover = environment["PRISM_HOVER"].flatMap(Double.init) {
-            controller.hoverScrubberForScript(CGFloat(hover))
-            // A page on the web says its outline once loaded: hovered again then.
-            if environment["PRISM_OPEN_PAGE"] != nil {
-                let wait = environment["PRISM_WAIT"].flatMap(Double.init) ?? 0.6
-                DispatchQueue.main.asyncAfter(deadline: .now() + max(0.1, wait - 0.5)) { controller.hoverScrubberForScript(CGFloat(hover)) }
-            }
-        }
-        if let shown = environment["PRISM_SIDEBAR"] { controller.sidebarPinned = shown == "1" }
-        if let query = environment["PRISM_FIND"] {
-            controller.showFinder(query: query)
-            if environment["PRISM_FIND_COLUMN"] == "1" { controller.chooseInNewColumnForScript() }
-        }
-        controller.window?.orderBack(nil)
+        if let n = environment["PRISM_BLOCKS_EDIT"].flatMap(Int.init) { window.activePaneForScript.scheduleForScript?.editForScript(n) }
         if let path = environment["PRISM_SETTINGS_SNAP"] {
-            let settings = SettingsWindowController(prism: controller)
+            let settings = SettingsWindowController(session: session)
             self.settings = settings
             settings.window?.setFrameOrigin(NSPoint(x: -4000, y: 0))
             settings.window?.orderBack(nil)
@@ -396,35 +263,35 @@ final class PrismApp: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        let steps = environment["PRISM_SCROLL"].flatMap(Int.init) ?? 0
-        controller.scrollForScript(steps: steps) {
-            if steps != 0 { print(controller.timelineForScript) }
-            // `PRISM_WAIT`: seconds to stay up first, for changes made meanwhile.
-            let wait = environment["PRISM_WAIT"].flatMap(Double.init) ?? 0.6
-            DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
-                if environment["PRISM_DEBUG"] != nil { print(controller.scrollsForScript) }
-                if environment["PRISM_DEBUG_SCRUBBER"] != nil { print("scrubbers: \(controller.scrubberAlphasForScript)") }
-                controller.snapshot(to: URL(fileURLWithPath: environment["PRISM_SNAP"]!))
-                controller.save()
-                exit(0)
-            }
+        let wait = environment["PRISM_WAIT"].flatMap(Double.init) ?? 0.8
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
+            window.snapshot(to: URL(fileURLWithPath: environment["PRISM_SNAP"]!))
+            session.save()
+            exit(0)
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) { controller?.save() }
+    func applicationWillTerminate(_ notification: Notification) { session?.save() }
 
     /// On the way out, what is written sent — a few seconds given to it —
     /// when Prism keeps the graph in step.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let controller, controller.ownsSync else { return .terminateNow }
+        guard let session, session.ownsSync else { return .terminateNow }
+        session.save()
         Task {
-            await controller.finishSync()
+            await session.finishSync()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// The Dock's icon clicked with no window open: one on today.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { newWindow(nil) }
+        return true
+    }
 
     private static func menu() -> NSMenu {
         let main = NSMenu()
@@ -440,6 +307,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item.keyEquivalentModifierMask = modifiers
             return item
         }
+        let left = String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!)), right = String(Character(UnicodeScalar(NSRightArrowFunctionKey)!))
         submenu("Prism", [
             item("About Prism", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
             .separator(),
@@ -450,9 +318,15 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             .separator(),
             item("Quit Prism", #selector(NSApplication.terminate(_:)), "q"),
         ])
-        let find = item("Search…", #selector(PrismWindowController.find(_:)), "f")
-        // The find bar of the note the keyboard is in, ⇧ held.
-        let findInNote = item("Find in Note…", #selector(PrismWindowController.findInNote(_:)), "f", [.command, .shift])
+        submenu("File", [
+            item("New Row in Today", #selector(PrismWindow.writeToday(_:)), "n"),
+            item("New Note", #selector(PrismWindow.newNote(_:)), "n", [.command, .option]),
+            item("New Window", #selector(PrismApp.newWindow(_:)), "n", [.command, .shift]),
+            .separator(),
+            item("Close", #selector(PrismWindow.closePaneOrWindow(_:)), "w"),
+        ])
+        let find = item("Search…", #selector(PrismWindow.find(_:)), "f")
+        let findInNote = item("Find in Note…", #selector(PrismWindow.findInNote(_:)), "f", [.command, .shift])
         findInNote.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
         submenu("Edit", [
             item("Undo", Selector(("undo:")), "z"),
@@ -477,109 +351,70 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             choice.representedObject = appearance.rawValue
             appearances.submenu?.addItem(choice)
         }
-        let pages = NSMenuItem(title: "Page", action: nil, keyEquivalent: "")
-        pages.submenu = NSMenu(title: "Page")
-        for (title, value) in [("Flat", "flat"), ("Cards", "cards")] {
-            let choice = item(title, #selector(PrismApp.choosePage(_:)))
-            choice.representedObject = value
-            pages.submenu?.addItem(choice)
-        }
-        let daily = NSMenuItem(title: "Daily", action: nil, keyEquivalent: "")
-        let left = String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!)), right = String(Character(UnicodeScalar(NSRightArrowFunctionKey)!))
-        daily.submenu = NSMenu(title: "Daily")
-        for entry in [item("One Day at a Time", #selector(PrismWindowController.togglePagedDays(_:))),
-                      item("Show Week", #selector(PrismWindowController.toggleDailyMonth(_:))),
-                      .separator(),
-                      item("Previous Day", #selector(PrismWindowController.previousDay(_:)), left, [.command, .control]),
-                      item("Next Day", #selector(PrismWindowController.nextDay(_:)), right, [.command, .control])] {
-            daily.submenu?.addItem(entry)
-        }
         let faces = NSMenuItem(title: "Typeface", action: nil, keyEquivalent: "")
         faces.submenu = NSMenu(title: "Typeface")
         for face in Typeface.available {
-            let choice = item(face.title, #selector(PrismWindowController.chooseTypeface(_:)))
+            let choice = item(face.title, #selector(PrismApp.chooseTypeface(_:)))
             choice.representedObject = face.rawValue
             faces.submenu?.addItem(choice)
         }
-        submenu("View", [
-            item("Show Sidebar", #selector(PrismWindowController.toggleSidebar(_:)), "s", [.command, .control]),
-            // As a browser's address field: the column's own name field, searching.
-            item("Go to Field", #selector(PrismWindowController.find(_:)), "l"),
+        var lenses: [NSMenuItem] = Lens.allCases.enumerated().map { i, lens in
+            let choice = item(lens.title, #selector(PrismWindow.showLens(_:)), lens.key)
+            choice.tag = i
+            choice.image = NSImage(systemSymbolName: lens.symbol, accessibilityDescription: nil)
+            return choice
+        }
+        lenses += [
+            item("Show List", #selector(PrismWindow.toggleList(_:)), "l", [.command, .option]),
+            .separator(),
+            item("Outline", #selector(PrismWindow.showOutline(_:)), "o", [.command, .option]),
+            item("Schedule", #selector(PrismWindow.showSchedule(_:)), "s", [.command, .option]),
             .separator(),
             appearances,
-            pages,
-            daily,
             faces,
-            item("Bigger", #selector(PrismWindowController.biggerText(_:)), "+"),
-            item("Smaller", #selector(PrismWindowController.smallerText(_:)), "-"),
-            item("Actual Size", #selector(PrismWindowController.actualSizeText(_:))),
+            item("Bigger", #selector(PrismApp.biggerText(_:)), "+"),
+            item("Smaller", #selector(PrismApp.smallerText(_:)), "-"),
+            item("Actual Size", #selector(PrismApp.actualSizeText(_:))),
             .separator(),
             item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
+        ]
+        submenu("View", lenses)
+        submenu("Go", [
+            item("Go to…", #selector(PrismWindow.showCommandBar(_:)), "k"),
+            {
+                // ⌘O, as it always was: the same.
+                let alternate = item("Go to…", #selector(PrismWindow.showCommandBar(_:)), "o")
+                alternate.isHidden = true
+                alternate.allowsKeyEquivalentWhenHidden = true
+                return alternate
+            }(),
+            item("Move to Heading…", #selector(PrismWindow.moveToHeading(_:)), "\\"),
+            .separator(),
+            item("Back", #selector(PrismWindow.goBack(_:)), "["),
+            item("Forward", #selector(PrismWindow.goForward(_:)), "]"),
+            .separator(),
+            item("Today", #selector(PrismWindow.goToday(_:)), "d"),
+            item("Previous Day", #selector(PrismWindow.previousDay(_:)), left, [.command, .control]),
+            item("Next Day", #selector(PrismWindow.nextDay(_:)), right, [.command, .control]),
+            item("This Week", #selector(PrismWindow.goThisWeek(_:)), "d", [.command, .shift]),
         ])
         submenu("Note", [
-            item("Add to Inbox", #selector(PrismWindowController.toggleInbox(_:)), "i", [.command, .shift]),
-            item("Pin", #selector(PrismWindowController.togglePinned(_:)), "p", [.command, .shift]),
-            item("Topic", #selector(PrismWindowController.toggleTopic(_:))),
-            item("Private", #selector(PrismWindowController.togglePrivate(_:))),
+            item("Add to Inbox", #selector(PrismWindow.toggleInbox(_:)), "i", [.command, .shift]),
+            item("Pin", #selector(PrismWindow.togglePinned(_:)), "p", [.command, .shift]),
+            item("Topic", #selector(PrismWindow.toggleTopic(_:))),
+            item("Private", #selector(PrismWindow.togglePrivate(_:))),
             .separator(),
-            item("Add Cover…", #selector(PrismWindowController.addCover(_:))),
-            item("Remove Cover", #selector(PrismWindowController.removeCover(_:))),
+            item("Add Cover…", #selector(PrismWindow.addCover(_:))),
+            item("Remove Cover", #selector(PrismWindow.removeCover(_:))),
             .separator(),
-            item("Copy Link", #selector(PrismWindowController.copyNoteLink(_:))),
-            item("Show in Finder", #selector(PrismWindowController.revealNoteInFinder(_:))),
+            item("Copy Link", #selector(PrismWindow.copyNoteLink(_:))),
+            item("Show in Finder", #selector(PrismWindow.revealNoteInFinder(_:))),
             .separator(),
-            item("Move to Trash…", #selector(PrismWindowController.trashNote(_:)), "\u{8}", [.command, .shift]),
-        ])
-        submenu("Column", [
-            item("Daily", #selector(PrismWindowController.showTimeline(_:)), "t", [.command, .option]),
-            item("Backlinks", #selector(PrismWindowController.showBacklinks(_:)), "b", [.command, .option]),
-            item("Inbox", #selector(PrismWindowController.showInbox(_:)), "i", [.command, .option]),
-            item("Pinned", #selector(PrismWindowController.showPinned(_:)), "u", [.command, .option]),
-            item("Tasks", #selector(PrismWindowController.showTasks(_:)), "k", [.command, .option]),
-            item("Search", #selector(PrismWindowController.showSearch(_:)), "f", [.command, .option]),
-            .separator(),
-            item("Time Blocks", #selector(PrismWindowController.showTimeBlocks(_:)), "b", [.command, .shift]),
-            item("Show List", #selector(PrismWindowController.toggleAside(_:)), "l", [.command, .option]),
-            .separator(),
-            // The same, ⇧ held: in a new column, whatever is to the right.
-            item("Daily in New Column", #selector(PrismWindowController.showTimeline(_:)), "t", [.command, .option, .shift]),
-            item("Backlinks in New Column", #selector(PrismWindowController.showBacklinks(_:)), "b", [.command, .option, .shift]),
-            item("Inbox in New Column", #selector(PrismWindowController.showInbox(_:)), "i", [.command, .option, .shift]),
-            item("Tasks in New Column", #selector(PrismWindowController.showTasks(_:)), "k", [.command, .option, .shift]),
-            item("Search in New Column", #selector(PrismWindowController.showSearch(_:)), "f", [.command, .option, .shift]),
-            .separator(),
-            item("Daily Here", #selector(PrismWindowController.showTimelineSheet(_:)), "t", [.command, .option, .control]),
-            item("Backlinks Here", #selector(PrismWindowController.showBacklinksSheet(_:)), "b", [.command, .option, .control]),
-            item("Inbox Here", #selector(PrismWindowController.showInboxSheet(_:)), "i", [.command, .option, .control]),
-            item("Pinned Here", #selector(PrismWindowController.showPinnedSheet(_:)), "u", [.command, .option, .control]),
-            item("Tasks Here", #selector(PrismWindowController.showTasksSheet(_:)), "k", [.command, .option, .control]),
-            item("Search Here", #selector(PrismWindowController.showSearchSheet(_:)), "f", [.command, .option, .control]),
-            .separator(),
-            item("Switch Sheets", #selector(PrismWindowController.switchSheets(_:)), "e"),
-            item("Switch Sheets Backward", #selector(PrismWindowController.switchSheetsBackward(_:)), "e", [.command, .shift]),
-            .separator(),
-            item("Fold Column Away", #selector(PrismWindowController.toggleCollapsed(_:)), "c", [.command, .option]),
-            item("Close Column", #selector(PrismWindowController.closeColumn(_:)), "w"),
-        ])
-        submenu("File", [
-            item("New Row in Today", #selector(PrismWindowController.writeToday(_:)), "n"),
-            item("New Note", #selector(PrismWindowController.newNote(_:)), "n", [.command, .option]),
+            item("Move to Trash…", #selector(PrismWindow.trashNote(_:)), "\u{8}", [.command, .shift]),
         ])
         submenu("Graph", [
-            item("Sync Now", #selector(PrismWindowController.syncNow(_:)), "r"),
+            item("Sync Now", #selector(PrismWindow.syncNow(_:)), "r"),
             item("GitHub Account…", #selector(PrismApp.showGitHub(_:))),
-            reviewItem(),
-        ])
-        submenu("Go", [
-            item("Go to Note…", #selector(PrismWindowController.findNote(_:)), "o"),
-            item("Today", #selector(PrismWindowController.goToday(_:)), "d"),
-            item("Recent Edits…", #selector(PrismWindowController.showRecentEdits(_:)), "y"),
-            item("Move to Heading…", #selector(PrismWindowController.moveToHeading(_:)), "\\"),
-            item("This Week", #selector(PrismWindowController.goThisWeek(_:)), "y", [.command, .shift]),
-            .separator(),
-            item("Back", #selector(PrismWindowController.goBack(_:)), "["),
-            item("Forward", #selector(PrismWindowController.goForward(_:)), "]"),
-            item("Pin Sheet", #selector(PrismWindowController.pinSheet(_:)), "p", [.command, .option]),
         ])
         let window = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
         window.submenu = NSMenu(title: "Window")
@@ -587,9 +422,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         window.submenu?.addItem(item("Zoom", #selector(NSWindow.performZoom(_:))))
         main.addItem(window)
         NSApp.windowsMenu = window.submenu
-        // In the order the Mac's apps keep: the app, File, Edit, Format, View,
-        // then Prism's own, then Window and Help.
-        let order = ["Prism", "File", "Edit", "Format", "View", "Outline", "Note", "Column", "Go", "Graph", "Window", "Help"]
+        let order = ["Prism", "File", "Edit", "Format", "View", "Outline", "Note", "Go", "Graph", "Window", "Help"]
         let items = main.items
         main.removeAllItems()
         for item in items.sorted(by: { (order.firstIndex(of: $0.submenu?.title ?? $0.title) ?? order.count) < (order.firstIndex(of: $1.submenu?.title ?? $1.title) ?? order.count) }) {
@@ -600,35 +433,13 @@ final class PrismApp: NSObject, NSApplicationDelegate {
 }
 
 extension PrismApp: NSMenuItemValidation {
-    /// View ▸ Appearance: the one chosen, checked.
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(chooseAppearance(_:)) {
             item.state = item.representedObject as? String == Appearance.current.rawValue ? .on : .off
         }
-        if item.action == #selector(choosePage(_:)) {
-            item.state = (item.representedObject as? String == "flat") == PageStyle.flat ? .on : .off
+        if item.action == #selector(chooseTypeface(_:)) {
+            item.state = item.representedObject as? String == session?.face.rawValue ? .on : .off
         }
         return true
-    }
-}
-
-/// Fills Graph ▸ Notes to Review from the window's notes to review.
-@MainActor
-final class ReviewMenu: NSObject, NSMenuDelegate {
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
-        guard let controller = NSApp.windows.lazy.compactMap({ $0.windowController as? PrismWindowController }).first else { return }
-        let paths = controller.notesToReview
-        guard !paths.isEmpty else {
-            let none = NSMenuItem(title: "None — every note is settled", action: nil, keyEquivalent: "")
-            none.isEnabled = false
-            menu.addItem(none)
-            return
-        }
-        let made = controller.reviewMenu
-        for item in made.items {
-            made.removeItem(item)
-            menu.addItem(item)
-        }
     }
 }

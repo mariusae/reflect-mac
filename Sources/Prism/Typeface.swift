@@ -314,16 +314,10 @@ enum Ink {
     }
 }
 
-/// View ▸ Page: the notes flat on the page — parted by a hairline, headed
-/// in small capitals, links underlined — or each on a card of its own.
+/// The notes flat on the page — parted by a hairline, headed in small
+/// capitals, links underlined: the one way they are set.
 enum PageStyle {
-    static var flat: Bool {
-        get {
-            if let forced = ProcessInfo.processInfo.environment["PRISM_CARDS"] { return forced != "1" }
-            return !UserDefaults.standard.bool(forKey: "PageCards")
-        }
-        set { UserDefaults.standard.set(!newValue, forKey: "PageCards") }
-    }
+    static let flat = true
 }
 
 /// Light, dark, or as the system is: View ▸ Appearance.

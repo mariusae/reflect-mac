@@ -9,7 +9,7 @@ import ReflectUI
 /// the window follows every change as it is made.
 @MainActor
 final class SettingsWindowController: NSWindowController {
-    private weak var prism: PrismWindowController?
+    private weak var prism: Session?
     private let faces = NSPopUpButton()
     private let textStyle = NSPopUpButton()
     private let headingStyle = NSPopUpButton()
@@ -85,7 +85,7 @@ final class SettingsWindowController: NSWindowController {
         }
     }
 
-    init(prism: PrismWindowController) {
+    init(session prism: Session) {
         self.prism = prism
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 420), styleMask: [.titled, .closable],
                               backing: .buffered, defer: false)

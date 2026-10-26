@@ -24,9 +24,8 @@ extension NSPasteboard.PasteboardType {
 /// A day's time blocks, as a column shows them: the day down its hours,
 /// its blocks as the "Timeblocks" bullet of its note has them — dragged in
 /// empty space to make one, dragged to move it, by its foot to make it
-/// longer, clicked to change what it says and its checklist. Beside it, the
-/// tasks still to do: one dragged to an hour is moved there, out of its
-/// note into the day's blocks.
+/// longer, clicked to change what it says and its checklist; a task dragged
+/// from the list to an hour is moved there, out of its note.
 @MainActor
 final class TimeBlocksPage {
     /// What the page reads and writes the graph through: the window
@@ -37,7 +36,6 @@ final class TimeBlocksPage {
         var read: (String) -> String?
         /// Notes written, at their paths, and everything shown caught up.
         var write: ([(path: String, source: String)]) -> Void
-        var tasks: () -> [NoteTask]
         var openNote: (String) -> Void
     }
 
@@ -45,8 +43,6 @@ final class TimeBlocksPage {
     private(set) var day: Day
     /// The hours, as the column's one block.
     let block = BlockGridBlock()
-    /// The tasks, beside the column.
-    let shelf = TaskShelf()
     private var grid: WeekGrid { block.grid }
     private var editor: (popover: NSPopover, view: BlockEditor)?
     /// Told where to scroll to: the hours of the day its work starts, or now.
@@ -56,8 +52,6 @@ final class TimeBlocksPage {
         self.store = store
         self.day = day
         setTypography(typography)
-        shelf.onDone = { [weak self] task in self?.complete(task) }
-        shelf.onOpen = { [weak self] task in self?.store.openNote(task.notePath) }
         grid.onCreate = { [weak self] day, start, end in self?.create(on: day, start: start, end: end) }
         grid.onMove = { [weak self] placed, day, start, end in self?.move(placed, to: day, start: start, end: end) }
         grid.onOpen = { [weak self] placed, rect in self?.edit(placed, at: rect) }
@@ -69,7 +63,6 @@ final class TimeBlocksPage {
 
     func setTypography(_ typography: Typography) {
         grid.typography = typography
-        shelf.typography = typography
     }
 
     /// Another day: its blocks read, scrolled to where its work starts —
@@ -101,19 +94,6 @@ final class TimeBlocksPage {
                 editor.popover.close()
             }
         }
-        reloadTasks()
-    }
-
-    /// The tasks still to do, but not those blocked already: those under a
-    /// day's "Timeblocks" are there.
-    private func reloadTasks() {
-        let tasks = store.tasks()
-        var blocked: [String: Set<Int>] = [:]
-        for path in Set(tasks.filter { $0.day != nil }.map(\.notePath)) {
-            blocked[path] = DayBlocks.blockedTasks(in: store.read(path) ?? "")
-        }
-        let open = tasks.filter { !(blocked[$0.notePath]?.contains($0.ordinal) ?? false) }
-        shelf.groups = Tasks.group(open, today: .today)
     }
 
     /// Now moved on: its line.
@@ -189,14 +169,6 @@ final class TimeBlocksPage {
         } else {
             store.write([(path, left), (to, DayBlocks.inserting(subtree, start: start, end: end, into: store.read(to) ?? ""))])
         }
-        reload()
-    }
-
-    private func complete(_ task: NoteTask) {
-        store.flush()
-        guard let source = store.read(task.notePath),
-              let updated = Tasks.setting(done: true, ordinal: task.ordinal, in: source) else { return }
-        store.write([(task.notePath, updated)])
         reload()
     }
 
@@ -597,7 +569,7 @@ final class WeekGrid: NSView, TypographyTaking {
         case resize(PlacedBlock, end: Int)
     }
     private var gesture: Gesture? { didSet { needsDisplay = true } }
-    /// A task dragged in from the shelf, where it would go.
+    /// A task dragged in from the list, where it would go.
     private var dropping: (day: Int, start: Int)? { didSet { needsDisplay = true } }
 
     private var gestureBlock: PlacedBlock? {
@@ -755,70 +727,12 @@ private extension NSShadow {
 
 // MARK: - Now
 
-/// In the window's title bar, while a block of today's is on: how long
-/// is left of it, counting down, what it is, and how far along — clicked,
-/// the day's blocks.
-final class NowPill: NSView {
+/// The block of today's on now: in the rail, counting down.
+enum NowPill {
     struct Now: Equatable {
         var block: DayBlock
         var remaining: TimeInterval
     }
-
-    var now: Now? { didSet { if now != oldValue { needsDisplay = true; isHidden = now == nil } } }
-    var typography = Typography() { didSet { needsDisplay = true } }
-    var onClick: (() -> Void)?
-    static let height: CGFloat = 28
-
-    override var isFlipped: Bool { true }
-    override var mouseDownCanMoveWindow: Bool { false }
-
-    private var clockFont: NSFont { .monospacedDigitSystemFont(ofSize: 12, weight: .semibold) }
-    private var nameFont: NSFont { typography.face(style: "Medium", size: 12.5) ?? typography.face(style: "Semibold", size: 12.5) ?? .systemFont(ofSize: 12.5, weight: .medium) }
-
-    private var name: String {
-        guard let now else { return "" }
-        let name = InlineMarkup.plainText(now.block.title)
-        return name.isEmpty ? "New Block" : name
-    }
-
-    /// As wide as it wants, short of `limit`.
-    func fittingWidth(within limit: CGFloat) -> CGFloat {
-        guard now != nil else { return 0 }
-        let clock = NSAttributedString(string: "00:00:00", attributes: [.font: clockFont]).size().width
-        let words = NSAttributedString(string: name, attributes: [.font: nameFont]).size().width
-        return min(limit, ceil(14 + 8 + 8 + clock + 10 + words + 14))
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard let now else { return }
-        let color = WeekGrid.color(for: now.block)
-        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: bounds.height / 2, yRadius: bounds.height / 2)
-        Ink.card.setFill()
-        shape.fill()
-        Ink.rule.setStroke()
-        shape.stroke()
-        NSGraphicsContext.saveGraphicsState()
-        shape.addClip()
-        // How far along: the pill filled so far, faintly, in the block's colour.
-        let total = Double(max(1, now.block.duration)) * 60
-        let done = max(0, min(1, 1 - now.remaining / total))
-        color.withAlphaComponent(0.16).setFill()
-        NSRect(x: 0, y: 0, width: bounds.width * done, height: bounds.height).fill()
-        NSGraphicsContext.restoreGraphicsState()
-        color.setFill()
-        NSBezierPath(ovalIn: NSRect(x: 12, y: bounds.midY - 4, width: 8, height: 8)).fill()
-        let clock = NSAttributedString(string: BlockerClock.countdown(now.remaining), attributes: [.font: clockFont, .foregroundColor: Ink.text])
-        let size = clock.size()
-        clock.draw(at: NSPoint(x: 28, y: (bounds.height - size.height) / 2))
-        let x = 28 + size.width + 10
-        NSAttributedString(string: name, attributes: [.font: nameFont, .foregroundColor: Ink.secondary])
-            .draw(with: NSRect(x: x, y: (bounds.height - 16) / 2, width: max(0, bounds.width - x - 12), height: 16),
-                  options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-    }
-
-    override func mouseDown(with event: NSEvent) {}
-    override func mouseUp(with event: NSEvent) { onClick?() }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 }
 
 enum BlockerClock {
@@ -828,230 +742,7 @@ enum BlockerClock {
     }
 }
 
-// MARK: - The tasks
 
-/// Down the left: the tasks still to do, in the tasks column's groups — each
-/// dragged out to an hour, to block it; its circle clicked, done.
-final class TaskShelf: NSView, TypographyTaking {
-    var typography = Typography() { didSet { rebuild() } }
-    var groups: [TaskGroup] = [] { didSet { if groups != oldValue { rebuild() } } }
-    var onDone: ((NoteTask) -> Void)?
-    var onOpen: ((NoteTask) -> Void)?
-
-    private let scroll = NSScrollView()
-    private let list = FlippedView()
-
-    override var isFlipped: Bool { true }
-
-    init() {
-        super.init(frame: .zero)
-        scroll.documentView = list
-        scroll.hasVerticalScroller = true
-        scroll.scrollerStyle = .overlay
-        scroll.drawsBackground = false
-        addSubview(scroll)
-        scroll.contentView.postsBoundsChangedNotifications = true
-        NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification,
-                                               object: scroll.contentView)
-    }
-
-    // One row lit at a time — the one under the pointer, found again as
-    // the list scrolls under it — never one it left unseen.
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
-                                       owner: self))
-    }
-
-    override func mouseMoved(with event: NSEvent) { light(at: event.locationInWindow) }
-    override func mouseEntered(with event: NSEvent) { light(at: event.locationInWindow) }
-    override func mouseExited(with event: NSEvent) { light(at: nil) }
-
-    @objc private func scrolled() { light(at: window?.mouseLocationOutsideOfEventStream) }
-
-    private func light(at point: NSPoint?) {
-        let inside = point.map { list.convert($0, from: nil) }
-        let visible = point.map { scroll.contentView.convert($0, from: nil) }.map(scroll.contentView.bounds.contains) ?? false
-        for case let row as TaskShelfRow in list.subviews {
-            row.hovering = visible && inside.map(row.frame.contains) == true
-        }
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    /// Where the window's buttons end, over it, when it is at the window's left.
-    var titleBarLeft: CGFloat = 0 { didSet { needsDisplay = true } }
-
-    override func draw(_ dirtyRect: NSRect) {
-        Ink.shelf.setFill()
-        bounds.fill()
-        // The window's title bar, across it as across every column.
-        Ink.paper.setFill()
-        NSRect(x: 0, y: 0, width: bounds.width, height: StickyHeader.height).fill()
-        Ink.rule.setFill()
-        NSRect(x: 0, y: StickyHeader.height - 1, width: bounds.width, height: 1).fill()
-        NSRect(x: bounds.maxX - 0.5, y: StickyHeader.height, width: 0.5, height: bounds.height).fill()
-        let font = typography.face(style: "Semibold", heading: true, size: 15) ?? .systemFont(ofSize: 15, weight: .semibold)
-        let title = NSAttributedString(string: "Tasks", attributes: [.font: font, .foregroundColor: Ink.text])
-        let x = max(20, titleBarLeft)
-        if x + title.size().width < bounds.width - 12 {
-            title.draw(at: NSPoint(x: x, y: (StickyHeader.height - title.size().height) / 2))
-        }
-        var hint = typography.label(size: 13)
-        hint[.foregroundColor] = Ink.faint
-        NSAttributedString(string: "DRAG ONE TO AN HOUR", attributes: hint).draw(at: NSPoint(x: 20, y: StickyHeader.height + 14))
-    }
-
-    override var mouseDownCanMoveWindow: Bool { false }
-
-    override func layout() {
-        super.layout()
-        let top = StickyHeader.height + 36
-        scroll.frame = NSRect(x: 0, y: top, width: bounds.width - 1, height: max(0, bounds.height - top))
-        place()
-    }
-
-    private func rebuild() {
-        list.subviews.forEach { $0.removeFromSuperview() }
-        for group in groups where !group.tasks.isEmpty {
-            let head = NSTextField(labelWithAttributedString: NSAttributedString(string: group.label.uppercased(), attributes: typography.label(size: 13)))
-            list.addSubview(head)
-            for task in group.tasks {
-                let row = TaskShelfRow(task: task, typography: typography, showsNote: group.kind != .note)
-                row.onDone = { [weak self] in self?.onDone?(task) }
-                row.onOpen = { [weak self] in self?.onOpen?(task) }
-                list.addSubview(row)
-            }
-        }
-        if groups.allSatisfy(\.tasks.isEmpty) {
-            var attributes = typography.label(size: 14)
-            attributes[.foregroundColor] = Ink.faint
-            list.addSubview(NSTextField(labelWithAttributedString: NSAttributedString(string: "NOTHING TO DO", attributes: attributes)))
-        }
-        needsLayout = true
-        needsDisplay = true
-        DispatchQueue.main.async { [weak self] in self?.light(at: self?.window?.mouseLocationOutsideOfEventStream) }
-    }
-
-    private func place() {
-        let width = scroll.contentSize.width
-        var y: CGFloat = 4
-        for view in list.subviews {
-            if let row = view as? TaskShelfRow {
-                let height = row.height(width: width - 16)
-                row.frame = NSRect(x: 8, y: y, width: width - 16, height: height)
-                y += height + 2
-            } else {
-                (view as? NSControl)?.sizeToFit()
-                y += y > 4 ? 14 : 0
-                view.frame.origin = NSPoint(x: 20, y: y)
-                y += view.frame.height + 6
-            }
-        }
-        list.frame = NSRect(x: 0, y: 0, width: width, height: max(y + 20, scroll.contentSize.height))
-    }
-}
-
-
-/// A task on the shelf: its circle, what it says, the note it is in.
-private final class TaskShelfRow: NSView, NSDraggingSource {
-    let task: NoteTask
-    private let typography: Typography
-    private let showsNote: Bool
-    var onDone: (() -> Void)?
-    var onOpen: (() -> Void)?
-    /// Lit by the shelf, which lights one at a time.
-    var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
-    private var downAt: NSPoint?
-
-    override var isFlipped: Bool { true }
-    override var mouseDownCanMoveWindow: Bool { false }
-
-    init(task: NoteTask, typography: Typography, showsNote: Bool) {
-        self.task = task
-        self.typography = typography
-        self.showsNote = showsNote
-        super.init(frame: .zero)
-        toolTip = "Drag to an hour to block it"
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    private var textFont: NSFont { typography.face(style: "Regular", size: 13) ?? typography.face(style: "Book", size: 13) ?? .systemFont(ofSize: 13) }
-
-    private var text: NSAttributedString {
-        NSAttributedString(string: InlineMarkup.plainText(task.text), attributes: [.font: textFont, .foregroundColor: Ink.text])
-    }
-
-    private var note: NSAttributedString? {
-        guard showsNote else { return nil }
-        let title = task.day.map(OpenQuickly.dayTitle) ?? task.noteTitle
-        return NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 10.5), .foregroundColor: Ink.secondary])
-    }
-
-    func height(width: CGFloat) -> CGFloat {
-        let bounds = text.boundingRect(with: NSSize(width: width - 40, height: 60), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-        return min(52, ceil(bounds.height)) + (note == nil ? 12 : 26)
-    }
-
-    private var circle: NSRect { NSRect(x: 12, y: 8, width: 14, height: 14) }
-
-    override func draw(_ dirtyRect: NSRect) {
-        if hovering {
-            Ink.hover.setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7).fill()
-        }
-        let ring = NSBezierPath(ovalIn: circle.insetBy(dx: 0.5, dy: 0.5))
-        ring.lineWidth = 1.2
-        Ink.faint.setStroke()
-        ring.stroke()
-        let textHeight = min(52, ceil(text.boundingRect(with: NSSize(width: bounds.width - 40, height: 60), options: [.usesLineFragmentOrigin]).height))
-        text.draw(with: NSRect(x: 34, y: 6, width: bounds.width - 40, height: textHeight), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-        note?.draw(with: NSRect(x: 34, y: 8 + textHeight, width: bounds.width - 40, height: 14), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        downAt = convert(event.locationInWindow, from: nil)
-        if event.clickCount == 2 { onOpen?() }
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        defer { downAt = nil }
-        if let downAt, circle.insetBy(dx: -4, dy: -4).contains(downAt) { onDone?() }
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard let downAt else { return }
-        let point = convert(event.locationInWindow, from: nil)
-        guard hypot(point.x - downAt.x, point.y - downAt.y) > 3 else { return }
-        self.downAt = nil
-        let item = NSPasteboardItem()
-        item.setString("\(task.notePath)\n\(task.ordinal)\n\(InlineMarkup.plainText(task.text))", forType: .prismTask)
-        let dragged = NSDraggingItem(pasteboardWriter: item)
-        dragged.setDraggingFrame(bounds, contents: snapshot())
-        beginDraggingSession(with: [dragged], event: event, source: self)
-    }
-
-    private func snapshot() -> NSImage {
-        let image = NSImage(size: bounds.size)
-        guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else { return image }
-        cacheDisplay(in: bounds, to: rep)
-        image.addRepresentation(rep)
-        return image
-    }
-
-    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        context == .withinApplication ? .move : []
-    }
-
-    /// Dropped, or not: the pointer gone elsewhere meanwhile, unseen.
-    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-        hovering = false
-    }
-}
 
 // MARK: - A block's editor
 
