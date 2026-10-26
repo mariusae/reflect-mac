@@ -21,9 +21,9 @@ final class FootPanel: NSView {
     /// The pointer onto what links here, or off it.
     var onHoverLinks: ((Bool) -> Void)?
 
-    static let height: CGFloat = 84
+    static let height: CGFloat = 46
     static let compactHeight: CGFloat = 32
-    static let width: CGFloat = 300
+    static let width: CGFloat = 250
     private static let fieldHeight: CGFloat = 32
     private static let inset: CGFloat = 7
 
@@ -137,7 +137,8 @@ final class FootPanel: NSView {
         field.frame = compact ? bounds : NSRect(x: inset, y: inset, width: width - 2 * inset, height: Self.fieldHeight)
         field.layer?.cornerRadius = field.frame.height / 2
         field.layer?.backgroundColor = compact ? nil : Ink.text.withAlphaComponent(0.06).cgColor
-        // The name centred in the field, its round just before it.
+        // Controls alone: the name is the window's top's, once its heading has gone up under it.
+        field.isHidden = true
         let side: CGFloat = compact ? 20 : 22
         let room = max(0, field.bounds.width - 2 * 12 - side - 7)
         let words = min(room, nameWidth)
@@ -147,8 +148,8 @@ final class FootPanel: NSView {
         round.layer?.cornerRadius = side / 2
         let nameHeight = ceil(name.intrinsicContentSize.height)
         name.frame = NSRect(x: round.frame.maxX + 7, y: (field.bounds.height - nameHeight) / 2, width: words, height: nameHeight)
-        // The marks, evenly along the row under the field.
-        let rowY = inset + Self.fieldHeight + 2
+        // The marks, evenly along the row.
+        let rowY: CGFloat = 3
         let slot = (width - 2 * inset) / CGFloat(marks.count)
         for (i, mark) in marks.enumerated() {
             mark.frame = NSRect(x: inset + CGFloat(i) * slot + (slot - 40) / 2, y: rowY, width: 40, height: bounds.height - rowY - inset)
@@ -210,7 +211,8 @@ final class PanelMark: NSButton {
     }
 
     override var isEnabled: Bool {
-        didSet { contentTintColor = isEnabled ? Ink.text : Ink.faint }
+        // Not to be used now, but legible still: half the ink, not the faintest.
+        didSet { contentTintColor = isEnabled ? Ink.text : Ink.text.withAlphaComponent(0.42) }
     }
 
     override func updateTrackingAreas() {

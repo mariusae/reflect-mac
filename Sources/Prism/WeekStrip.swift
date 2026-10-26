@@ -10,11 +10,15 @@ import PrismCore
 final class WeekStrip: NSView, ColumnBlock {
     var metrics: OutlineMetrics { didSet { needsLayout = true; needsDisplay = true } }
     var onChoose: ((Day) -> Void)?
+    /// The week's number clicked: its note.
+    var onWeek: ((Week) -> Void)?
     /// The calendar's mark clicked: the month, from it.
     var onMonth: ((NSView) -> Void)?
 
     /// The day shown, under the strip.
     private let shown: Day
+    /// The week whose note shows, not a day's: its number filled.
+    private let chosenWeek: Week?
     /// The week the strip is at: the day shown's, till stepped along.
     private var days: [Day]
     private let marks: [Day: NoteCalendar.Mark]
@@ -25,10 +29,13 @@ final class WeekStrip: NSView, ColumnBlock {
     private let month = CloseButton(symbol: "calendar", pointSize: 13, toolTip: "The Month")
 
     override var isFlipped: Bool { true }
-    private static let height: CGFloat = 78
+    static let height: CGFloat = 78
+    /// Room over it, to the window's top: the page hidden there too.
+    var top: CGFloat = 0 { didSet { needsLayout = true; needsDisplay = true } }
 
-    init(day: Day, marks: [Day: NoteCalendar.Mark], metrics: OutlineMetrics) {
+    init(day: Day, week: Week? = nil, marks: [Day: NoteCalendar.Mark], metrics: OutlineMetrics) {
         shown = day
+        chosenWeek = week
         days = NoteCalendar.week(of: day)
         self.marks = marks
         self.metrics = metrics
@@ -60,13 +67,19 @@ final class WeekStrip: NSView, ColumnBlock {
     private var row: NSRect {
         let column = min(metrics.columnWidth, bounds.width - 48)
         let x = ((bounds.width - column) / 2).rounded()
-        return NSRect(x: x + 28, y: 14, width: max(0, column - 28 - 56), height: 50)
+        return NSRect(x: x + 28, y: top + 14, width: max(0, column - 28 - 56), height: 50)
     }
 
+    /// A day's cell, after the week's own.
     private func cell(_ i: Int) -> NSRect {
-        let row = row, width = row.width / 7
-        return NSRect(x: row.minX + CGFloat(i) * width, y: row.minY, width: width, height: row.height)
+        let row = row, width = row.width / 8
+        return NSRect(x: row.minX + CGFloat(i + 1) * width, y: row.minY, width: width, height: row.height)
     }
+
+    private var weekCell: NSRect { let row = row; return NSRect(x: row.minX, y: row.minY, width: row.width / 8, height: row.height) }
+
+    /// The week the strip is at.
+    private var week: Week? { NoteCalendar.week(ofRow: days.map(Optional.some)) }
 
     override func layout() {
         super.layout()
@@ -77,9 +90,32 @@ final class WeekStrip: NSView, ColumnBlock {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        // Over the page that scrolls under it: the page's own colour.
+        Ink.paper.setFill()
+        bounds.fill()
         let today = Day.today
         let label = metrics.typography.label(size: 14)
         let symbols = NoteCalendar.weekdaySymbols()
+        // The week's number, its note's: under W, in the ochre of weeks.
+        if let week {
+            let cell = weekCell
+            let letter = NSAttributedString(string: "W", attributes: label)
+            letter.draw(at: NSPoint(x: (cell.midX - letter.size().width / 2).rounded(), y: cell.minY))
+            let center = NSPoint(x: cell.midX, y: cell.minY + 34)
+            let chosen = week == chosenWeek
+            if chosen {
+                Ink.week.setFill()
+                NSBezierPath(ovalIn: NSRect(x: center.x - 15, y: center.y - 15, width: 30, height: 30)).fill()
+            } else if hoveredWeek {
+                Ink.hover.setFill()
+                NSBezierPath(ovalIn: NSRect(x: center.x - 15, y: center.y - 15, width: 30, height: 30)).fill()
+            }
+            let number = NSAttributedString(string: "\(week.week)", attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold), .foregroundColor: chosen ? Ink.paper : Ink.week,
+            ])
+            let size = number.size()
+            number.draw(at: NSPoint(x: (center.x - size.width / 2).rounded(), y: (center.y - size.height / 2).rounded()))
+        }
         for (i, day) in days.enumerated() {
             let cell = cell(i)
             // The weekday, in the small capitals labels are in; the month's
@@ -89,7 +125,7 @@ final class WeekStrip: NSView, ColumnBlock {
             letter.draw(at: NSPoint(x: (cell.midX - letter.size().width / 2).rounded(), y: cell.minY))
             let center = NSPoint(x: cell.midX, y: cell.minY + 34)
             let mark = marks[day]
-            let chosen = day == shown
+            let chosen = day == shown && chosenWeek == nil
             if chosen {
                 Ink.text.setFill()
                 NSBezierPath(ovalIn: NSRect(x: center.x - 15, y: center.y - 15, width: 30, height: 30)).fill()
@@ -134,11 +170,27 @@ final class WeekStrip: NSView, ColumnBlock {
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
         super.updateTrackingAreas()
     }
-    override func mouseMoved(with event: NSEvent) { hovered = day(at: convert(event.locationInWindow, from: nil)) }
-    override func mouseExited(with event: NSEvent) { hovered = nil }
+    private var hoveredWeek = false { didSet { if hoveredWeek != oldValue { needsDisplay = true } } }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        hovered = day(at: point)
+        hoveredWeek = weekCell.insetBy(dx: 0, dy: -4).contains(point)
+    }
+    override func mouseExited(with event: NSEvent) {
+        hovered = nil
+        hoveredWeek = false
+    }
     override func mouseDown(with event: NSEvent) {}
     override func mouseUp(with event: NSEvent) {
-        if let day = day(at: convert(event.locationInWindow, from: nil)) { onChoose?(day) }
+        let point = convert(event.locationInWindow, from: nil)
+        if weekCell.insetBy(dx: 0, dy: -4).contains(point), let week {
+            onWeek?(week)
+            return
+        }
+        if let day = day(at: point) { onChoose?(day) }
     }
+    /// Clicks here are its own, not a drag of the window.
+    override var mouseDownCanMoveWindow: Bool { false }
     override func resetCursorRects() { addCursorRect(row, cursor: .pointingHand) }
 }

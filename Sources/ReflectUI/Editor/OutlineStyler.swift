@@ -448,6 +448,16 @@ package enum InlineMarkdown {
             guard flat else { return }
             storage.addAttributes([.underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: typography.ink.tertiary], range: range)
         }
+        /// Flat, a link out of the notes — to the web — a small ↗ after it:
+        /// room kerned after its last letter, the arrow drawn there, the
+        /// underline short of it.
+        func markExternal(_ content: NSRange, _ target: String) {
+            guard flat, content.length > 0, target.lowercased().hasPrefix("http"), images?.filePill(target) == nil else { return }
+            let last = NSRange(location: NSMaxRange(content) - 1, length: 1)
+            guard storage.attribute(.outlineHidden, at: last.location, effectiveRange: nil) == nil else { return }
+            storage.addAttributes([.outlineExternal: true, .kern: round(font(at: last.location).pointSize * 0.62)], range: last)
+            storage.removeAttribute(.underlineStyle, range: last)
+        }
         for span in resolved {
             let content = span.content
             /// A link shown as its site alone: where, in the row's text.
@@ -497,6 +507,7 @@ package enum InlineMarkdown {
                     markRichCard(target, text: text.substring(with: content))
                 }
                 site = flatSite(span, target)
+                if site == nil { markExternal(content, target) }
                 // A file in the graph: a pill, its icon and size in the room
                 // its hidden brackets are given.
                 if let pill = images?.filePill(target), let open = span.markup.first, let close = span.markup.last,
@@ -525,6 +536,7 @@ package enum InlineMarkdown {
                     markRichCard(target, text: nil)
                 }
                 site = flatSite(span, target)
+                if site == nil { markExternal(content, target) }
             case .wikiLink(let title):
                 if let url = URL.wiki(title) {
                     storage.addAttributes([.link: url, .foregroundColor: linkInk], range: content)

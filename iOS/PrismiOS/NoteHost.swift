@@ -24,7 +24,7 @@ protocol NoteHost: UIViewController {
 /// The days, one at a time, as a day planner has them: today headed large,
 /// its date over it; swiped across, the day before or after; pulled down at
 /// its top, the month over it, to go to any day.
-final class DayPager: UIViewController, NoteHost, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
+final class DayPager: UIViewController, NoteHost, UIPageViewControllerDataSource, UIPageViewControllerDelegate, UIGestureRecognizerDelegate {
     let rootKind = SheetKind.timeline
     var onShownChange: (() -> Void)?
     /// A day's sheet, made as the column makes its sheets.
@@ -63,22 +63,64 @@ final class DayPager: UIViewController, NoteHost, UIPageViewControllerDataSource
         // The page cards as it is pulled down from the month: its corners round.
         pages.view.layer.cornerCurve = .continuous
         pages.view.clipsToBounds = true
+        pages.view.addGestureRecognizer(pull)
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        if over == .none { pages.view.frame = view.bounds }
+        if reveal == 0 { pages.view.frame = view.bounds }
     }
 
     func notesChanged(_ paths: Set<String>) {}
 
+    /// The week shown, its own note, in place of a day — till a day is.
+    private(set) var week: Week?
+    private var weekPage: (week: Week, sheet: SheetController)?
+
+    /// A week's note, as a page: before its first day.
+    private func page(for week: Week) -> SheetController {
+        if let weekPage, weekPage.week == week { return weekPage.sheet }
+        weekPage?.sheet.saveAll()
+        let sheet = makePage(GraphPaths.weeklyPath(for: week))
+        weekPage = (week, sheet)
+        return sheet
+    }
+
+    /// A week's note shown, under the week and the month, as a day is.
+    func show(_ week: Week) {
+        guard week != self.week || sheet == nil else { return }
+        let forward = (week.monday ?? day) > day
+        self.week = week
+        pages.setViewControllers([page(for: week)], direction: forward ? .forward : .reverse, animated: isViewLoaded)
+        strip?.show(week)
+        onShownChange?()
+    }
+
+    private func week(of controller: UIViewController) -> Week? {
+        guard let sheet = controller as? SheetController, case .note(let path) = sheet.kind else { return nil }
+        return GraphPaths.week(fromWeeklyPath: path)
+    }
+
+    /// The first day of a week, as the strip begins it.
+    private func firstDay(of week: Week) -> Day? {
+        week.monday.map { NoteCalendar.week(of: $0)[0] }
+    }
+
     /// The sheet of a day: made once, kept while near the day shown.
     private func page(for day: Day) -> SheetController {
         if let sheet = made[day] { return sheet }
-        let sheet = makeSheet(.note(GraphPaths.dailyPath(for: day)))
-        sheet.allowsBacklinkSwipe = false
-        sheet.onPullDown = { [weak self] in self?.pulledDown() }
+        let sheet = makePage(GraphPaths.dailyPath(for: day))
         made[day] = sheet
+        return sheet
+    }
+
+    private func makePage(_ path: String) -> SheetController {
+        let sheet = makeSheet(.note(path))
+        sheet.allowsBacklinkSwipe = false
+        sheet.restoresPlace = false
+        // Pulled down, the day itself moves: no stretch past its top.
+        sheet.scroll.bounces = false
+        sheet.scroll.refreshControl = nil
         return sheet
     }
 
@@ -89,12 +131,14 @@ final class DayPager: UIViewController, NoteHost, UIPageViewControllerDataSource
 
     /// A day, gone to: turned to, the way it lies from the one shown.
     func show(_ day: Day, animated: Bool = true) {
-        guard day != self.day || sheet == nil else { return }
+        guard day != self.day || week != nil || sheet == nil else { return }
         let forward = day > self.day
         self.day = day
+        week = nil
         pages.setViewControllers([page(for: day)], direction: forward ? .forward : .reverse, animated: animated && isViewLoaded) { [weak self] _ in
             self?.forgetFar()
         }
+        showDayInStrip()
         onShownChange?()
     }
 
@@ -107,11 +151,14 @@ final class DayPager: UIViewController, NoteHost, UIPageViewControllerDataSource
     }
 
     func pageViewController(_ controller: UIPageViewController, viewControllerBefore viewController: UIViewController) -> UIViewController? {
-        day(of: viewController).map { page(for: $0.adding(-1)) }
+        // A week's page, between the day before its first and its first.
+        if let week = week(of: viewController) { return firstDay(of: week).map { page(for: $0.adding(-1)) } }
+        return day(of: viewController).map { page(for: $0.adding(-1)) }
     }
 
     func pageViewController(_ controller: UIPageViewController, viewControllerAfter viewController: UIViewController) -> UIViewController? {
-        day(of: viewController).map { page(for: $0.adding(1)) }
+        if let week = week(of: viewController) { return firstDay(of: week).map { page(for: $0) } }
+        return day(of: viewController).map { page(for: $0.adding(1)) }
     }
 
     func pageViewController(_ controller: UIPageViewController, didFinishAnimating finished: Bool,
@@ -119,116 +166,128 @@ final class DayPager: UIViewController, NoteHost, UIPageViewControllerDataSource
         guard completed, let shown = controller.viewControllers?.first, let day = day(of: shown) else { return }
         for previous in previousViewControllers { (previous as? SheetController)?.saveAll() }
         self.day = day
+        week = nil
         UISelectionFeedbackGenerator().selectionChanged()
         forgetFar()
+        showDayInStrip()
         onShownChange?()
     }
 
     // MARK: The week, and the month, over the day
 
-    /// What shows over the day, pulled down to: nothing; the week; the month.
-    private enum Over { case none, week, month }
-    private var over = Over.none
     private var calendar: CalendarController?
     private var strip: WeekStripView?
-    private var closer: UIControl?
     /// The days with notes, marked: for the week over the day.
     var marks: () -> [Day: NoteCalendar.Mark] = { [:] }
+    /// A week's number chosen, in the strip or the month: its note.
+    var onChooseWeek: ((Week) -> Void)?
+    /// How far down the day is: nothing over it at 0, the week at its
+    /// height, the month at its. Pulled to, and left where let go.
+    private var reveal: CGFloat = 0
+    private var revealAtStart: CGFloat = 0
+    private lazy var pull: UIPanGestureRecognizer = {
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(pulled(_:)))
+        pan.delegate = self
+        return pan
+    }()
 
-    /// Pulled down once, the week over the day; again, the month; let go of
-    /// either way up, or tapped, the day again.
-    func pulledDown() {
-        switch over {
-        case .none: show(.week)
-        case .week: show(.month)
-        case .month: break
-        }
-    }
+    private var weekHeight: CGFloat { WeekStripView.height }
+    private var monthHeight: CGFloat { calendar?.preferredHeight(width: view.bounds.width) ?? 420 }
 
-    func showCalendar(_ shown: Bool) { show(shown ? .month : .none) }
+    /// The month shown, at once — from the menu.
+    func showCalendar(_ shown: Bool) { settle(at: shown ? monthHeight : 0, animated: true) }
 
-    private func show(_ next: Over) {
-        guard next != over else { return }
+    /// What is over the day made, if it is not: the week, and the month.
+    private func prepareOver() {
         let top = view.safeAreaInsets.top
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        // What was over the day, gone.
-        let oldStrip = strip, oldCalendar = calendar
-        strip = nil
-        calendar = nil
-        var height: CGFloat = 0
-        switch next {
-        case .none:
-            break
-        case .week:
+        if strip == nil {
             let strip = WeekStripView(day: day, marks: marks())
-            strip.onChoose = { [weak self] day in
-                self?.show(day, animated: false)
-                self?.show(.none)
+            strip.onChoose = { [weak self] day in self?.show(day, animated: false) }
+            strip.onChooseWeek = { [weak self] week in self?.show(week) }
+            strip.onMonth = { [weak self] in
+                guard let self else { return }
+                settle(at: monthHeight, animated: true)
             }
-            strip.onMonth = { [weak self] in self?.show(.month) }
-            height = WeekStripView.height
-            strip.frame = CGRect(x: 0, y: top, width: view.bounds.width, height: height)
-            strip.alpha = 0
+            strip.frame = CGRect(x: 0, y: top, width: view.bounds.width, height: weekHeight)
             view.insertSubview(strip, belowSubview: pages.view)
             self.strip = strip
-        case .month:
-            guard let calendar = makeCalendar(day) else { return }
-            calendar.onChoose = { [weak self] day in
-                self?.show(day, animated: false)
-                self?.show(.none)
-            }
+        }
+        if calendar == nil, let calendar = makeCalendar(day) {
+            calendar.onChoose = { [weak self] day in self?.show(day, animated: false) }
+            calendar.onChooseWeek = { [weak self] week in self?.show(week) }
             addChild(calendar)
             view.insertSubview(calendar.view, belowSubview: pages.view)
             calendar.didMove(toParent: self)
             calendar.view.backgroundColor = .clear
-            height = calendar.preferredHeight(width: view.bounds.width)
-            calendar.view.frame = CGRect(x: 0, y: top, width: view.bounds.width, height: height)
-            calendar.view.alpha = 0
+            calendar.view.frame = CGRect(x: 0, y: top, width: view.bounds.width, height: calendar.preferredHeight(width: view.bounds.width))
             self.calendar = calendar
         }
-        over = next
-        // The day, a card under what is over it: tapped, or swiped up, the
-        // day again; swiped down, the month.
-        if next == .none {
-            closer?.removeFromSuperview()
-            closer = nil
-        } else if closer == nil {
-            let closer = UIControl(frame: pages.view.bounds)
-            closer.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            closer.addAction(UIAction { [weak self] _ in self?.show(.none) }, for: .touchUpInside)
-            let up = UISwipeGestureRecognizer(target: self, action: #selector(swipedUp))
-            up.direction = .up
-            closer.addGestureRecognizer(up)
-            let down = UISwipeGestureRecognizer(target: self, action: #selector(swipedDown))
-            down.direction = .down
-            closer.addGestureRecognizer(down)
-            pages.view.addSubview(closer)
-            self.closer = closer
-            view.backgroundColor = Ink.shelf
-            pages.view.backgroundColor = Ink.paper
-            pages.view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        }
-        UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0) {
-            self.pages.view.frame = next == .none ? self.view.bounds
-                : CGRect(x: 0, y: top + height, width: self.view.bounds.width, height: self.view.bounds.height - top - height)
-            self.pages.view.layer.cornerRadius = next == .none ? 0 : 32
-            self.strip?.alpha = 1
-            self.calendar?.view.alpha = 1
-            oldStrip?.alpha = 0
-            oldCalendar?.view.alpha = 0
-        } completion: { _ in
-            oldStrip?.removeFromSuperview()
-            if let oldCalendar {
-                oldCalendar.willMove(toParent: nil)
-                oldCalendar.view.removeFromSuperview()
-                oldCalendar.removeFromParent()
-            }
-            if self.over == .none { self.view.backgroundColor = Ink.page }
+        view.backgroundColor = Ink.shelf
+        pages.view.backgroundColor = Ink.paper
+        pages.view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+    }
+
+    /// The day so far down, and what is over it shown as much: the week as
+    /// it comes in, the month past it.
+    private func place(_ amount: CGFloat) {
+        reveal = max(0, amount)
+        let top = view.safeAreaInsets.top
+        pages.view.frame = CGRect(x: 0, y: reveal > 0 ? top + reveal : 0, width: view.bounds.width,
+                                  height: view.bounds.height - (reveal > 0 ? top + reveal : 0))
+        pages.view.layer.cornerRadius = min(32, reveal)
+        let week = weekHeight, month = monthHeight
+        strip?.alpha = reveal <= week ? reveal / week : max(0, 1 - (reveal - week) / max(1, (month - week) * 0.5))
+        calendar?.view.alpha = reveal <= week ? 0 : min(1, (reveal - week) / max(1, (month - week) * 0.6))
+        if reveal == 0 { view.backgroundColor = Ink.page }
+    }
+
+    /// Let go: to the nearest of none, the week, the month — the way it was going.
+    private func settle(at target: CGFloat, animated: Bool) {
+        if target > 0 { prepareOver() }
+        let change = { self.place(target) }
+        guard animated else { return change() }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.88, initialSpringVelocity: 0,
+                       options: [.allowUserInteraction, .beginFromCurrentState], animations: change)
+    }
+
+    @objc private func pulled(_ pan: UIPanGestureRecognizer) {
+        let travel = pan.translation(in: view).y
+        switch pan.state {
+        case .began:
+            prepareOver()
+            revealAtStart = reveal
+        case .changed:
+            // The day's page held at its top while the day itself is moved.
+            if let scroll = sheet?.scroll { scroll.contentOffset.y = -scroll.adjustedContentInset.top }
+            place(min(monthHeight + 40, revealAtStart + travel))
+        default:
+            let velocity = pan.velocity(in: view).y
+            let stops: [CGFloat] = [0, weekHeight, monthHeight]
+            let aimed = reveal + velocity * 0.15
+            let target = stops.min { abs($0 - aimed) < abs($1 - aimed) } ?? 0
+            settle(at: target, animated: true)
         }
     }
 
-    @objc private func swipedUp() { show(.none) }
-    @objc private func swipedDown() { pulledDown() }
+    /// Pulled down at the day's top — or, the calendar out, up or down — the
+    /// day moves; else its page scrolls, and pages turn.
+    func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+        guard gesture === pull, let pan = gesture as? UIPanGestureRecognizer else { return true }
+        let velocity = pan.velocity(in: view)
+        guard abs(velocity.y) > abs(velocity.x) else { return false }
+        let atTop = sheet.map { $0.scroll.contentOffset.y <= -$0.scroll.adjustedContentInset.top + 1 } ?? true
+        return atTop && (velocity.y > 0 || reveal > 0)
+    }
+
+    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        gesture === pull
+    }
+
+    /// The day shown changed: the strip on it.
+    private func showDayInStrip() {
+        if let week { strip?.show(week) } else { strip?.show(day) }
+    }
 }
 
 // MARK: - A list of notes, over the one chosen
@@ -473,13 +532,18 @@ final class NoteSummaryRow: UIControl {
 final class WeekStripView: UIView {
     static let height: CGFloat = 108
     var onChoose: ((Day) -> Void)?
+    var onChooseWeek: ((Week) -> Void)?
     var onMonth: (() -> Void)?
 
-    private let shown: Day
+    private var shown: Day
     private var days: [Day]
     private let marks: [Day: NoteCalendar.Mark]
     private let title = UILabel()
     private let month = UIButton(type: .system)
+    /// The week's days, drawn on a layer of their own: slid across, a week along.
+    private let row = StripRow()
+    /// The weekdays' letters, and W: the same each week, kept still.
+    private let letters = StripRow()
 
     init(day: Day, marks: [Day: NoteCalendar.Mark]) {
         shown = day
@@ -487,6 +551,13 @@ final class WeekStripView: UIView {
         self.marks = marks
         super.init(frame: .zero)
         backgroundColor = .clear
+        clipsToBounds = true
+        row.backgroundColor = .clear
+        row.isUserInteractionEnabled = false
+        addSubview(row)
+        letters.backgroundColor = .clear
+        letters.isUserInteractionEnabled = false
+        addSubview(letters)
         title.font = Typeface.current.heading(17, weight: .bold)
         title.textColor = Ink.text
         addSubview(title)
@@ -508,6 +579,26 @@ final class WeekStripView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    /// The week whose note shows under it: its number filled, no day.
+    private var chosenWeek: Week?
+
+    func show(_ week: Week) {
+        chosenWeek = week
+        if let monday = week.monday, !days.contains(monday) { days = NoteCalendar.week(of: monday) }
+        showTitle()
+    }
+
+    /// The day shown under it now: its week, it filled.
+    func show(_ day: Day) {
+        chosenWeek = nil
+        shown = day
+        if !days.contains(day) { days = NoteCalendar.week(of: day) }
+        showTitle()
+    }
+
+    /// The week shown, as a week: its number, at the strip's start.
+    private var week: Week? { NoteCalendar.week(ofRow: days.map(Optional.some)) }
+
     private func showTitle() {
         let formatter = DateFormatter()
         formatter.setLocalizedDateFormatFromTemplate("MMMMyyyy")
@@ -516,19 +607,48 @@ final class WeekStripView: UIView {
     }
 
     @objc private func swiped(_ gesture: UISwipeGestureRecognizer) {
-        let step = gesture.direction == .left ? 7 : -7
-        days = days.map { $0.adding(step) }
+        let forward = gesture.direction == .left
+        // The week as it was, slid away the way the finger went; the next in after it.
+        let old = row.snapshotView(afterScreenUpdates: false)
+        let oldTitle = title.snapshotView(afterScreenUpdates: false)
+        if let old { old.frame = row.frame; insertSubview(old, aboveSubview: row) }
+        if let oldTitle { oldTitle.frame = title.frame; addSubview(oldTitle) }
+        days = days.map { $0.adding(forward ? 7 : -7) }
         UISelectionFeedbackGenerator().selectionChanged()
         showTitle()
+        row.layoutIfNeeded()
+        let shift = (bounds.width - 52) * (forward ? 1 : -1)
+        row.transform = CGAffineTransform(translationX: shift, y: 0)
+        title.alpha = 0
+        UIView.animate(withDuration: 0.36, delay: 0, usingSpringWithDamping: 0.92, initialSpringVelocity: 0, options: [.allowUserInteraction]) {
+            self.row.transform = .identity
+            old?.transform = CGAffineTransform(translationX: -shift, y: 0)
+            old?.alpha = 0
+            self.title.alpha = 1
+            oldTitle?.alpha = 0
+        } completion: { _ in
+            old?.removeFromSuperview()
+            oldTitle?.removeFromSuperview()
+        }
     }
 
+    /// The week's own cell, before its days: its number, its note.
+    private static let weekColumn: CGFloat = 40
+
     private func cell(_ i: Int) -> CGRect {
-        let inset: CGFloat = 16, width = (bounds.width - 2 * inset) / 7
-        return CGRect(x: inset + CGFloat(i) * width, y: 40, width: width, height: 52)
+        let inset: CGFloat = 12, start = inset + Self.weekColumn, width = (bounds.width - start - inset) / 7
+        return CGRect(x: start + CGFloat(i) * width, y: 40, width: width, height: 52)
     }
+
+    private var weekCell: CGRect { CGRect(x: 12, y: 40, width: Self.weekColumn, height: 52) }
 
     @objc private func tapped(_ gesture: UITapGestureRecognizer) {
         let point = gesture.location(in: self)
+        if weekCell.contains(point), let week {
+            UISelectionFeedbackGenerator().selectionChanged()
+            onChooseWeek?(week)
+            return
+        }
         guard let i = days.indices.first(where: { cell($0).contains(point) }) else { return }
         UISelectionFeedbackGenerator().selectionChanged()
         onChoose?(days[i])
@@ -538,24 +658,57 @@ final class WeekStripView: UIView {
         super.layoutSubviews()
         title.frame = CGRect(x: 24, y: 6, width: bounds.width - 100, height: 26)
         month.frame = CGRect(x: bounds.width - 60, y: 0, width: 44, height: 38)
+        if row.transform == .identity { row.frame = bounds }
+        letters.frame = bounds
+        row.drawing = { [weak self] rect in self?.drawRow(rect, letters: false) }
+        letters.drawing = { [weak self] rect in self?.drawRow(rect, letters: true) }
     }
 
-    override func draw(_ rect: CGRect) {
+    override func setNeedsDisplay() {
+        super.setNeedsDisplay()
+        row.setNeedsDisplay()
+        letters.setNeedsDisplay()
+    }
+
+    /// The strip drawn: its letters — still — or its numbers, which slide.
+    private func drawRow(_ rect: CGRect, letters: Bool) {
         let today = Day.today
         let symbols = NoteCalendar.weekdaySymbols()
         let label = Card.label(size: 15)
+        // The week's number, its note's: in the accent of weeks, under "W".
+        if letters {
+            let letter = NSAttributedString(string: "W", attributes: label)
+            letter.draw(at: CGPoint(x: (weekCell.midX - letter.size().width / 2).rounded(), y: weekCell.minY))
+        } else if let week {
+            let cell = weekCell
+            let chosen = week == chosenWeek
+            let center = CGPoint(x: cell.midX, y: cell.minY + 32)
+            if chosen {
+                Ink.week.setFill()
+                UIBezierPath(ovalIn: CGRect(x: center.x - 16, y: center.y - 16, width: 32, height: 32)).fill()
+            }
+            let number = NSAttributedString(string: "\(week.week)", attributes: [
+                .font: UIFont.monospacedDigitSystemFont(ofSize: 14, weight: .semibold), .foregroundColor: chosen ? Ink.paper : Ink.week,
+            ])
+            let size = number.size()
+            number.draw(at: CGPoint(x: (cell.midX - size.width / 2).rounded(), y: (cell.minY + 32 - size.height / 2).rounded()))
+        }
         for (i, day) in days.enumerated() {
             let cell = cell(i)
             let letter = NSAttributedString(string: symbols[i].uppercased(), attributes: label)
-            letter.draw(at: CGPoint(x: (cell.midX - letter.size().width / 2).rounded(), y: cell.minY))
+            if letters {
+                letter.draw(at: CGPoint(x: (cell.midX - letter.size().width / 2).rounded(), y: cell.minY))
+                continue
+            }
             let center = CGPoint(x: cell.midX, y: cell.minY + 32)
             let mark = marks[day]
-            let chosen = day == shown
+            let chosen = day == shown && chosenWeek == nil
             if chosen {
                 Ink.text.setFill()
                 UIBezierPath(ovalIn: CGRect(x: center.x - 16, y: center.y - 16, width: 32, height: 32)).fill()
             } else if let progress = mark?.progress {
-                ProgressRing.image(progress, side: 30).draw(in: CGRect(x: center.x - 15, y: center.y - 15, width: 30, height: 30))
+                // The ring alone: a tick in it would be over the number.
+                ProgressRing.image(progress, side: 30, tick: false).draw(in: CGRect(x: center.x - 15, y: center.y - 15, width: 30, height: 30))
             }
             let color: UIColor = chosen ? Ink.paper : day == today ? Ink.accent : mark != nil ? Ink.text : Ink.faint
             let number = NSAttributedString(string: "\(day.day)", attributes: [
@@ -570,4 +723,10 @@ final class WeekStripView: UIView {
             }
         }
     }
+}
+
+/// Where the strip's days are drawn: its own layer, to slide across.
+private final class StripRow: UIView {
+    var drawing: ((CGRect) -> Void)?
+    override func draw(_ rect: CGRect) { drawing?(rect) }
 }

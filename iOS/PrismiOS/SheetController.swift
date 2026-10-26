@@ -223,7 +223,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         if case .search(let query) = kind { setUpSearch(query) }
         // A note opened anew — not put back as the sheet was left — where
         // it was last read to, and typed in, if it was.
-        if case .note(let path) = kind, pendingPlace == nil, pendingFocus == nil, let place = PhoneState.place(path) {
+        if restoresPlace, case .note(let path) = kind, pendingPlace == nil, pendingFocus == nil, let place = PhoneState.place(path) {
             pendingPlace = Place(path: path, index: 0, offset: place.offset)
             if place.editing { pendingFocus = Focus(path: path, editor: 0, location: place.caret) }
         }
@@ -1032,6 +1032,9 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     var onPullDown: (() -> Void)? {
         didSet { if isViewLoaded, onPullDown != nil { scroll.refreshControl = nil } }
     }
+    /// Opened where it was last read to — not a day's page, which opens at its top.
+    var restoresPlace = true
+
     /// A swipe to the left over a note: what links to it — not where a swipe
     /// across turns the page.
     var allowsBacklinkSwipe = true

@@ -27,6 +27,8 @@ extension NSAttributedString.Key {
     static let prismBreak = NSAttributedString.Key("PrismBreak")
     /// A link drawn as a pill.
     static let prismPill = NSAttributedString.Key("PrismPill")
+    /// On a web link's last character, flat: a small ↗ after it, in room kerned for it.
+    static let prismExternal = NSAttributedString.Key("PrismExternal")
     /// Where a link goes, as tapped: a note's title, or an address.
     static let prismLink = NSAttributedString.Key("PrismLink")
     /// On a link to a post or a video, once its card is in: the link, its
@@ -417,6 +419,15 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
                     let found = (text.substring(with: span.range) as NSString).range(of: host, options: .backwards)
                     if found.location != NSNotFound { site = NSRange(location: span.range.location + found.location, length: found.length) }
                 }
+                // Flat, a link out of the notes — to the web — a small ↗ after
+                // it: room kerned after its last letter, the arrow drawn there.
+                if flat, site == nil, !inHeading, content.length > 0, target.lowercased().hasPrefix("http") {
+                    let last = NSMaxRange(content) - 1
+                    let size = font(at: last).pointSize
+                    // Its own underline drawn, short of the arrow's room.
+                    storage.addAttributes([.prismExternal: true, .kern: round(size * 0.62)], range: NSRange(location: last, length: 1))
+                    storage.removeAttribute(.underlineStyle, range: NSRange(location: last, length: 1))
+                }
                 // A bare address, as the Mac shows it: its site and the ends of
                 // its path, the link icon before — whole while the caret is in it.
                 if case .url = span.kind, !revealed, !inHeading, PhoneLayoutManager.drawsPills {
@@ -585,6 +596,28 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     /// address's ellipsis, in its.
     private func drawIcons(in characters: NSRange, at origin: CGPoint) {
         guard let storage = textStorage else { return }
+        // A web link's ↗, in the room after its last letter, raised to its capitals.
+        storage.enumerateAttribute(.prismExternal, in: characters) { value, range, _ in
+            guard value != nil, storage.attribute(.prismHidden, at: range.location, effectiveRange: nil) == nil else { return }
+            let glyph = glyphIndexForCharacter(at: range.location)
+            guard glyph < numberOfGlyphs else { return }
+            let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? UIFont ?? metrics.body
+            let fragment = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            let box = boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainers[0])
+            let baseline = fragment.minY + location(forGlyphAt: glyph).y
+            let side = round(font.pointSize * 0.5)
+            guard let arrow = UIImage(systemName: "arrow.up.right", withConfiguration: UIImage.SymbolConfiguration(pointSize: side, weight: .semibold))?
+                .withTintColor(Ink.secondary, renderingMode: .alwaysOriginal) else { return }
+            let size = arrow.size
+            let room = round(font.pointSize * 0.62)
+            // The last letter's underline, as the rest of the link's: to its end, not the arrow's.
+            Ink.faint.setFill()
+            let ct = font as CTFont
+            let line = max(1 / max(UIScreen.main.scale, 1), CTFontGetUnderlineThickness(ct))
+            UIRectFill(CGRect(x: origin.x + box.minX, y: origin.y + baseline - CTFontGetUnderlinePosition(ct), width: max(0, box.width - room), height: line))
+            arrow.draw(in: CGRect(x: origin.x + box.maxX - room + 2,
+                                  y: origin.y + baseline - font.capHeight - 1, width: size.width, height: size.height))
+        }
         storage.enumerateAttribute(.prismEllipsis, in: characters) { value, range, _ in
             guard value != nil else { return }
             let glyph = glyphIndexForCharacter(at: range.location)
@@ -2832,9 +2865,9 @@ enum ProgressRing {
     }
 
     /// The ring as a picture, to put among words.
-    static func image(_ progress: Checkboxes.Progress, side: CGFloat) -> UIImage {
+    static func image(_ progress: Checkboxes.Progress, side: CGFloat, tick: Bool = true) -> UIImage {
         UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
-            draw(progress, in: CGRect(x: 0, y: 0, width: side, height: side), lineWidth: 1.8)
+            draw(progress, in: CGRect(x: 0, y: 0, width: side, height: side), lineWidth: 1.8, tick: tick)
         }
     }
 }

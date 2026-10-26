@@ -317,7 +317,8 @@ final class Column: NSView, OutlineTextViewNavigator {
     private var pointerInside = false {
         didSet {
             guard pointerInside != oldValue else { return }
-            let alpha: CGFloat = pointerInside ? 1 : 0
+            // Not on a list: it is part of the note beside it, closed with it.
+            let alpha: CGFloat = pointerInside && !isList ? 1 : 0
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.15
                 for view in [close, foldButton, controlsGround] as [NSView] { view.animator().alphaValue = alpha }
@@ -1373,7 +1374,10 @@ final class Column: NSView, OutlineTextViewNavigator {
     /// The panel at the foot, centred on the cards: whole on the column in
     /// use, its name alone on the rest; its name as what is shown is.
     private func placePanel() {
-        panel.isHidden = isCollapsed || isWeb || switcher != nil || stackScrubber != nil
+        // A list — the inbox, the pinned — is part of the note beside it: no controls of its own.
+        panel.isHidden = isCollapsed || isWeb || switcher != nil || stackScrubber != nil || isList || panel.compact
+        wantsLayer = true
+        layer?.backgroundColor = isList ? Ink.shelf.cgColor : nil
         guard !panel.isHidden else { return }
         let font = metrics.typography.headingFont(size: round(metrics.fontSize * 0.95), weight: .semibold)
         if let view = current, !isBacklinks {
@@ -1575,10 +1579,11 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     private func showDay(_ ref: NoteRef) {
         let same = isTimeline && pagedShown && entries == [ref]
-        pagedShown = true
         entries = [ref]
         shown = 0..<1
         if kind != .timeline { removeBlocks() }
+        // After what was shown is let go — which says it is not a page a day.
+        pagedShown = true
         kind = .timeline
         settled = false
         var existing = notesShown()
@@ -1586,24 +1591,39 @@ final class Column: NSView, OutlineTextViewNavigator {
         let view = (existing.removeValue(forKey: ref) as? DayView) ?? makeView(ref)
         view.standsAlone = true
         existing.values.forEach(letGo)
-        var shownBlocks: [ColumnBlock] = []
-        if Self.showsMonth, let day = ref.day ?? GraphPaths.week(fromWeeklyPath: ref.path)?.monday {
-            let strip = WeekStrip(day: day, marks: dayMarks?() ?? [:], metrics: metrics)
+        // The week, fixed at the column's top: the page scrolls under it, as on the iPhone.
+        weekStrip?.removeFromSuperview()
+        weekStrip = nil
+        let week = GraphPaths.week(fromWeeklyPath: ref.path)
+        if Self.showsMonth, let day = ref.day ?? week?.monday {
+            let strip = WeekStrip(day: day, week: week, marks: dayMarks?() ?? [:], metrics: metrics)
             strip.onChoose = { [weak self] day in
                 guard let self else { return }
                 onGoToDay?(self, day)
+            }
+            strip.onWeek = { [weak self] week in
+                guard let self else { return }
+                onOpenWeek?(self, week)
             }
             strip.onMonth = { [weak self] view in
                 guard let self else { return }
                 onShowCalendar?(self, view)
             }
-            document.addSubview(strip)
-            shownBlocks.append(strip)
+            addSubview(strip, positioned: .above, relativeTo: scroll)
+            weekStrip = strip
+            needsLayout = true
         }
-        blocks = shownBlocks + [view]
+        blocks = [view]
         relayout()
         if !same { scroll(toY: 0, animated: false) }
     }
+
+    /// The week over a day's page, fixed at the top.
+    private var weekStrip: WeekStrip?
+    /// A week's number clicked, in the strip: its note, on this page.
+    var onOpenWeek: ((Column, Week) -> Void)?
+    /// How far down the page starts: under the week, when it is there.
+    private var stripRoom: CGFloat { weekStrip == nil ? 0 : WeekStrip.height + 8 }
 
     /// The day before or after the one shown.
     func stepDay(_ step: Int) {
@@ -1702,6 +1722,8 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     private func removeBlocks() {
         pagedShown = false
+        weekStrip?.removeFromSuperview()
+        weekStrip = nil
         webPage?.removeFromSuperview()
         webPage = nil
         webOutline = nil
@@ -1857,6 +1879,11 @@ final class Column: NSView, OutlineTextViewNavigator {
         // The title bar across the column, the notes under it; its words
         // short of the controls at its right.
         sticky.frame = NSRect(x: 0, y: bounds.height - StickyHeader.height, width: bounds.width, height: StickyHeader.height)
+        // The week under the window's buttons, across the column, the page under it.
+        let stripTop = StickyHeader.height - 8
+        weekStrip?.top = stripTop
+        weekStrip?.frame = NSRect(x: 0, y: bounds.height - stripTop - WeekStrip.height, width: bounds.width,
+                                  height: WeekStrip.height + stripTop)
         sticky.titleLeft = max(cards.minX + CardSurface.outset + metrics.indent - 2, titleBarLeft)
         let controlsStart = stackPill.alphaValue > 0 && pillWidth > 0 ? stackPill.frame.minX : groundLeft
         sticky.whenRight = max(16, bounds.width - controlsStart + 12)
@@ -1887,15 +1914,15 @@ final class Column: NSView, OutlineTextViewNavigator {
         sticky.setScrolledUnder(scroll.contentView.bounds.minY > 2)
         // The block under the bar — a note, a group of tasks, a note linking
         // here — its own heading gone up under it, its card still there.
-        guard !isWeb, let block = blocks.last(where: { $0.frame.minY <= top + 4 }), let head = block.stickyTitle,
+        // A day's page names itself under its week: nothing in the bar.
+        guard !isWeb, weekStrip == nil, let block = blocks.last(where: { $0.frame.minY <= top + 4 }), let head = block.stickyTitle,
               block.frame.minY + 44 < top, block.frame.maxY - top > 40 else {
             if sticky.shown != nil { needsLayout = true }
             sticky.show(name: nil, when: nil, titleFont: titleFont, whenFont: whenFont)
             return
         }
-        // The title pill names it now: the bar says nothing of its own.
-        _ = head
-        if sticky.shown != nil { sticky.show(name: nil, when: nil, titleFont: titleFont, whenFont: whenFont) }
+        // Its heading gone up under the window's top: its name there, as a title bar's.
+        sticky.show(name: head.title, when: head.when, titleFont: titleFont, whenFont: whenFont)
         sticky.onClick = { [weak self, weak block] in
             guard let self, let block else { return }
             scroll(toY: block.frame.minY, animated: true)
@@ -1934,7 +1961,7 @@ final class Column: NSView, OutlineTextViewNavigator {
         // Only blocks this has placed: a new one's frame says nothing yet.
         let laidOut = blocks.filter { placed.contains(ObjectIdentifier($0)) && $0.frame.height > 0 }
         let anchor = (laidOut.last { $0.frame.minY <= top } ?? laidOut.first).map { ($0, top - $0.frame.minY) }
-        var y: CGFloat = (isTimeline ? 10 : 22) + band
+        var y: CGFloat = (isTimeline ? 10 : 22) + band + stripRoom
         // The notes across the whole column: the scrubber lies over them,
         // when it is wanted.
         let inset: CGFloat = 0
@@ -2082,7 +2109,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             // A day's page from its top, the month over it in sight — till read down into.
             let top = pagedShown && place.offset <= 0 ? 0 : view.frame.minY + place.offset - band
             let y = max(0, min(top, document.frame.height - scroll.contentSize.height))
-            scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
             scroll.reflectScrolledClipView(scroll.contentView)
         }
         settled = true
@@ -2101,6 +2128,8 @@ final class Column: NSView, OutlineTextViewNavigator {
         let caret = document.convert(line.offsetBy(dx: editor.textContainerOrigin.x, dy: editor.textContainerOrigin.y), from: editor)
         let visible = scroll.contentView.bounds
         let margin: CGFloat = 80
+        // A day's page from its top shows it already: not moved off the week.
+        if pagedShown, visible.minY < 1, caret.maxY < visible.height - margin { return }
         guard caret.minY < visible.minY + margin || caret.maxY > visible.maxY - margin else { return }
         scroll(toY: max(0, caret.midY - visible.height / 3), animated: false)
     }
@@ -2588,11 +2617,13 @@ final class StickyHeader: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    override var wantsUpdateLayer: Bool { true }
-    override func updateLayer() {
-        // No bar: the controls float over the page, each on its glass.
-        layer?.backgroundColor = NSColor.clear.cgColor
-        rule.isHidden = true
+    /// No bar till a name is in it: then the page's colour behind it, a hairline under.
+    override func draw(_ dirtyRect: NSRect) {
+        guard shown != nil else { return }
+        Ink.paper.setFill()
+        bounds.fill()
+        Ink.rule.setFill()
+        NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
 
     /// In the title bar: dragging it moves the window, as a title bar does.
@@ -2623,6 +2654,7 @@ final class StickyHeader: NSView {
         let rising = shown == nil || name != shown
         shown = name
         shownWhen = text
+        needsDisplay = true
         if let name {
             title.attributedStringValue = NSAttributedString(string: name, attributes: [
                 .font: titleFont, .foregroundColor: Ink.text,

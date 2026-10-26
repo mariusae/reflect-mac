@@ -517,6 +517,7 @@ final class ColumnsController: UITabBarController, UITabBarControllerDelegate, U
         case .timeline:
             let pager = DayPager(makeSheet: { [unowned self] kind in makeSheet(kind) },
                                  makeCalendar: { [unowned self] day in calendarController(day: day) })
+            pager.onChooseWeek = { [weak self] week in self?.open(.note(GraphPaths.weeklyPath(for: week))) }
             pager.marks = { [weak self] in
                 guard let graph = self?.store.graph, let index = self?.store.index else { return [:] }
                 return NoteCalendar.marks(graph: graph, index: index)

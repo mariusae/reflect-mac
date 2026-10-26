@@ -110,6 +110,8 @@ extension NSAttributedString.Key {
     package static let outlineLinkLead = NSAttributedString.Key("ReflectOutlineLinkLead")
     /// On the hidden character laid out as room after a pill's text.
     package static let outlineLinkTail = NSAttributedString.Key("ReflectOutlineLinkTail")
+    /// On a web link's last character, flat: a small ↗ after it, in room kerned for it.
+    package static let outlineExternal = NSAttributedString.Key("ReflectOutlineExternal")
     /// On the hidden character laid out as a shortened address's ellipsis.
     package static let outlineLinkEllipsis = NSAttributedString.Key("ReflectOutlineLinkEllipsis")
 }
@@ -141,6 +143,29 @@ extension OutlineLayoutManager {
     /// icon in its lead, and a shortened address's ellipsis.
     package func drawLinkPills(in characters: NSRange, origin: NSPoint) {
         guard let storage = textStorage, let container = textContainers.first, characters.length > 0 else { return }
+        // A web link's ↗, in the room after its last letter, raised to its
+        // capitals; that letter's underline drawn short of it.
+        storage.enumerateAttribute(.outlineExternal, in: characters) { value, range, _ in
+            guard value != nil else { return }
+            let glyph = glyphIndexForCharacter(at: range.location)
+            guard glyph < numberOfGlyphs else { return }
+            let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont ?? .systemFont(ofSize: 15)
+            let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            let box = boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container)
+            let baseline = line.minY + location(forGlyphAt: glyph).y
+            let room = round(font.pointSize * 0.62)
+            let ink = storage.attribute(.underlineColor, at: max(range.location - 1, 0), effectiveRange: nil) as? NSColor ?? .tertiaryLabelColor
+            ink.setFill()
+            NSRect(x: box.minX + origin.x, y: baseline - font.underlinePosition + origin.y, width: max(0, box.width - room),
+                   height: max(1, font.underlineThickness)).fill()
+            let side = round(font.pointSize * 0.5)
+            guard let arrow = NSImage(systemSymbolName: "arrow.up.right", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: side, weight: .semibold).applying(.init(paletteColors: [.secondaryLabelColor])))
+            else { return }
+            let size = arrow.size
+            arrow.draw(in: NSRect(x: box.maxX - room + 2 + origin.x, y: baseline - font.capHeight - 1 + origin.y, width: size.width, height: size.height),
+                       from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
         storage.enumerateAttribute(.outlineLink, in: characters) { value, range, _ in
             guard let pill = value as? LinkPill else { return }
             let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)

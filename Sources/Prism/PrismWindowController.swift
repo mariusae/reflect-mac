@@ -52,7 +52,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             guard active !== oldValue else { return }
             page.needsLayout = true
             // The bar of sheets to add, on the focused column alone.
-            for column in columns { column.isFocused = column === active }
+            for column in columns { column.isFocused = isFocus(column, active: active) }
         }
     }
 
@@ -224,6 +224,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             return NoteCalendar.marks(graph: graph, index: index)
         }
         column.onGoToDay = { [weak self] column, day in self?.goTo(day, in: column) }
+        column.onOpenWeek = { [weak self] column, week in self?.open(GraphPaths.weeklyPath(for: week), remember: false, from: column) }
         column.onChooseListed = { [weak self] column, ref in self?.chooseListed(ref, from: column) }
         column.onDoneListed = { [weak self] column, ref in self?.doneListed(ref, in: column) }
         column.onEnterListed = { [weak self] column in self?.enterListed(from: column) }
@@ -859,7 +860,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         // The toolbox on the column worked in — kept so as columns are made,
         // closed, folded or put back, not only as the focus moves.
         let focused = active.flatMap { active in columns.contains { $0 === active } ? active : nil } ?? columns.first { !$0.isCollapsed }
-        for column in columns where column.isFocused != (column === focused) { column.isFocused = column === focused }
+        for column in columns where column.isFocused != isFocus(column, active: focused) { column.isFocused = isFocus(column, active: focused) }
         let left = sidebarPinned ? Sidebar.width + 16 : 0
         // Each column its share of the width; a folded one, a strip's.
         let open = columns.filter { !$0.isCollapsed }
@@ -1036,7 +1037,8 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             if let day = ref.day, !graph.exists(path: path) { revealedDays.insert(day) }
             if !column.shows(ref) { column.showTimeline(timelineEntries(including: ref), around: ref) }
             // A day as it was left: read to where it was, the caret where it was.
-            if let offset = SessionState.shared.place(graph.root, ref)?.offset {
+            // On a day's own page, its top: the week over it in sight, not moved.
+            if !column.isPaged, let offset = SessionState.shared.place(graph.root, ref)?.offset {
                 column.restore(Column.Place(ref: ref, offset: CGFloat(offset)), key: ref)
             } else {
                 column.reveal(ref, animated: false)
@@ -1493,7 +1495,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// Opens a search as a new sheet on the column the keyboard is in.
     @objc func showSearchSheet(_ sender: Any?) {
-        let column = focusedColumn
+        let column = wholeColumn(focusedColumn)
         push(column)
         search("", in: column)
         saveLayout()
@@ -1550,7 +1552,9 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }
 
     private func openSheet(_ kind: Column.Kind, at ref: NoteRef? = nil, on target: Column? = nil, pushing: Bool = true) {
-        let column = notesColumn(target ?? focusedColumn)
+        // A view in place of another: the whole of the column — a list with it, gone.
+        let column = wholeColumn(notesColumn(target ?? focusedColumn))
+        if kind == .inbox || kind == .pinned { return attachList(kind, to: column) }
         if pushing { push(column) }
         materialize(Sheet(kind: kind, place: ref.map { Column.Place(ref: $0, offset: -12) }, offset: 0,
                           title: Column.title(of: kind, top: ref), snapshot: nil), in: column)
@@ -1572,7 +1576,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         // What it is about: the note the column it was asked from shows.
         let note: NoteRef? = { if case .backlinks(let ref) = source.kind { return ref } else { return source.current?.ref } }()
         if choice == .backlinks, note == nil { return NSSound.beep() }
-        var column = source
+        var column = wholeColumn(source)
         var fresh = false
         if beside ?? (NSApp.currentEvent?.modifierFlags.contains(.command) == true) { (column, fresh) = columnBeside(source) }
         active = column
@@ -1610,7 +1614,8 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     /// the keyboard is in, else about today.
     @objc func showTimeline(_ sender: Any?) {
         let ref = focusedNote.flatMap { day(of: $0) != nil ? $0 : nil } ?? .day(.today)
-        let (column, fresh) = columnBeside(focusedColumn)
+        let (beside, fresh) = columnBeside(focusedColumn)
+        let column = wholeColumn(beside)
         // A timeline there already only scrolls to the day.
         if !fresh, !column.isTimeline { push(column) }
         show(ref.path, in: column)
@@ -1765,7 +1770,8 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             active = open
             return
         }
-        let (column, fresh) = columnBeside(focusedColumn)
+        let (beside, fresh) = columnBeside(focusedColumn)
+        let column = wholeColumn(beside)
         if !fresh { push(column) }
         active = column
         refreshTasks(column, force: true)
@@ -1879,13 +1885,40 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             return
         }
         let (column, fresh) = columnBeside(focusedColumn)
-        if !fresh { push(column) }
-        active = column
-        refreshList(column, kind: kind)
-        listNarrow(column)
-        if let first = column.listed.first { chooseListed(first, from: column) }
-        window?.makeFirstResponder(column)
+        attachList(kind, to: column, pushing: !fresh)
+    }
+
+    /// A list — the inbox, the pinned — made part of a column: a narrow list
+    /// before it, the note chosen in the column itself.
+    private func attachList(_ kind: Column.Kind, to column: Column, pushing: Bool = true) {
+        let column = wholeColumn(column)
+        guard let index = columns.firstIndex(where: { $0 === column }) else { return }
+        if pushing { push(column) }
+        let list = insertColumn(at: index)
+        active = list
+        refreshList(list, kind: kind)
+        listNarrow(list)
+        if let first = list.listed.first { chooseListed(first, from: list) }
+        window?.makeFirstResponder(list)
         saveLayout()
+    }
+
+    /// The whole of a column, a list made part of it let go: the note's
+    /// column, to show something else in — a list is not a column of its own.
+    private func wholeColumn(_ column: Column) -> Column {
+        guard let i = columns.firstIndex(where: { $0 === column }) else { return column }
+        if column.isList {
+            guard i + 1 < columns.count else { return column }
+            let note = columns[i + 1]
+            close(column)
+            active = note
+            return note
+        }
+        if i > 0, columns[i - 1].isList {
+            close(columns[i - 1])
+            active = column
+        }
+        return column
     }
 
     private func refreshInbox(_ column: Column) { refreshList(column, kind: .inbox) }
@@ -2311,6 +2344,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// A day, in a column: its timeline taken there, or one put on it.
     private func goTo(_ day: Day, in column: Column) {
+        let column = column.isTimeline ? column : wholeColumn(column)
         active = column
         let ref = NoteRef.day(day)
         // A day with no note: shown in the timeline all the same, to write in.
@@ -2384,6 +2418,15 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// Back: the top sheet of the focused column taken off.
     @objc func goBack(_ sender: Any?) { pop(focusedColumn) }
+
+    /// Whether a column has the controls: the one worked in — or, a list
+    /// worked in, the note beside it, the list being part of it.
+    private func isFocus(_ column: Column, active: Column?) -> Bool {
+        guard let active else { return false }
+        if column === active { return !column.isList }
+        guard active.isList, let i = columns.firstIndex(where: { $0 === active }), i + 1 < columns.count else { return false }
+        return columns[i + 1] === column
+    }
 
     // MARK: Daily, a day at a time
 
