@@ -63,6 +63,7 @@ extension Column {
         case .tasks: "Tasks"
         case .search(let query): query.isEmpty ? "Search" : "“\(query)”"
         case .web(let ref): name(of: ref).title
+        case .blocks(let day): "Time Blocks, " + name(of: .day(day)).title
         }
     }
 
@@ -210,6 +211,7 @@ final class StackPill: NSView {
         case .tasks: "checklist"
         case .search: "magnifyingglass"
         case .web: "safari"
+        case .blocks: "clock"
         }
     }
 
@@ -964,6 +966,7 @@ final class SwitcherCard: NSView {
         case .tasks: "checklist"
         case .search: "magnifyingglass"
         case .web: "safari"
+        case .blocks: "clock"
         }
         icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))

@@ -154,8 +154,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         // commands act on.
         responderWatch = window.observe(\.firstResponder) { [weak self] window, _ in
             MainActor.assumeIsolated {
-                guard let self, let view = window.firstResponder as? NSView,
-                      let column = self.columns.first(where: { view.isDescendant(of: $0) }) else { return }
+                guard let self, let view = window.firstResponder as? NSView, let column = self.owner(of: view) else { return }
                 self.active = column
             }
         }
@@ -189,6 +188,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         page.layoutSubtreeIfNeeded()
         restoreLayout()
         setSidebar(shown: sidebarPinned, animated: false)
+        refreshNow()
     }
 
     @available(*, unavailable)
@@ -200,13 +200,15 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             UserDefaults.standard.set(face.rawValue, forKey: "Typeface")
         }
         NotificationCenter.default.post(name: .prismTypographyChanged, object: self)
-        for column in columns {
+        for column in allColumns {
             column.face = face
             column.metrics = metrics
         }
         refreshSidebar()
         showHeading()
         refreshBacklinks()
+        blockPages.values.forEach { $0.setTypography(face.typography()) }
+        nowPill.typography = face.typography()
     }
 
     // MARK: Columns
@@ -273,6 +275,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         column.onUnfold = { [weak self] column in self?.setCollapsed(false, column) }
         column.onFold = { [weak self] column in self?.setCollapsed(true, column) }
         column.onStripHover = { [weak self] column, inside in self?.showStripPicture(of: column, inside) }
+        column.onToggleAside = { [weak self] column in self?.flipAside(column) }
         return column
     }
 
@@ -418,31 +421,20 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }
 
     private func close(_ column: Column) {
+        // A list beside a column: put away, not closed — it is the column's.
+        if let host = column.host { return setAside(shown: false, host) }
         guard columns.count > 1, let index = columns.firstIndex(where: { $0 === column }) else { return }
-        // A list and its note are one column: closed together — unless what
-        // is let go is the list alone, made part of the note no more.
-        if !closingList, index > 0, columns[index - 1].isList {
-            closingList = true
-            defer { closingList = false }
-            close(columns[index - 1])
-            return close(column)
-        }
-        if !closingList, column.isList, index + 1 < columns.count, columns.count > 2 {
-            closingList = true
-            defer { closingList = false }
-            close(columns[index + 1])
-            return close(column)
-        }
         column.saveAll()
+        (column.aside as? Column)?.saveAll()
+        column.setAside(nil)
+        blockPages[ObjectIdentifier(column)] = nil
+        column.titleAccessory = nil
         column.removeFromSuperview()
         columns.remove(at: index)
         if active === column { active = columns[max(0, index - 1)] }
         columnsChanged()
         if let view = active?.current { window?.makeFirstResponder(view.editor) }
     }
-
-    /// Within a list's closing with its note: each closed alone.
-    private var closingList = false
 
     private func columnsChanged() {
         page.needsLayout = true
@@ -465,13 +457,20 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         layoutPage()
     }
 
-    /// The column the keyboard is in, else the last one it was in.
+    /// The column the keyboard is in, else the last one it was in: a list
+    /// beside a column, or its tasks, that column.
     private var focusedColumn: Column {
-        if let view = window?.firstResponder as? NSView, let column = columns.first(where: { view.isDescendant(of: $0) }) {
-            active = column
-        }
+        if let view = window?.firstResponder as? NSView, let column = owner(of: view) { active = column }
         return active ?? columns[0]
     }
+
+    /// The column a view is in, or beside.
+    private func owner(of view: NSView) -> Column? {
+        columns.first { view.isDescendant(of: $0) || $0.aside.map(view.isDescendant(of:)) == true }
+    }
+
+    /// Every column, and every list beside one: all that shows notes.
+    private var allColumns: [Column] { columns + columns.compactMap { $0.aside as? Column } }
 
     // MARK: Where things were left
 
@@ -498,6 +497,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         case .tasks: .init(kind: "tasks", note: nil, top: nil, offset: Double(sheet.offset))
         case .search(let query): .init(kind: "search", note: query, top: nil, offset: Double(sheet.offset))
         case .web(let ref): .init(kind: "web", note: ref.path, top: nil, offset: 0)
+        case .blocks(let day): .init(kind: "blocks", note: day.description, top: nil, offset: Double(sheet.offset))
         }
         if !beneath.isEmpty { place.beneath = beneath.map { columnPlace($0) } }
         if sheet.pinned { place.pinned = true }
@@ -522,6 +522,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         case "web":
             guard let note = place.note else { return nil }
             kind = .web(NoteRef(path: note))
+        case "blocks": kind = .blocks(place.note.flatMap { Day($0) } ?? .today)
         default: kind = .timeline
         }
         let top = place.top.map(NoteRef.init(path:))
@@ -540,6 +541,12 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             if !column.ahead.isEmpty { place.ahead = column.ahead.map { columnPlace($0) } }
             if column.isCollapsed { place.collapsed = true }
             place.width = column.share == 1 ? nil : Double(column.share)
+            if let list = column.aside as? Column {
+                place.aside = list.kind == .pinned ? "pinned" : "inbox"
+            } else if column.aside is TaskShelf {
+                place.aside = "tasks"
+            }
+            if column.aside != nil, !column.asideShown { place.asideHidden = true }
             return place
         }
         let activeIndex = active.flatMap { active in columns.firstIndex { $0 === active } }
@@ -570,13 +577,27 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             return
         }
         let key = state.keyNote.map(NoteRef.init(path:))
+        // A list kept as a column of its own, before lists were beside one:
+        // beside the column after it.
+        var listBefore: String?
+        var made = 0
         for (i, place) in places.enumerated() {
+            if place.kind == "inbox" || place.kind == "pinned", i + 1 < places.count, place.aside == nil {
+                listBefore = place.kind
+                continue
+            }
             guard let top = sheet(place) else { continue }
-            let column = i == 0 ? columns[0] : addColumn(after: columns[i - 1])
+            let column = made == 0 ? columns[0] : addColumn(after: columns[made - 1])
+            made += 1
             column.beneath = (place.beneath ?? []).compactMap(sheet)
             column.ahead = (place.ahead ?? []).compactMap(sheet)
             column.share = place.width.map { CGFloat($0) } ?? 1
             materialize(top, in: column, key: key)
+            if let aside = place.aside ?? listBefore, aside == "inbox" || aside == "pinned" {
+                attachList(aside == "pinned" ? .pinned : .inbox, to: column, pushing: false, choosing: false)
+            }
+            listBefore = nil
+            if column.aside != nil, place.asideHidden == true { column.asideShown = false }
             if place.collapsed == true { column.isCollapsed = true }
         }
         // Never all folded away.
@@ -620,8 +641,14 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             column.pendingOffset = sheet.offset
             findBacklinks(ref, in: column)
         case .inbox, .pinned:
+            // A list kept on a stack before lists were beside a column: beside it now.
+            if columns.contains(where: { $0 === column }) {
+                attachList(sheet.kind, to: column, pushing: false)
+                return
+            }
             refreshList(column, kind: sheet.kind)
-            listNarrow(column)
+        case .blocks(let day):
+            showBlocks(day, in: column)
         case .tasks:
             refreshTasks(column, force: true)
             column.scroll(toY: sheet.offset + 12, animated: false)
@@ -856,12 +883,18 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// A divider dragged: the columns either side of it shared out anew,
     /// neither narrower than a column can be read in.
+    /// The room a column takes, with what is beside it.
+    private func slot(of column: Column) -> NSRect {
+        guard let aside = column.aside, !aside.isHidden else { return column.frame }
+        return column.frame.union(aside.frame)
+    }
+
     private func dragDivider(_ index: Int, to x: CGFloat) {
         guard columns.indices.contains(index), index > 0 else { return }
         let left = columns[index - 1], right = columns[index]
-        let span = left.frame.width + right.frame.width
+        let span = slot(of: left).width + slot(of: right).width
         let least: CGFloat = 280
-        let leftWidth = min(max(page.convert(NSPoint(x: x, y: 0), from: nil).x - left.frame.minX, least), span - least)
+        let leftWidth = min(max(page.convert(NSPoint(x: x, y: 0), from: nil).x - slot(of: left).minX, least), span - least)
         let shares = left.share + right.share
         left.share = shares * leftWidth / span
         right.share = shares - left.share
@@ -886,15 +919,34 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         let last = open.last
         var x = left
         for column in columns {
+            syncAside(column)
             let after = CGFloat(columns.drop { $0 !== column }.dropFirst().count) * CollapsedStrip.width
             let width = column.isCollapsed ? CollapsedStrip.width
                 : column === last ? bounds.width - x - after
                 : round((bounds.width - left - folded) * column.share / max(total, 0.01))
-            column.frame = NSRect(x: round(x), y: 0, width: width, height: bounds.height)
+            // What is beside it, at its left, out of its share — while shown.
+            var asideWidth: CGFloat = 0
+            if let aside = column.aside {
+                let wanted = min(column.aside is TaskShelf ? 280 : 340, max(220, round(width * 0.36)))
+                // Beside the column while it stays wide enough to read; else
+                // over it, when asked for — not otherwise.
+                let roomy = width - wanted >= 300
+                if roomy { column.asideFloats = false }
+                let shown = column.asideShown && !column.isCollapsed && (roomy || column.asideFloats)
+                aside.isHidden = !shown
+                if shown {
+                    // Over the column: clear of its button, to put it away again.
+                    let inset = roomy ? 0 : max(10, column.titleBarLeft) + 34
+                    aside.frame = NSRect(x: round(x) + inset, y: 0, width: roomy ? wanted : min(wanted, width - inset - 40), height: bounds.height)
+                    if roomy { asideWidth = wanted }
+                    floatAside(aside, over: column, !roomy)
+                }
+            }
+            column.frame = NSRect(x: round(x) + asideWidth, y: 0, width: width - asideWidth, height: bounds.height)
             x += width
         }
         for (i, divider) in dividers.enumerated() {
-            divider.frame = NSRect(x: columns[i + 1].frame.minX - ColumnDivider.reach, y: 0, width: 2 * ColumnDivider.reach,
+            divider.frame = NSRect(x: slot(of: columns[i + 1]).minX - ColumnDivider.reach, y: 0, width: 2 * ColumnDivider.reach,
                                    height: bounds.height)
         }
         // At the foot of the first column, before its sheets: the notes to
@@ -915,7 +967,15 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         // In full screen there are none: the sidebar's button at the corner.
         let fullScreen = window?.styleMask.contains(.fullScreen) == true
         let buttonX: CGFloat = fullScreen ? 16 : 80
-        for column in columns { column.titleBarLeft = column === columns.first ? max(0, buttonX + 36 - column.frame.minX) : 0 }
+        for column in columns {
+            // Past the window's buttons: whatever is at the window's left.
+            let first = column === columns.first
+            let aside = column.aside.flatMap { $0.isHidden ? nil : $0 }
+            column.titleBarLeft = first && aside == nil ? max(0, buttonX + 36 - column.frame.minX) : 0
+            (aside as? Column)?.titleBarLeft = first ? buttonX + 36 : 0
+            (aside as? TaskShelf)?.titleBarLeft = first ? buttonX + 36 : 0
+        }
+        placeNowPill()
         let height = ceil(heading.intrinsicContentSize.height)
         let first = columns.first?.frame ?? bounds
         let headingX = max(first.minX + 80, barX)
@@ -1102,6 +1162,13 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     }
 
     private func showHeading() {
+        // A list beside a column: the note it shows lit, else none.
+        for column in columns {
+            guard let list = column.aside as? Column, list.isList else { continue }
+            let shown = column.current?.ref
+            let lit = shown.flatMap { list.listed.contains($0) ? $0 : nil }
+            if list.listSelection != lit { list.listSelection = lit }
+        }
         var text = ""
         // The note scrolled into is named at its own card's top, in its
         // column, now — not in the window's title bar.
@@ -1605,6 +1672,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         case .inbox: openSheet(.inbox, on: column, pushing: !fresh)
         case .pinned: openSheet(.pinned, on: column, pushing: !fresh)
         case .tasks: openSheet(.tasks, on: column, pushing: !fresh)
+        case .blocks: openSheet(.blocks(note?.day ?? .today), on: column, pushing: !fresh)
         case .search:
             if !fresh { push(column) }
             search("", in: column)
@@ -1777,6 +1845,154 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         refreshSidebar()
         showHeading()
         refreshReview()
+        blockPages.values.forEach { $0.reload() }
+        refreshNow()
+    }
+
+    // MARK: Time blocks
+
+    /// Each day's-blocks column's page, by the column.
+    private var blockPages: [ObjectIdentifier: TimeBlocksPage] = [:]
+
+    /// A column of a day's time blocks, right of this one — or the one open,
+    /// gone to: the day of the note the keyboard is in, else today.
+    @objc func showTimeBlocks(_ sender: Any?) {
+        let day = focusedNote?.day ?? .today
+        if !wantsNewColumn, let open = columns.first(where: \.isBlocks) {
+            active = open
+            showBlocks(day, in: open)
+            blockPages[ObjectIdentifier(open)].map { window?.makeFirstResponder($0.block.grid) }
+            saveLayout()
+            return
+        }
+        let (beside, fresh) = columnBeside(focusedColumn)
+        let column = wholeColumn(beside)
+        if !fresh { push(column) }
+        materialize(Sheet(kind: .blocks(day), place: nil, offset: 0, title: "", snapshot: nil), in: column)
+        blockPages[ObjectIdentifier(column)].map { window?.makeFirstResponder($0.block.grid) }
+    }
+
+    /// A day's blocks in a column, the tasks beside them.
+    private func showBlocks(_ day: Day, in column: Column) {
+        let page = blockPage(for: column)
+        let fresh = column.kind != .blocks(day)
+        page.show(day)
+        column.showBlocks(day, page: page.block)
+        if column.aside !== page.shelf {
+            // Not in a column made to draw a sheet's picture: none beside that.
+            if columns.contains(where: { $0 === column }) {
+                page.shelf.removeFromSuperview()
+                self.page.addSubview(page.shelf, positioned: .below, relativeTo: heading)
+                column.setAside(page.shelf, symbol: "checklist", name: "Tasks")
+                layoutPage()
+            }
+        }
+        active = column
+        if fresh {
+            column.layoutSubtreeIfNeeded()
+            page.scrollToWork()
+        }
+    }
+
+    private func blockPage(for column: Column) -> TimeBlocksPage {
+        if let page = blockPages[ObjectIdentifier(column)] { return page }
+        let store = TimeBlocksPage.Store(
+            flush: { [weak self] in self?.save() },
+            read: { [weak self] path in self?.graph.read(path: path) },
+            write: { [weak self] writes in self?.writeNotes(writes) },
+            tasks: { [weak self] in self?.index.tasks() ?? [] },
+            openNote: { [weak self, weak column] path in
+                guard let self, let column else { return }
+                open(path, newColumn: true, from: column)
+            })
+        let page = TimeBlocksPage(store: store, day: .today, typography: face.typography())
+        page.onScrollTo = { [weak column, weak page] y in
+            guard let column, let page else { return }
+            column.scroll(toY: page.block.frame.minY + y, animated: false)
+        }
+        blockPages[ObjectIdentifier(column)] = page
+        return page
+    }
+
+    /// Notes written whole, as the time blocks change them, and what shows
+    /// them caught up.
+    private func writeNotes(_ writes: [(path: String, source: String)]) {
+        do {
+            for write in writes { try graph.write(write.source, path: write.path) }
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+        writes.forEach { index.refresh($0.path) }
+        let paths = Set(writes.map(\.path))
+        let entries = timelineEntries()
+        for column in columns {
+            column.reloadFromDisk(paths)
+            column.updateTimeline(entries)
+        }
+        refreshInboxes()
+        refreshTaskColumns()
+        refreshSidebar()
+        blockPages.values.forEach { $0.reload() }
+        refreshNow()
+    }
+
+    // MARK: The block it is now
+
+    /// At the right of the last column's title bar, while a block of
+    /// today's is on.
+    private lazy var nowPill: NowPill = {
+        let pill = NowPill()
+        pill.isHidden = true
+        pill.typography = face.typography()
+        pill.onClick = { [weak self] in
+            guard let self else { return }
+            if let open = columns.first(where: \.isBlocks) {
+                active = open
+                showBlocks(.today, in: open)
+            } else {
+                let (column, fresh) = columnBeside(focusedColumn)
+                let whole = wholeColumn(column)
+                if !fresh { push(whole) }
+                materialize(Sheet(kind: .blocks(.today), place: nil, offset: 0, title: "", snapshot: nil), in: whole)
+            }
+        }
+        return pill
+    }()
+    private var nowTicker: Timer?
+    /// Today's note, as last read: what is on now is found in it each second.
+    private var todaySource: (day: Day, source: String)?
+
+    /// Today's note read again, and the pill shown — or not — as it is now.
+    private func refreshNow() {
+        todaySource = (.today, graph.read(.today) ?? "")
+        tickNow()
+        if nowTicker == nil {
+            nowTicker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.tickNow() }
+            }
+        }
+    }
+
+    private func tickNow() {
+        if todaySource?.day != .today { todaySource = (.today, graph.read(.today) ?? "") }
+        let now = todaySource.flatMap { TimeBlocksPage.current(in: $0.source) }.map { NowPill.Now(block: $0.block, remaining: $0.remaining) }
+        let was = nowPill.now == nil
+        nowPill.now = now
+        if was != (now == nil) { placeNowPill() }
+        blockPages.values.forEach { $0.tick() }
+    }
+
+    /// The pill in the last open column's title bar.
+    private func placeNowPill() {
+        let last = columns.last { !$0.isCollapsed }
+        for column in columns where column !== last && column.titleAccessory != nil { column.titleAccessory = nil }
+        last?.titleAccessory = nowPill
+        last?.needsLayout = true
+    }
+
+    func timeBlocksForScript() -> TimeBlocksPage? {
+        showTimeBlocks(nil)
+        return columns.first(where: \.isBlocks).flatMap { blockPages[ObjectIdentifier($0)] }
     }
 
     // MARK: The tasks
@@ -1893,58 +2109,133 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     @objc func showPinned(_ sender: Any?) { showList(.pinned) }
     @objc func showPinnedSheet(_ sender: Any?) { openSheet(.pinned) }
 
-    /// The inbox, or the pinned, as a list in a column of its own — the one
-    /// open already, gone to — its first note open beside it.
+    /// The inbox, or the pinned, as a list beside a column — the one open
+    /// already, gone to — its first note open in the column.
     private func showList(_ kind: Column.Kind) {
-        if !wantsNewColumn, let open = columns.first(where: { $0.kind == kind }) {
+        if !wantsNewColumn, let open = columns.first(where: { ($0.aside as? Column)?.kind == kind }), let list = open.aside as? Column {
             active = open
-            window?.makeFirstResponder(open)
+            open.asideFloats = true
+            setAside(shown: true, open)
+            window?.makeFirstResponder(list)
             return
         }
         let (column, fresh) = columnBeside(focusedColumn)
         attachList(kind, to: column, pushing: !fresh)
     }
 
-    /// A list — the inbox, the pinned — made part of a column: a narrow list
-    /// before it, the note chosen in the column itself.
-    private func attachList(_ kind: Column.Kind, to column: Column, pushing: Bool = true) {
+    /// A list — the inbox, the pinned — made part of a column: narrow,
+    /// beside it, the note chosen in the column itself. Put back as it was
+    /// left, the note shown kept, `choosing` none.
+    private func attachList(_ kind: Column.Kind, to column: Column, pushing: Bool = true, choosing: Bool = true) {
         let column = wholeColumn(column)
-        guard let index = columns.firstIndex(where: { $0 === column }) else { return }
         if pushing { push(column) }
-        let list = insertColumn(at: index)
-        active = list
+        let list = makeColumn()
+        list.host = column
+        list.closable = false
+        page.addSubview(list, positioned: .below, relativeTo: heading)
+        column.setAside(list, symbol: "sidebar.squares.left", name: kind == .pinned ? "Pinned" : "Inbox")
+        column.asideShown = true
+        layoutPage()
+        page.layoutSubtreeIfNeeded()
+        active = column
         refreshList(list, kind: kind)
-        listNarrow(list)
-        if let first = list.listed.first { chooseListed(first, from: list) }
-        window?.makeFirstResponder(list)
+        if choosing {
+            if let first = list.listed.first { chooseListed(first, from: list, pushing: false) }
+            window?.makeFirstResponder(list)
+        } else if let ref = column.current?.ref, list.listed.contains(ref) {
+            list.listSelection = ref
+        }
         saveLayout()
     }
 
-    /// The whole of a column, a list made part of it let go: the note's
-    /// column, to show something else in — a list is not a column of its own.
+    /// The whole of a column, to show something else in: a list beside it
+    /// let go — what is beside it belongs to what it showed.
     private func wholeColumn(_ column: Column) -> Column {
-        guard let i = columns.firstIndex(where: { $0 === column }) else { return column }
-        // The list alone let go here, not its note with it.
-        closingList = true
-        defer { closingList = false }
-        if column.isList {
-            guard i + 1 < columns.count else { return column }
-            let note = columns[i + 1]
-            close(column)
-            active = note
-            return note
-        }
-        if i > 0, columns[i - 1].isList {
-            close(columns[i - 1])
-            active = column
-        }
+        let column = column.host ?? column
+        if column.aside != nil { column.setAside(nil) }
         return column
+    }
+
+    /// What is beside a column, as what it shows wants: the tasks only
+    /// beside a day's blocks.
+    private func syncAside(_ column: Column) {
+        if column.aside is TaskShelf, !column.isBlocks { column.setAside(nil) }
+    }
+
+    /// What is beside a column, over it — no room beside it — shadowed, or
+    /// beside it, flat; above it, either way.
+    private func floatAside(_ aside: NSView, over column: Column, _ floats: Bool) {
+        if aside.superview === page, let i = page.subviews.firstIndex(of: aside), let j = page.subviews.firstIndex(of: column), i < j {
+            page.addSubview(aside, positioned: .above, relativeTo: column)
+        }
+        aside.wantsLayer = true
+        guard let layer = aside.layer else { return }
+        layer.masksToBounds = false
+        layer.shadowColor = NSColor.black.cgColor
+        layer.shadowOpacity = floats ? 0.35 : 0
+        layer.shadowRadius = 14
+        layer.shadowOffset = .zero
+    }
+
+    private var floatWatch: Any?
+
+    /// A click in a column, out of what floats over it: that put away, as a
+    /// popover is.
+    private func watchFloatingAsides() {
+        guard floatWatch == nil else { return }
+        floatWatch = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            guard let self, event.window === window else { return event }
+            for column in columns where column.asideFloats && asideVisible(column) {
+                guard let aside = column.aside else { continue }
+                let point = event.locationInWindow
+                let inColumn = column.convert(column.bounds, to: nil).contains(point)
+                let inAside = aside.convert(aside.bounds, to: nil).contains(point)
+                if inColumn, !inAside, !column.isOnAsideButton(point) {
+                    column.asideFloats = false
+                    setAside(shown: false, column)
+                }
+            }
+            return event
+        }
+    }
+
+    /// Whether what is beside a column shows.
+    private func asideVisible(_ column: Column) -> Bool { column.aside.map { !$0.isHidden } ?? false }
+
+    /// What is beside a column, shown or put away.
+    private func setAside(shown: Bool, _ column: Column) {
+        guard column.aside != nil else { return }
+        // The keyboard out of it, when it goes.
+        if !shown, let view = window?.firstResponder as? NSView, column.aside.map(view.isDescendant(of:)) == true {
+            if let note = column.current { window?.makeFirstResponder(note.editor) } else { window?.makeFirstResponder(column) }
+        }
+        column.asideShown = shown
+        if shown, let list = column.aside as? Column { refreshList(list, kind: list.kind) }
+        layoutPage()
+        saveLayout()
+    }
+
+    /// Shown — over the column, when there is no room beside it — or put away.
+    private func flipAside(_ column: Column) {
+        watchFloatingAsides()
+        let shown = !asideVisible(column)
+        column.asideFloats = shown
+        setAside(shown: shown, column)
+    }
+
+    /// Column ▸ Show or Hide the List: what is beside the column worked in.
+    @objc func toggleAside(_ sender: Any?) {
+        let column = focusedColumn
+        guard column.aside != nil else { return NSSound.beep() }
+        flipAside(column)
     }
 
     private func refreshInbox(_ column: Column) { refreshList(column, kind: .inbox) }
 
     private func refreshInboxes() {
-        for column in columns where column.isList { refreshList(column, kind: column.kind) }
+        for column in columns {
+            if let list = column.aside as? Column, list.isList { refreshList(list, kind: list.kind) }
+        }
     }
 
     // MARK: A list, the note chosen beside it
@@ -1959,35 +2250,32 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         // The one chosen gone — done with — the one after it, or the last.
         let at = column.listSelection.flatMap(before.firstIndex(of:)) ?? 0
         let next = refs.isEmpty ? nil : refs[min(at, refs.count - 1)]
+        let chosen = column.listSelection
         column.listSelection = nil
-        if let next, column === active || !before.isEmpty { chooseListed(next, from: column) }
+        // Only when the column still shows the one that went.
+        guard let next, let host = column.host, chosen.map({ host.kind == .note($0) || host.shows($0) }) ?? false else { return }
+        chooseListed(next, from: column)
     }
 
-    /// A list column narrower than a note's: a share of the width, as Mail's list.
-    private func listNarrow(_ column: Column) {
-        guard column.share == 1 else { return }
-        column.share = 0.6
-        layoutPage()
-    }
-
-    /// A note chosen from a list: open in the column beside it — in place of
-    /// the one chosen before it, not over it, so the stack does not grow.
-    private func chooseListed(_ ref: NoteRef, from list: Column) {
-        let previous = list.listSelection
+    /// A note chosen from a list: open in its column — in place of the one
+    /// chosen before it, not over it, so the stack does not grow.
+    private func chooseListed(_ ref: NoteRef, from list: Column, pushing: Bool = true) {
+        guard let column = list.host else { return }
         list.listSelection = ref
-        let (column, fresh) = columnBeside(list)
         column.saveAll()
-        if !fresh, previous.map({ column.kind != .note($0) && !column.shows($0) }) ?? true { push(column) }
+        // Showing something not from the list: that kept, under it.
+        let fromList = column.current.map { list.listed.contains($0.ref) } ?? false
+        if pushing, !fromList { push(column) }
         show(ref.path, in: column)
-        active = list
+        active = column
         window?.makeFirstResponder(list)
         showHeading()
         saveLayout()
     }
 
-    /// ↓ pressed in the list column so many times: for a script.
+    /// ↓ pressed in a list so many times: for a script.
     func stepListForScript(_ steps: Int) {
-        guard let list = columns.first(where: { $0.isList }), let window else { return }
+        guard let list = columns.lazy.compactMap({ $0.aside as? Column }).first(where: \.isList), let window else { return }
         window.makeFirstResponder(list)
         for _ in 0..<steps {
             if let down = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
@@ -2004,7 +2292,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// Into the note open beside the list: the keyboard in it.
     private func enterListed(from list: Column) {
-        guard let ref = list.listSelection, let (column, _) = Optional(columnBeside(list)), let view = column.view(for: ref) else { return }
+        guard let column = list.host, let view = column.current else { return }
         active = column
         window?.makeFirstResponder(view.editor)
     }
@@ -2364,6 +2652,12 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// A day, in a column: its timeline taken there, or one put on it.
     private func goTo(_ day: Day, in column: Column) {
+        // A day's blocks: the other day's, in their place.
+        if column.isBlocks {
+            showBlocks(day, in: column)
+            saveLayout()
+            return
+        }
         let column = column.isTimeline ? column : wholeColumn(column)
         active = column
         let ref = NoteRef.day(day)
@@ -2441,17 +2735,12 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     /// Whether a column has the controls: the one worked in — or, a list
     /// worked in, the note beside it, the list being part of it.
-    private func isFocus(_ column: Column, active: Column?) -> Bool {
-        guard let active else { return false }
-        if column === active { return !column.isList }
-        guard active.isList, let i = columns.firstIndex(where: { $0 === active }), i + 1 < columns.count else { return false }
-        return columns[i + 1] === column
-    }
+    private func isFocus(_ column: Column, active: Column?) -> Bool { column === active }
 
     // MARK: Daily, a day at a time
 
     /// The daily column the keyboard is in — or the first there is.
-    private var dailyColumn: Column? { focusedColumn.isPaged ? focusedColumn : columns.first { $0.isPaged } }
+    private var dailyColumn: Column? { focusedColumn.isDayPage ? focusedColumn : columns.first { $0.isDayPage } }
 
     @objc func previousDay(_ sender: Any?) {
         guard let column = dailyColumn else { return NSSound.beep() }
@@ -2494,7 +2783,7 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             guard let self, event.hasPreciseScrollingDeltas else { return event }
             if event.phase == .began {
                 let point = event.locationInWindow
-                daySwipe = columns.first { $0.isPaged && $0.convert($0.bounds, to: nil).contains(point) }.map { ($0, 0, false) }
+                daySwipe = columns.first { $0.isDayPage && $0.convert($0.bounds, to: nil).contains(point) }.map { ($0, 0, false) }
             }
             guard var swipe = daySwipe else { return event }
             // Across, not down: as a page is turned.
@@ -2762,6 +3051,12 @@ final class PrismWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             return Column.pagedDays
         }
         if item.action == #selector(previousDay(_:)) || item.action == #selector(nextDay(_:)) { return dailyColumn != nil }
+        if item.action == #selector(toggleAside(_:)) {
+            let column = focusedColumn
+            let name = column.aside is TaskShelf ? "Tasks" : "List"
+            item.title = (asideVisible(column) ? "Hide " : "Show ") + name
+            return column.aside != nil
+        }
         switch item.action {
         case #selector(chooseTypeface(_:)):
             item.state = item.representedObject as? String == face.rawValue ? .on : .off

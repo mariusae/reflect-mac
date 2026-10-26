@@ -291,6 +291,21 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { controller.stepListForScript(steps) }
         }
         if environment["PRISM_TASKS"] == "1" { controller.showTasks(nil) }
+        // `PRISM_BLOCKS=1`: a day's time blocks, in a column.
+        if environment["PRISM_BLOCKS"] == "1" {
+            let blocks = controller.timeBlocksForScript()
+            // `PRISM_BLOCKS_DROP=<path>#<ordinal>@<minute>`: a task dropped on the day.
+            if let spec = environment["PRISM_BLOCKS_DROP"], let at = spec.lastIndex(of: "@"), let hash = spec.lastIndex(of: "#"),
+               let ordinal = Int(spec[spec.index(after: hash)..<at]), let minute = Int(spec[spec.index(after: at)...]), let blocks {
+                blocks.place(task: String(spec[..<hash]), ordinal: ordinal, on: blocks.day, start: minute)
+            }
+            if let spec = environment["PRISM_BLOCKS_MOVE"] { blocks?.moveForScript(spec) }
+            if let n = environment["PRISM_BLOCKS_EDIT"].flatMap(Int.init) { blocks?.editForScript(n) }
+        }
+        // `PRISM_THEN_OPEN=<path>`: opened, as by ⌘O, a moment after — wherever the keyboard is.
+        if let path = environment["PRISM_THEN_OPEN"] { DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { controller.open(path) } }
+        // `PRISM_ASIDE_HIDE=1`: what is beside the column worked in, put away.
+        if environment["PRISM_ASIDE_HIDE"] == "1" { controller.toggleAside(nil) }
         for choice in (environment["PRISM_BAR"] ?? "").split(separator: "|") { controller.sheetBarForScript(String(choice)) }
         if let steps = environment["PRISM_STACK"] { controller.stackForScript(steps) }
         // `PRISM_CALENDAR_SNAP=<png>`: the calendar, this month, drawn.
@@ -522,6 +537,9 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("Pinned", #selector(PrismWindowController.showPinned(_:)), "u", [.command, .option]),
             item("Tasks", #selector(PrismWindowController.showTasks(_:)), "k", [.command, .option]),
             item("Search", #selector(PrismWindowController.showSearch(_:)), "f", [.command, .option]),
+            .separator(),
+            item("Time Blocks", #selector(PrismWindowController.showTimeBlocks(_:)), "b", [.command, .shift]),
+            item("Show List", #selector(PrismWindowController.toggleAside(_:)), "l", [.command, .option]),
             .separator(),
             // The same, ⇧ held: in a new column, whatever is to the right.
             item("Daily in New Column", #selector(PrismWindowController.showTimeline(_:)), "t", [.command, .option, .shift]),

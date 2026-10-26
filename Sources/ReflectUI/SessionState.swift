@@ -90,6 +90,10 @@ package final class SessionState {
         package var collapsed: Bool?
         /// The sheets gone back from, to go forward to again: the nearest first.
         package var ahead: [ColumnPlace]?
+        /// What is beside it, at its left: `inbox`, `pinned`, `tasks`.
+        package var aside: String?
+        /// Whether what is beside it is put away.
+        package var asideHidden: Bool?
 
         package init(kind: String, note: String?, top: String?, offset: Double) {
             self.kind = kind

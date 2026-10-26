@@ -163,7 +163,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         scroll.showsVerticalScrollIndicator = false
         view.addSubview(scroll)
         scroll.addSubview(content)
-        view.addSubview(scrubber)
+        // No outline scrubber down the side: never shown.
         // Under the clock, the page plain: not the system's blur of what
         // scrolls beneath, which half shows it.
         scroll.topEdgeEffect.isHidden = true

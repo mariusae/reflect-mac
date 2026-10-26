@@ -36,6 +36,8 @@ final class Column: NSView, OutlineTextViewNavigator {
         case search(String)
         /// A link note's page, on the web, marked with its highlights.
         case web(NoteRef)
+        /// A day's time blocks, down its hours.
+        case blocks(Day)
     }
 
     let graph: Graph
@@ -234,9 +236,7 @@ final class Column: NSView, OutlineTextViewNavigator {
         titlePill.action = #selector(titlePillClicked)
         titlePill.isHidden = true
         addSubview(titlePill)
-        // No band over the top: the notes run up to the window's edge.
-        addSubview(scrubber)
-        // Out of sight till pointed at.
+        // No outline scrubber down the side: never shown, on any page.
         scrubber.alphaValue = 0
         addSubview(tip)
         addSubview(close)
@@ -342,6 +342,73 @@ final class Column: NSView, OutlineTextViewNavigator {
         if event.trackingArea === hoverArea { pointerInside = false } else { super.mouseExited(with: event) }
     }
     @objc private func foldClicked() { onFold?(self) }
+
+    // MARK: Beside it
+
+    /// What goes with the column, at its left — a list of notes to choose
+    /// from, the tasks to block — part of it, not a column of its own:
+    /// shown and hidden from the button at the left of its title bar.
+    private(set) var aside: NSView?
+    var asideShown = true {
+        didSet {
+            guard asideShown != oldValue else { return }
+            updateAsideButton()
+            needsLayout = true
+        }
+    }
+    /// Shown over the column, there being no room beside it: asked for so.
+    var asideFloats = false
+    /// Its button clicked: shown, or hidden.
+    var onToggleAside: ((Column) -> Void)?
+    /// The column a list is beside: what it chooses is shown there.
+    weak var host: Column?
+    private var asideButton: CloseButton?
+    private var asideName = ""
+
+    /// Something put beside the column — nil, what was there let go — and
+    /// the button for it, its symbol and what it is called.
+    func setAside(_ view: NSView?, symbol: String = "sidebar.left", name: String = "") {
+        if aside !== view { aside?.removeFromSuperview() }
+        aside = view
+        asideName = name
+        asideButton?.removeFromSuperview()
+        asideButton = nil
+        if view != nil {
+            let button = CloseButton(symbol: symbol, pointSize: 13, toolTip: "")
+            button.contentTintColor = Ink.secondary
+            button.target = self
+            button.action = #selector(asideClicked)
+            addSubview(button)
+            asideButton = button
+            updateAsideButton()
+        }
+        needsLayout = true
+    }
+
+    private func updateAsideButton() {
+        asideButton?.toolTip = (asideShown ? "Hide " : "Show ") + asideName + " (⌥⌘L)"
+        asideButton?.contentTintColor = asideShown ? Ink.text : Ink.secondary
+    }
+
+    @objc private func asideClicked() { onToggleAside?(self) }
+
+    /// Whether a point in the window is on the button for what is beside it.
+    func isOnAsideButton(_ point: NSPoint) -> Bool {
+        guard let asideButton, !asideButton.isHidden else { return false }
+        return asideButton.convert(asideButton.bounds, to: nil).contains(point)
+    }
+
+    /// What the window puts at the right of this column's title bar — the
+    /// block it is now — before its own controls.
+    var titleAccessory: NowPill? {
+        didSet {
+            guard titleAccessory !== oldValue else { return }
+            if let titleAccessory { addSubview(titleAccessory) }
+            needsLayout = true
+        }
+    }
+    /// Where the controls at the right of the title bar start, from the column's left.
+    private(set) var titleBarControlsLeft: CGFloat = 0
 
     // MARK: The bar of sheets to add
 
@@ -845,6 +912,8 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     /// The inbox, or the pinned: each a line or two, the one chosen open beside.
     func showList(_ refs: [NoteRef], kind: Kind) {
+        // Its controls, as a list's: none.
+        if kind != self.kind { needsLayout = true }
         if self.kind != kind { removeBlocks() } else { blocks.forEach { $0.removeFromSuperview() } }
         self.kind = kind
         let head = InboxHeader(metrics: metrics, title: kind == .pinned ? "Pinned" : "Inbox")
@@ -1326,7 +1395,7 @@ final class Column: NSView, OutlineTextViewNavigator {
     /// The views, from home held: the days, the inbox, the tasks, search, the calendar.
     private func showViews(from view: NSView) {
         let menu = NSMenu()
-        for choice in [SheetBar.Choice.timeline, .inbox, .pinned, .tasks, .search] {
+        for choice in [SheetBar.Choice.timeline, .blocks, .inbox, .pinned, .tasks, .search] {
             let item = ClosureMenuItem(title: choice.name) { [weak self] in
                 guard let self else { return }
                 onAddSheet?(self, choice)
@@ -1393,6 +1462,7 @@ final class Column: NSView, OutlineTextViewNavigator {
             case .search: "magnifyingglass"
             case .backlinks: "arrow.turn.up.left"
             case .note, .web: "doc.text"
+            case .blocks: "clock"
             }
             panel.show(Self.kindName(kind), font: font, cover: nil, symbol: symbol)
         }
@@ -1416,6 +1486,7 @@ final class Column: NSView, OutlineTextViewNavigator {
         case .tasks: "Tasks"
         case .search(let query): query.isEmpty ? "Search" : "Search for “\(query)”"
         case .web: "A page on the web"
+        case .blocks: "Time blocks"
         }
     }
 
@@ -1592,10 +1663,44 @@ final class Column: NSView, OutlineTextViewNavigator {
         view.standsAlone = true
         existing.values.forEach(letGo)
         // The week, fixed at the column's top: the page scrolls under it, as on the iPhone.
-        weekStrip?.removeFromSuperview()
-        weekStrip = nil
         let week = GraphPaths.week(fromWeeklyPath: ref.path)
         if Self.showsMonth, let day = ref.day ?? week?.monday {
+            pinWeek(day: day, week: week)
+        } else {
+            weekStrip?.removeFromSuperview()
+            weekStrip = nil
+        }
+        blocks = [view]
+        relayout()
+        if !same { scroll(toY: 0, animated: false) }
+    }
+
+    /// A day's time blocks, its week over them: the page made for it, in
+    /// place of what was shown.
+    func showBlocks(_ day: Day, page: ColumnBlock) {
+        let same = blocks.count == 1 && blocks[0] === page
+        if !same {
+            removeBlocks()
+            document.addSubview(page)
+        }
+        kind = .blocks(day)
+        entries = [.day(day)]
+        shown = 0..<1
+        settled = true
+        pinWeek(day: day, week: nil)
+        blocks = [page]
+        relayout()
+    }
+
+    var isBlocks: Bool { if case .blocks = kind { true } else { false } }
+    /// A day at a time — its own page, or its blocks: stepped through.
+    var isDayPage: Bool { isPaged || isBlocks }
+
+    /// The week over a day, fixed at the column's top.
+    private func pinWeek(day: Day, week: Week?) {
+        weekStrip?.removeFromSuperview()
+        weekStrip = nil
+        do {
             let strip = WeekStrip(day: day, week: week, marks: dayMarks?() ?? [:], metrics: metrics)
             strip.onChoose = { [weak self] day in
                 guard let self else { return }
@@ -1613,9 +1718,6 @@ final class Column: NSView, OutlineTextViewNavigator {
             weekStrip = strip
             needsLayout = true
         }
-        blocks = [view]
-        relayout()
-        if !same { scroll(toY: 0, animated: false) }
     }
 
     /// The week over a day's page, fixed at the top.
@@ -1644,7 +1746,7 @@ final class Column: NSView, OutlineTextViewNavigator {
 
     /// The day before or after the one shown.
     func stepDay(_ step: Int) {
-        guard isPaged, let day = entries.first?.day else { return }
+        guard isDayPage, let day = entries.first?.day else { return }
         onGoToDay?(self, day.adding(step))
     }
 
@@ -1902,8 +2004,21 @@ final class Column: NSView, OutlineTextViewNavigator {
         weekStrip?.frame = NSRect(x: 0, y: bounds.height - stripTop - WeekStrip.height, width: bounds.width,
                                   height: WeekStrip.height + stripTop)
         sticky.titleLeft = max(cards.minX + CardSurface.outset + metrics.indent - 2, titleBarLeft)
+        if let asideButton {
+            asideButton.frame = NSRect(x: max(10, titleBarLeft), y: (topMiddle - 12).rounded(), width: 26, height: 24)
+            asideButton.isHidden = isCollapsed
+            sticky.titleLeft = max(sticky.titleLeft, asideButton.frame.maxX + 10)
+        }
         let controlsStart = stackPill.alphaValue > 0 && pillWidth > 0 ? stackPill.frame.minX : groundLeft
+        titleBarControlsLeft = close.isHidden ? bounds.width - 8 : controlsLeft - 7
         sticky.whenRight = max(16, bounds.width - controlsStart + 12)
+        if let pill = titleAccessory, pill.superview === self, !pill.isHidden {
+            let width = pill.fittingWidth(within: min(280, max(0, titleBarControlsLeft - sticky.titleLeft - 140)))
+            pill.frame = NSRect(x: titleBarControlsLeft - 8 - width, y: (topMiddle - NowPill.height / 2).rounded(), width: width, height: NowPill.height)
+            // No room: not there, till there is.
+            pill.alphaValue = width < 90 ? 0 : 1
+            if width >= 90 { sticky.whenRight += width + 12 }
+        }
         sticky.isHidden = isWeb
         updateSticky()
         switcher?.frame = bounds
@@ -1933,13 +2048,24 @@ final class Column: NSView, OutlineTextViewNavigator {
         // here — its own heading gone up under it, its card still there.
         // A day's page: always named in the bar, over its week — Today, and its date.
         if weekStrip != nil, let ref = entries.first {
-            let (name, when) = Self.pageName(ref)
+            var (name, when) = Self.pageName(ref)
+            if isBlocks { when = "Time Blocks" }
             sticky.ruled = false
             sticky.show(name: name, when: when, titleFont: titleFont, whenFont: whenFont)
             sticky.onClick = nil
             return
         }
         sticky.ruled = true
+        // A note alone: always named over it. A list: the bar plain.
+        if case .note(let ref) = kind {
+            sticky.show(name: Self.name(of: ref).title, when: Self.when(of: ref), titleFont: titleFont, whenFont: whenFont)
+            sticky.onClick = { [weak self] in self?.scroll(toY: 0, animated: true) }
+            return
+        }
+        if isList {
+            sticky.show(name: nil, when: nil, titleFont: titleFont, whenFont: whenFont)
+            return
+        }
         guard !isWeb, let block = blocks.last(where: { $0.frame.minY <= top + 4 }), let head = block.stickyTitle,
               block.frame.minY + 44 < top, block.frame.maxY - top > 40 else {
             if sticky.shown != nil { needsLayout = true }
@@ -2651,8 +2777,8 @@ final class StickyHeader: NSView {
     /// A hairline under it, when it names something scrolled up under it — not over a week.
     var ruled = true { didSet { if ruled != oldValue { needsDisplay = true } } }
 
+    /// Always there, across every column: the page's colour, a hairline under.
     override func draw(_ dirtyRect: NSRect) {
-        guard shown != nil else { return }
         Ink.paper.setFill()
         bounds.fill()
         guard ruled else { return }
@@ -2728,9 +2854,13 @@ final class StickyHeader: NSView {
     private func restFrames() -> (title: NSRect, when: NSRect) {
         let whenSize = when.intrinsicContentSize
         let whenWidth = ceil(whenSize.width) + 4
-        let whenFrame = NSRect(x: bounds.width - whenRight - whenWidth, y: ((bounds.height - whenSize.height) / 2).rounded(),
+        var whenFrame = NSRect(x: bounds.width - whenRight - whenWidth, y: ((bounds.height - whenSize.height) / 2).rounded(),
                                width: whenWidth, height: ceil(whenSize.height))
         let titleHeight = ceil(title.intrinsicContentSize.height)
+        // Short of room: the when gives way to the name.
+        if ceil(title.intrinsicContentSize.width) > whenFrame.minX - 12 - titleLeft {
+            whenFrame = NSRect(x: bounds.width - whenRight, y: whenFrame.minY, width: 0, height: whenFrame.height)
+        }
         let titleFrame = NSRect(x: titleLeft, y: ((bounds.height - titleHeight) / 2).rounded(),
                                 width: max(0, whenFrame.minX - 12 - titleLeft), height: titleHeight)
         return (titleFrame, whenFrame)
@@ -2815,7 +2945,7 @@ final class SheetBar: NSView {
     override var mouseDownCanMoveWindow: Bool { false }
 
     enum Choice: CaseIterable {
-        case timeline, backlinks, inbox, pinned, tasks, search
+        case timeline, backlinks, inbox, pinned, tasks, search, blocks
 
         var symbol: String {
             switch self {
@@ -2825,6 +2955,7 @@ final class SheetBar: NSView {
             case .pinned: "pin"
             case .tasks: "checkmark.circle"
             case .search: "magnifyingglass"
+            case .blocks: "clock"
             }
         }
 
@@ -2836,6 +2967,7 @@ final class SheetBar: NSView {
             case .pinned: "Pinned"
             case .tasks: "Tasks"
             case .search: "Search"
+            case .blocks: "Time Blocks"
             }
         }
     }
