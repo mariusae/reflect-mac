@@ -41,8 +41,8 @@ extension Notification.Name {
 }
 
 /// Over every pane, floating on glass, the same in the same places: at the
-/// left, back — and forward, when there is a way forward; at the right, a
-/// day's two faces, how many link to what is shown, and ⋯. What is shown is
+/// left, back — and forward, when there is a way forward — and ⋯; at the
+/// right, a day's other face, to turn to, and how many link to what is shown. What is shown is
 /// named in the bar at the foot, not here. Read down into the page, they go;
 /// read back up, they come again. Back held: the way back, to go to any of it.
 final class PaneBar: UIView {
@@ -75,9 +75,8 @@ final class PaneBar: UIView {
     private let trailing = PaneBar.glass()
     private let back = UIButton(type: .system)
     private let forward = UIButton(type: .system)
-    private let faces = UISegmentedControl(items: [
-        UIImage(systemName: "text.alignleft") as Any, UIImage(systemName: "calendar.day.timeline.left") as Any,
-    ])
+    /// The day's other face: the hours, from its outline; the outline, from its hours.
+    private let faces = UIButton(type: .system)
     private let linked = UIButton(type: .system)
     private let more = UIButton(type: .system)
     private(set) var isTucked = false
@@ -87,7 +86,10 @@ final class PaneBar: UIView {
     /// A day's face, when it has two: nil, none to choose.
     var face: DayFace? {
         didSet {
-            if let face { faces.selectedSegmentIndex = face == .outline ? 0 : 1 }
+            if let face {
+                faces.setImage(Self.mark(face == .outline ? "calendar.day.timeline.left" : "text.alignleft"), for: .normal)
+                faces.accessibilityLabel = face == .outline ? "Schedule" : "Outline"
+            }
             setNeedsLayout()
         }
     }
@@ -117,13 +119,11 @@ final class PaneBar: UIView {
         forward.setImage(Self.mark("chevron.right", size: 18), for: .normal)
         forward.accessibilityLabel = "Forward"
         forward.addAction(UIAction { [weak self] _ in self?.onForward?() }, for: .touchUpInside)
-        faces.selectedSegmentIndex = 0
-        faces.accessibilityLabel = "Outline or Schedule"
         faces.addAction(UIAction { [weak self] _ in
-            guard let self else { return }
+            guard let self, let face else { return }
             UISelectionFeedbackGenerator().selectionChanged()
-            onFace?(faces.selectedSegmentIndex == 0 ? .outline : .schedule)
-        }, for: .valueChanged)
+            onFace?(face == .outline ? .schedule : .outline)
+        }, for: .touchUpInside)
         var linksStyle = UIButton.Configuration.plain()
         linksStyle.image = Self.mark("arrow.turn.up.left", size: 15)
         linksStyle.imagePadding = 4
@@ -140,13 +140,13 @@ final class PaneBar: UIView {
         more.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] done in
             done(self?.menu?().children ?? [])
         }])
-        for view in [back, forward, linked, more] as [UIView] { view.tintColor = Ink.text }
+        for view in [back, forward, faces, linked, more] as [UIView] { view.tintColor = Ink.text }
         // A pointer, on the iPad: each lit under it.
-        for button in [back, forward, linked, more] { button.isPointerInteractionEnabled = true }
+        for button in [back, forward, faces, linked, more] { button.isPointerInteractionEnabled = true }
         addSubview(leading)
         addSubview(trailing)
-        for view in [back, forward] as [UIView] { leading.contentView.addSubview(view) }
-        for view in [faces, linked, more] as [UIView] { trailing.contentView.addSubview(view) }
+        for view in [back, forward, more] as [UIView] { leading.contentView.addSubview(view) }
+        for view in [faces, linked] as [UIView] { trailing.contentView.addSubview(view) }
         NotificationCenter.default.addObserver(self, selector: #selector(chromeHidden(_:)), name: .prismChromeHidden, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(edgeRoomChanged), name: .prismEdgeRoom, object: nil)
     }
@@ -212,7 +212,7 @@ final class PaneBar: UIView {
             leading.transform = transforms[0]
             trailing.transform = transforms[1]
         }
-        // At the left: back, and forward after it.
+        // At the left: back, forward after it, and ⋯.
         var x: CGFloat = 0
         back.isHidden = !showsBack
         if showsBack {
@@ -224,30 +224,32 @@ final class PaneBar: UIView {
             forward.frame = CGRect(x: x - (showsBack ? 6 : 0), y: 0, width: side, height: side)
             x = forward.frame.maxX
         }
-        leading.isHidden = x == 0
+        // Alone, round as a button; after back and forward, close to them.
+        more.frame = CGRect(x: x == 0 ? 0 : x - 6, y: 0, width: side, height: side)
+        x = more.frame.maxX
+        leading.isHidden = false
         leading.frame = CGRect(x: 16 + leftRoom, y: y, width: x, height: side)
-        // At the right: the faces, how many link here, ⋯ — in that order.
-        var width: CGFloat = 4
+        // At the right: the day's other face, and how many link here.
+        var width: CGFloat = 0
         faces.isHidden = face == nil
         if !faces.isHidden {
-            faces.frame = CGRect(x: width + 2, y: (side - 32) / 2, width: 84, height: 32)
-            width = faces.frame.maxX + 2
+            faces.frame = CGRect(x: 0, y: 0, width: side, height: side)
+            width = faces.frame.maxX
         }
         linked.isHidden = linkedCount == nil || linkedCount == 0
         if !linked.isHidden {
             let w = linked.intrinsicContentSize.width
-            linked.frame = CGRect(x: width, y: 0, width: w, height: side)
-            width = linked.frame.maxX
+            linked.frame = CGRect(x: width == 0 ? 4 : width - 6, y: 0, width: w, height: side)
+            width = linked.frame.maxX + 6
         }
-        more.frame = CGRect(x: width, y: 0, width: 40, height: side)
-        width = more.frame.maxX + 2
+        trailing.isHidden = width == 0
         trailing.frame = CGRect(x: bounds.width - 16 - width, y: y, width: width, height: side)
     }
 
     /// Only the controls are the bar's, to the touch: the page under the rest.
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         guard !isTucked else { return false }
-        return (!leading.isHidden && leading.frame.insetBy(dx: -4, dy: -4).contains(point)) || trailing.frame.insetBy(dx: -4, dy: -4).contains(point)
+        return leading.frame.insetBy(dx: -4, dy: -4).contains(point) || (!trailing.isHidden && trailing.frame.insetBy(dx: -4, dy: -4).contains(point))
     }
 }
 
