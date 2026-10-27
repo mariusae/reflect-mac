@@ -58,18 +58,16 @@ final class QueueController: UIViewController {
         let symbols = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
         var snoozing = UIButton.Configuration.plain()
         snoozing.image = UIImage(systemName: "clock", withConfiguration: symbols)
-        snoozing.title = "Snooze"
-        snoozing.imagePadding = 7
         snoozing.baseForegroundColor = Ink.text
         snooze.configuration = snoozing
         snooze.showsMenuAsPrimaryAction = true
         snooze.menu = snoozeMenu()
         var finishing = UIButton.Configuration.plain()
         finishing.image = UIImage(systemName: "checkmark", withConfiguration: symbols)
-        finishing.title = "Done"
-        finishing.imagePadding = 7
         finishing.baseForegroundColor = Ink.text
         done.configuration = finishing
+        snooze.accessibilityLabel = "Snooze"
+        done.accessibilityLabel = "Done"
         done.accessibilityHint = "Takes it out of the inbox, and shows the next"
         done.addAction(UIAction { [weak self] _ in self?.finish() }, for: .touchUpInside)
         for button in [snooze, done] {
@@ -85,20 +83,23 @@ final class QueueController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         reader?.view.frame = view.bounds
-        let width = min(view.bounds.width - 32, 300)
+        // At the foot's right, in a row with the reader's ‹ › at its left.
+        let button: CGFloat = 52
+        let width = button * 2
         let foot = max(view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom, 12) + 4
         // Placed by its centre: its sliding away moves it by its transform.
         bar.bounds = CGRect(x: 0, y: 0, width: width, height: Self.barHeight)
-        bar.center = CGPoint(x: view.bounds.midX.rounded(), y: view.bounds.height - foot - Self.barHeight / 2)
-        snooze.frame = CGRect(x: 0, y: 0, width: width / 2, height: Self.barHeight)
-        done.frame = CGRect(x: width / 2, y: 0, width: width / 2, height: Self.barHeight)
-        rule.frame = CGRect(x: (width / 2).rounded(), y: 14, width: 1, height: Self.barHeight - 28)
+        bar.center = CGPoint(x: view.bounds.width - 16 - width / 2, y: view.bounds.height - foot - Self.barHeight / 2)
+        snooze.frame = CGRect(x: 0, y: 0, width: button, height: Self.barHeight)
+        done.frame = CGRect(x: button, y: 0, width: button, height: Self.barHeight)
+        rule.frame = CGRect(x: button, y: 12, width: 1, height: Self.barHeight - 24)
         let size = rest.systemLayoutSizeFitting(CGSize(width: view.bounds.width - 64, height: .greatestFiniteMagnitude))
         rest.frame = CGRect(x: 32, y: (view.bounds.height - size.height) / 2 - 20, width: view.bounds.width - 64, height: size.height)
         view.bringSubviewToFront(bar)
     }
 
-    private static let barHeight: CGFloat = 52
+    /// As tall as the reader's ‹ ›, beside it.
+    private static let barHeight: CGFloat = 44
 
     // MARK: The queue
 
@@ -121,6 +122,7 @@ final class QueueController: UIViewController {
             let reader = ReaderController(store: store, notePath: path, sources: ReaderController.sources(of: path, store: store))
             reader.standalone = true
             reader.footRoom = Self.barHeight + 12
+            reader.carouselAtLeft = true
             reader.onChromeHidden = { [weak self] hidden in self?.setBarHidden(hidden) }
             addChild(reader)
             reader.view.frame = view.bounds

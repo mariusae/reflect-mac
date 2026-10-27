@@ -175,8 +175,11 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
     /// no ‹ in its band.
     var standalone = false
 
-    /// Room at the foot for the app's own controls, under the ‹ › and the page's end.
+    /// Room at the foot for the app's own controls: the page's end above them.
     var footRoom: CGFloat = 0
+    /// The ‹ › at the foot's left, in a row with the app's own controls —
+    /// else in the middle, over them.
+    var carouselAtLeft = false
 
     /// Its controls gone as the page is read down, or back: the app's to follow.
     var onChromeHidden: ((Bool) -> Void)?
@@ -235,25 +238,46 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         let textX = icon.frame.maxX + 10
         source.frame = CGRect(x: textX, y: 9, width: reader.frame.minX - textX - 4, height: 14)
         headline.frame = CGRect(x: textX, y: 24, width: reader.frame.minX - textX - 4, height: 19)
-        // The words start under the band, and scroll up under it.
         let inset = band.center.y + bandHeight / 2 + 12
-        if web.scrollView.contentInset.top != inset {
-            web.scrollView.contentInset = UIEdgeInsets(top: inset, left: 0, bottom: view.safeAreaInsets.bottom + 40 + footRoom, right: 0)
-            web.scrollView.verticalScrollIndicatorInsets.top = inset
-        }
+        fitInsets()
         pdf.frame = CGRect(x: 0, y: inset - 4, width: view.bounds.width, height: view.bounds.height - inset + 4)
         let countWidth = ceil(count.intrinsicContentSize.width) + 8
         let carouselWidth = 44 + countWidth + 44
         // By the screen's own edge: not above the room the app's bar is given, gone while it is read.
-        let foot = max(view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom, 12) + 4 + footRoom
+        let foot = max(view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom, 12) + 4 + (carouselAtLeft ? 0 : footRoom)
         // At the foot, always: placed by its centre, which its sliding away leaves be — not its frame, which that moves.
         carousel.bounds = CGRect(x: 0, y: 0, width: carouselWidth, height: 44)
-        carousel.center = CGPoint(x: view.bounds.midX.rounded(), y: view.bounds.height - foot - 22)
+        carousel.center = CGPoint(x: carouselAtLeft ? 16 + carouselWidth / 2 : view.bounds.midX.rounded(), y: view.bounds.height - foot - 22)
         earlier.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
         count.frame = CGRect(x: 44, y: 0, width: countWidth, height: 44)
         later.frame = CGRect(x: 44 + countWidth, y: 0, width: 44, height: 44)
         spinner.center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
         failure.frame = CGRect(x: 32, y: view.bounds.midY - 60, width: view.bounds.width - 64, height: 120)
+    }
+
+    /// What the band and the clock cover of the page. The reader's words
+    /// start under the band and scroll up under it. The site's page is told
+    /// it, as Safari tells it: a header the page pins stays in sight under
+    /// them — under the clock alone, the band away — while the rest of the
+    /// page passes under them.
+    private func fitInsets() {
+        guard let web else { return }
+        let bandBottom = band.center.y + band.bounds.height / 2
+        let bottom = view.safeAreaInsets.bottom + 40 + footRoom
+        let content: UIEdgeInsets
+        let covered: UIEdgeInsets
+        if reading || item.isPDF {
+            content = UIEdgeInsets(top: bandBottom + 12, left: 0, bottom: bottom, right: 0)
+            covered = .zero
+        } else {
+            content = UIEdgeInsets(top: 0, left: 0, bottom: bottom, right: 0)
+            covered = UIEdgeInsets(top: bandHidden ? view.safeAreaInsets.top : bandBottom + 4, left: 0, bottom: 0, right: 0)
+        }
+        if web.scrollView.contentInset != content {
+            web.scrollView.contentInset = content
+            web.scrollView.verticalScrollIndicatorInsets.top = content.top
+        }
+        if web.obscuredContentInsets != covered { web.obscuredContentInsets = covered }
     }
 
     // MARK: The page, or its words
@@ -349,6 +373,7 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         guard hidden != bandHidden else { return }
         bandHidden = hidden
         onChromeHidden?(hidden)
+        fitInsets()
         UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut]) { [self] in
             band.alpha = hidden ? 0 : 1
             band.transform = hidden ? CGAffineTransform(translationX: 0, y: -(band.center.y + band.bounds.height / 2 + 8)) : .identity

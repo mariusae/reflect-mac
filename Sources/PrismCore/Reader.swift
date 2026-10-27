@@ -238,9 +238,27 @@ function prismPlace() {
   var max = document.documentElement.scrollHeight - window.innerHeight;
   return max > 0 ? Math.max(0, Math.min(1, window.scrollY / max)) : 0;
 }
+// Whether the page pins something along its top — a header kept in
+// sight as it is read — told to whoever listens, when it changes.
+var prismPinnedLast = null;
+function prismPinned() {
+  for (var el = document.elementFromPoint(window.innerWidth / 2, 1); el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+    var position = getComputedStyle(el).position;
+    if (position === 'fixed' || position === 'sticky') return true;
+  }
+  return false;
+}
+function prismTellPinned() {
+  var pinned = window.webkit.messageHandlers.pinned;
+  if (!pinned) return;
+  var now = prismPinned();
+  if (now !== prismPinnedLast) { prismPinnedLast = now; pinned.postMessage(now); }
+}
+window.addEventListener('load', function() { prismTellPinned(); setTimeout(prismTellPinned, 1000); });
 window.addEventListener('scroll', function() {
   var moved = window.webkit.messageHandlers.moved;
   if (moved) moved.postMessage(window.scrollY);
+  prismTellPinned();
   clearTimeout(prismTimer);
   prismTimer = setTimeout(function() { window.webkit.messageHandlers.scrolled.postMessage(prismPlace()); }, 250);
 }, { passive: true });

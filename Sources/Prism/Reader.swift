@@ -43,6 +43,8 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
     private var titleWatch: NSKeyValueObservation?
     private var lastY: CGFloat = 0
     private var travel: CGFloat = 0
+    /// The site's page pins a header along its top.
+    private var pinsHeader = false
     /// Turned to another of the note's sources: the page gone at once, the
     /// spinner till the next is in.
     private var switching = false
@@ -52,7 +54,8 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
     /// The paper, under a page not in yet.
     override func draw(_ dirtyRect: NSRect) {
         Ink.paper.setFill()
-        dirtyRect.fill()
+        // Its own room only: what it is asked to draw can reach past it, over the note beside.
+        dirtyRect.intersection(bounds).fill()
     }
 
     init(session: Session, notePath: String, sources: [ReaderSource]) {
@@ -67,6 +70,7 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
         super.init(frame: .zero)
         configuration.userContentController.add(WeakMessages(self), name: "scrolled")
         configuration.userContentController.add(WeakMessages(self), name: "moved")
+        configuration.userContentController.add(WeakMessages(self), name: "pinned")
         web.navigationDelegate = self
         web.underPageBackgroundColor = Ink.paper
         web.obscuredContentInsets = NSEdgeInsets(top: PaneChrome.height, left: 0, bottom: 0, right: 0)
@@ -181,6 +185,8 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
         }
         pdf.document = nil
         chrome.reading = reading
+        pinsHeader = false
+        fitInsets()
         // The page's own paper, as the site has it; the app's, in the reader.
         web.setValue(!reading, forKey: "drawsBackground")
         edge.isHidden = true
@@ -349,6 +355,9 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
             if let fraction = message.body as? Double { ReaderPlace.save(fraction, for: placeURL, reading: reading) }
         case "moved":
             if let y = message.body as? Double { scrolled(to: CGFloat(y)) }
+        case "pinned":
+            pinsHeader = message.body as? Bool ?? false
+            fitInsets()
         default: break
         }
     }
@@ -385,7 +394,23 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
     /// under them the reader's only: a site's page has its own colours.
     private func setTucked(_ tucked: Bool) {
         chrome.setTucked(tucked)
+        fitInsets()
         edge.isHidden = !reading || lastY <= 2 || tucked
+    }
+
+    /// The site's page, laid out about the controls as Safari lays a page
+    /// out about its own: under them, its top passing under their glass —
+    /// but a header it pins in sight below them, the page starting there,
+    /// and at the top once they are away. The reader's words keep their room.
+    private var pageBelowControls: Bool { !reading && !source.isPDF && pinsHeader && !chrome.isTucked }
+
+    private func fitInsets() {
+        let top = pageBelowControls || (!reading && !source.isPDF && chrome.isTucked) ? 0 : PaneChrome.height
+        if web.obscuredContentInsets.top != top {
+            web.obscuredContentInsets = NSEdgeInsets(top: top, left: 0, bottom: 0, right: 0)
+        }
+        let frame = pageBelowControls ? NSRect(x: 0, y: PaneChrome.height, width: bounds.width, height: max(0, bounds.height - PaneChrome.height)) : bounds
+        if web.frame != frame { web.frame = frame }
     }
 
     /// The pointer up to the top: the controls back.
@@ -402,7 +427,7 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
 
     override func layout() {
         super.layout()
-        web.frame = bounds
+        fitInsets()
         pdf.frame = NSRect(x: 0, y: PaneChrome.height, width: bounds.width, height: max(0, bounds.height - PaneChrome.height))
         chrome.frame = NSRect(x: 0, y: 0, width: bounds.width, height: PaneChrome.height)
         edge.frame = NSRect(x: 0, y: 0, width: bounds.width, height: PaneChrome.height + 18)
