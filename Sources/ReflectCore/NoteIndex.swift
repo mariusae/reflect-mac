@@ -209,7 +209,7 @@ public final class NoteIndex: @unchecked Sendable {
     /// A note's name and the names it answers to, from its text.
     public static func entry(path: String, source: String, modified: Date = .distantPast) -> NoteEntry {
         let (raw, body) = CommitMessage.splitFrontmatter(source)
-        let frontmatter = raw.map(Frontmatter.init) ?? Frontmatter(raw: "")
+        let frontmatter = raw.map(Frontmatter.init(raw:)) ?? Frontmatter(raw: "")
         let day = GraphPaths.day(fromDailyPath: path)
         var titleIsHeading = false
         var title = frontmatter.scalar("title")?.trimmingCharacters(in: .whitespaces) ?? ""
@@ -329,6 +329,14 @@ public final class NoteIndex: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return keys.reduce(into: Set<String>()) { $0.formUnion(linking[$1] ?? []) }
+    }
+
+    /// The first day whose note links to a note — a page saved from the
+    /// browser is linked from the day it was saved — or nil, none.
+    public func firstDay(linking path: String) -> Day? {
+        guard let entry = entry(path) else { return nil }
+        let keys = Set([Self.foldKey(entry.title)] + entry.aliases.map(Self.foldKey))
+        return linkingPaths(to: keys).compactMap(GraphPaths.day(fromDailyPath:)).min()
     }
 
     /// The notes whose text names a file under `assets/`.
@@ -527,6 +535,11 @@ public struct Frontmatter {
 
     public init(raw: String) {
         lines = raw.split(separator: "\n", omittingEmptySubsequences: false)
+    }
+
+    /// A note's, from its text: none, a note without.
+    public init(of text: String) {
+        self.init(raw: CommitMessage.splitFrontmatter(text).raw ?? "")
     }
 
     public func scalar(_ key: String) -> String? {

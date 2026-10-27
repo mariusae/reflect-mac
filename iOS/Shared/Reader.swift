@@ -171,6 +171,16 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
     /// closes it, not back.
     var onClose: (() -> Void)?
 
+    /// The whole of an app — Prism Reader's — with nothing to go back to:
+    /// no ‹ in its band.
+    var standalone = false
+
+    /// Room at the foot for the app's own controls, under the ‹ › and the page's end.
+    var footRoom: CGFloat = 0
+
+    /// Its controls gone as the page is read down, or back: the app's to follow.
+    var onChromeHidden: ((Bool) -> Void)?
+
     func close() {
         if let onClose { return onClose() }
         if let navigation = navigationController { navigation.popViewController(animated: true) } else { dismiss(animated: true) }
@@ -215,7 +225,8 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         let bandHeight: CGFloat = 52
         band.bounds = CGRect(x: 0, y: 0, width: view.bounds.width - 24, height: bandHeight)
         band.center = CGPoint(x: view.bounds.midX, y: top + 4 + bandHeight / 2)
-        back.frame = CGRect(x: 4, y: 0, width: 40, height: bandHeight)
+        back.isHidden = standalone
+        back.frame = CGRect(x: 4, y: 0, width: standalone ? 10 : 40, height: bandHeight)
         icon.frame = CGRect(x: back.frame.maxX, y: (bandHeight - 26) / 2, width: 26, height: 26)
         type.isHidden = !reading
         type.frame = CGRect(x: band.bounds.width - (reading ? 48 : 4), y: 0, width: reading ? 44 : 0, height: bandHeight)
@@ -227,14 +238,14 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         // The words start under the band, and scroll up under it.
         let inset = band.center.y + bandHeight / 2 + 12
         if web.scrollView.contentInset.top != inset {
-            web.scrollView.contentInset = UIEdgeInsets(top: inset, left: 0, bottom: view.safeAreaInsets.bottom + 40, right: 0)
+            web.scrollView.contentInset = UIEdgeInsets(top: inset, left: 0, bottom: view.safeAreaInsets.bottom + 40 + footRoom, right: 0)
             web.scrollView.verticalScrollIndicatorInsets.top = inset
         }
         pdf.frame = CGRect(x: 0, y: inset - 4, width: view.bounds.width, height: view.bounds.height - inset + 4)
         let countWidth = ceil(count.intrinsicContentSize.width) + 8
         let carouselWidth = 44 + countWidth + 44
         // By the screen's own edge: not above the room the app's bar is given, gone while it is read.
-        let foot = max(view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom, 12) + 4
+        let foot = max(view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom, 12) + 4 + footRoom
         // At the foot, always: placed by its centre, which its sliding away leaves be — not its frame, which that moves.
         carousel.bounds = CGRect(x: 0, y: 0, width: carouselWidth, height: 44)
         carousel.center = CGPoint(x: view.bounds.midX.rounded(), y: view.bounds.height - foot - 22)
@@ -302,7 +313,7 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         guard !reading, !item.isPDF else { return }
         // Turning to it: what was there before is not its.
         source.text = ((switching ? url : web.url ?? url).host() ?? "").replacingOccurrences(of: "www.", with: "").uppercased()
-        headline.text = (switching ? nil : web.title.flatMap { $0.isEmpty ? nil : $0 }) ?? SliceBlock.name(notePath, store: store)
+        headline.text = (switching ? nil : web.title.flatMap { $0.isEmpty ? nil : $0 }) ?? name
     }
 
     /// Where its place is kept: in the reader, the note's page; else the page the site is on.
@@ -326,9 +337,18 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         if travel > 24 { setBandHidden(true) } else if travel < -16 { setBandHidden(false) }
     }
 
+    /// What the note is called.
+    private var name: String {
+        if let day = GraphPaths.day(fromDailyPath: notePath), let date = day.date {
+            return date.formatted(.dateTime.weekday(.wide).month(.wide).day())
+        }
+        return store.index?.entry(notePath)?.title ?? (notePath as NSString).lastPathComponent
+    }
+
     private func setBandHidden(_ hidden: Bool) {
         guard hidden != bandHidden else { return }
         bandHidden = hidden
+        onChromeHidden?(hidden)
         UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut]) { [self] in
             band.alpha = hidden ? 0 : 1
             band.transform = hidden ? CGAffineTransform(translationX: 0, y: -(band.center.y + band.bounds.height / 2 + 8)) : .identity

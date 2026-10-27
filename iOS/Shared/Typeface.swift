@@ -267,7 +267,7 @@ enum Ink {
     static let paper = dynamic(.white, hex(0x101010))
     /// What the cards lie on, a little darker than they are — or, the page
     /// flat, the paper itself.
-    static var page: UIColor { Card.flat ? paper : cardsPage }
+    static var page: UIColor { UserDefaults.standard.bool(forKey: "PageCards") ? cardsPage : paper }
     private static let cardsPage = dynamic(hex(0xf3f2ef), hex(0x000000))
     /// A note's card.
     static let card = dynamic(hex(0xfdfdfc), hex(0x1a1a1a))
