@@ -248,6 +248,17 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
                 InlineMarkdown.style(storage, in: paragraph, base: metrics.font(for: row), done: row.task?.isDone == true,
                                      images: images, caret: caret, pills: !inHeading, typography: metrics.typography)
             }
+            // `- > words`: a quote — its words grey, its `> ` written out only where the caret is.
+            if let marker = QuotedBullet.marker(in: text, paragraph: paragraph, row: row) {
+                let ink = metrics.typography.ink
+                let body = NSRange(location: paragraph.location, length: paragraph.length - 1)
+                storage.enumerateAttribute(.foregroundColor, in: body) { value, run, _ in
+                    if (value as? NSColor) == ink.text { storage.addAttribute(.foregroundColor, value: ink.secondary, range: run) }
+                }
+                if caret.map({ $0 < paragraph.location || $0 > NSMaxRange(marker) }) ?? true {
+                    storage.addAttribute(.outlineHidden, value: true, range: marker)
+                }
+            }
             // Headings in capitals the text does not have: drawn so, a little apart.
             if case .heading = row.kind, metrics.typography.headingsInCapitals, paragraph.length > 1 {
                 let words = NSRange(location: paragraph.location, length: paragraph.length - 1)

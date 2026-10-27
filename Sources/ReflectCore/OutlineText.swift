@@ -70,3 +70,15 @@ public enum OutlineText {
         }
     }
 }
+
+/// A bullet written `- > words`: a block quote of its own in the list — a
+/// passage highlighted on a page, under the row linking to it. Shown as a
+/// quote is: a bar for its bullet, its words grey, its `> ` hidden.
+public enum QuotedBullet {
+    /// Its `> `, in the text: nil, a row that is not one.
+    public static func marker(in text: NSString, paragraph: NSRange, row: Row) -> NSRange? {
+        guard row.kind == .bullet, row.task == nil, paragraph.length > 2, text.character(at: paragraph.location) == 0x3E else { return nil }
+        let space = text.character(at: paragraph.location + 1) == 0x20
+        return NSRange(location: paragraph.location, length: space ? 2 : 1)
+    }
+}

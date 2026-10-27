@@ -27,6 +27,10 @@ extension NSAttributedString.Key {
     static let prismBreak = NSAttributedString.Key("PrismBreak")
     /// A link drawn as a pill.
     static let prismPill = NSAttributedString.Key("PrismPill")
+    /// Inline code, and a highlight: their grounds drawn a line at a time
+    /// round their words — a background colour is filled out to the edges.
+    static let prismCode = NSAttributedString.Key("PrismCode")
+    static let prismMarked = NSAttributedString.Key("PrismMarked")
     /// On a web link's last character, flat: a small ↗ after it, in room kerned for it.
     static let prismExternal = NSAttributedString.Key("PrismExternal")
     /// Where a link goes, as tapped: a note's title, or an address.
@@ -238,6 +242,16 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             case .code, .rule: break
             default: styleInline(storage, in: paragraph, row: row)
             }
+            // `- > words`: a quote — its words grey, its `> ` written out only where the caret is.
+            if let marker = QuotedBullet.marker(in: text, paragraph: paragraph, row: row) {
+                let body = NSRange(location: paragraph.location, length: paragraph.length - 1)
+                storage.enumerateAttribute(.foregroundColor, in: body) { value, run, _ in
+                    if (value as? UIColor) == Ink.text { storage.addAttribute(.foregroundColor, value: Ink.secondary, range: run) }
+                }
+                if caret.map({ $0 < paragraph.location || $0 > NSMaxRange(marker) }) ?? true {
+                    storage.addAttribute(.prismHidden, value: true, range: marker)
+                }
+            }
             // Headings in capitals the text does not have: drawn so, a little apart.
             if case .heading = row.kind, metrics.headingsInCapitals, paragraph.length > 1 {
                 let words = NSRange(location: paragraph.location, length: paragraph.length - 1)
@@ -386,9 +400,9 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             case .strikethrough:
                 storage.addAttributes([.strikethroughStyle: NSUnderlineStyle.single.rawValue, .foregroundColor: Ink.secondary], range: content)
             case .code:
-                storage.addAttributes([.font: metrics.face.mono(round(base.pointSize * 0.88)), .backgroundColor: Ink.codeBack], range: content)
+                storage.addAttributes([.font: metrics.face.mono(round(base.pointSize * 0.88)), .prismCode: true], range: content)
             case .highlight:
-                storage.addAttribute(.backgroundColor, value: Ink.marked, range: content)
+                storage.addAttribute(.prismMarked, value: true, range: content)
             case .link(let target), .url(let target):
                 // Flat, a link is the text's own ink, a faint line under it;
                 // else blue, on a pill.
@@ -1030,6 +1044,47 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         return progressUnder?[location]
     }
 
+    /// Each line's piece of a run of text, as far as what shows of it goes —
+    /// hidden markup has no place — and as tall as `height` makes it about
+    /// the line's baseline; a line's pieces, split by hidden characters, one.
+    private func lineRects(of range: NSRange, at origin: CGPoint, outset: CGFloat,
+                           height: @escaping (UIFont, CGFloat) -> (top: CGFloat, bottom: CGFloat)) -> [CGRect] {
+        guard let storage = textStorage else { return [] }
+        var lines: [CGFloat: CGRect] = [:]
+        storage.enumerateAttribute(.prismHidden, in: range) { hidden, part, _ in
+            guard hidden == nil, part.length > 0 else { return }
+            // Its own glyphs only: a range by characters takes in the
+            // hidden glyphs either side, which have no true place.
+            let first = glyphIndexForCharacter(at: part.location)
+            let last = glyphIndexForCharacter(at: NSMaxRange(part) - 1)
+            guard last >= first else { return }
+            let glyphs = NSRange(location: first, length: last - first + 1)
+            enumerateLineFragments(forGlyphRange: glyphs) { fragment, used, _, lineGlyphs, _ in
+                let shown = NSIntersectionRange(lineGlyphs, glyphs)
+                guard shown.length > 0 else { return }
+                // From where its first glyph is to where the next one is:
+                // a bounding rect after hidden glyphs comes out wrong.
+                let last = NSMaxRange(shown) - 1
+                let start = fragment.minX + self.location(forGlyphAt: shown.location).x
+                var end = last + 1 < NSMaxRange(lineGlyphs) ? fragment.minX + self.location(forGlyphAt: last + 1).x : used.maxX
+                // Not the spaces a line breaks after, hanging past its words.
+                if last + 1 >= NSMaxRange(lineGlyphs) || NSMaxRange(shown) == NSMaxRange(lineGlyphs) {
+                    let text = storage.string as NSString
+                    var word = last
+                    while word > shown.location, text.character(at: self.characterIndexForGlyph(at: word)) == 0x20 { word -= 1 }
+                    if word < last { end = fragment.minX + self.location(forGlyphAt: word + 1).x }
+                }
+                guard end > start else { return }
+                let font = storage.attribute(.font, at: self.characterIndexForGlyph(at: shown.location), effectiveRange: nil) as? UIFont ?? self.metrics.body
+                let baseline = fragment.minY + self.location(forGlyphAt: shown.location).y
+                let (top, bottom) = height(font, baseline)
+                let rect = CGRect(x: start, y: top, width: end - start, height: bottom - top).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -outset, dy: 0)
+                lines[fragment.minY] = lines[fragment.minY].map { $0.union(rect) } ?? rect
+            }
+        }
+        return Array(lines.values)
+    }
+
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage, storage.length > 0, let container = textContainers.first else { return }
@@ -1053,43 +1108,31 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             PhoneCardView.draw(card.card, in: card.frame.offsetBy(dx: origin.x, dy: origin.y), source: card.source)
         }
         defer { drawIcons(in: covered, at: origin) }
-        // Pills behind links, as Slack draws them.
+        // Pills behind links, as Slack draws them: even about the text, as
+        // far above its capitals as below its descenders — not the line's
+        // room, which is more above.
         storage.enumerateAttribute(.prismPill, in: covered) { value, range, _ in
             guard value != nil, Self.drawsPills else { return }
-            // Behind what shows of it, a pill a line: hidden brackets have no place.
-            // A line's pieces of one pill — split by hidden characters — one shape.
-            var lines: [CGFloat: CGRect] = [:]
-            storage.enumerateAttribute(.prismHidden, in: range) { hidden, part, _ in
-                guard hidden == nil, part.length > 0 else { return }
-                // Its own glyphs only: a range by characters takes in the
-                // hidden glyphs either side, which have no true place.
-                let first = glyphIndexForCharacter(at: part.location)
-                let last = glyphIndexForCharacter(at: NSMaxRange(part) - 1)
-                guard last >= first else { return }
-                let glyphs = NSRange(location: first, length: last - first + 1)
-                enumerateLineFragments(forGlyphRange: glyphs) { fragment, used, _, lineGlyphs, _ in
-                    let shown = NSIntersectionRange(lineGlyphs, glyphs)
-                    guard shown.length > 0 else { return }
-                    // From where its first glyph is to where the next one is:
-                    // a bounding rect after hidden glyphs comes out wrong.
-                    let last = NSMaxRange(shown) - 1
-                    let start = fragment.minX + self.location(forGlyphAt: shown.location).x
-                    let end = last + 1 < NSMaxRange(lineGlyphs) ? fragment.minX + self.location(forGlyphAt: last + 1).x : used.maxX
-                    guard end > start else { return }
-                    // Even about the text: as far above its capitals as below
-                    // its descenders — not the line's room, which is more above.
-                    let font = storage.attribute(.font, at: self.characterIndexForGlyph(at: shown.location), effectiveRange: nil) as? UIFont ?? self.metrics.body
-                    let baseline = fragment.minY + self.location(forGlyphAt: shown.location).y
-                    let pad = round(font.pointSize * 0.18)
-                    let top = baseline - font.capHeight - pad
-                    let bottom = baseline - font.descender + pad - round(font.pointSize * 0.06)
-                    let rect = CGRect(x: start, y: top, width: end - start, height: bottom - top)
-                    let pill = rect.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -3, dy: 0)
-                    lines[fragment.minY] = lines[fragment.minY].map { $0.union(pill) } ?? pill
-                }
-            }
             Ink.pill.setFill()
-            for pill in lines.values { UIBezierPath(roundedRect: pill, cornerRadius: 5).fill() }
+            for pill in lineRects(of: range, at: origin, outset: 3, height: { font, baseline in
+                let pad = round(font.pointSize * 0.18)
+                return (baseline - font.capHeight - pad, baseline - font.descender + pad - round(font.pointSize * 0.06))
+            }) { UIBezierPath(roundedRect: pill, cornerRadius: 5).fill() }
+        }
+        // Inline code's ground, and a highlight's: round their words on each line.
+        storage.enumerateAttribute(.prismCode, in: covered) { value, range, _ in
+            guard value != nil else { return }
+            Ink.codeBack.setFill()
+            for rect in lineRects(of: range, at: origin, outset: 2, height: { font, baseline in
+                (baseline - font.ascender - 1, baseline - font.descender + 1)
+            }) { UIBezierPath(roundedRect: rect, cornerRadius: 4).fill() }
+        }
+        storage.enumerateAttribute(.prismMarked, in: covered) { value, range, _ in
+            guard value != nil else { return }
+            Ink.marked.setFill()
+            for rect in lineRects(of: range, at: origin, outset: 1, height: { font, baseline in
+                (baseline - font.ascender, baseline - font.descender)
+            }) { UIBezierPath(roundedRect: rect, cornerRadius: 3).fill() }
         }
         for paragraph in paragraphs {
             let row = OutlineText.style(storage, at: paragraph.location).row
@@ -1126,6 +1169,12 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             case .rule:
                 Ink.rule.setFill()
                 UIRectFill(CGRect(x: metrics.textIndent(for: row) + origin.x, y: used.midY, width: container.size.width - metrics.textIndent(for: row) - 8, height: 1))
+            case .bullet where QuotedBullet.marker(in: storage.string as NSString, paragraph: paragraph, row: row) != nil:
+                // `- > words`: a quote's bar for its bullet.
+                let last = glyphRange(forCharacterRange: NSRange(location: NSMaxRange(paragraph) - 1, length: 1), actualCharacterRange: nil)
+                let bottom = lineFragmentRect(forGlyphAt: max(last.location, glyph), effectiveRange: nil).maxY + origin.y
+                Ink.faint.setFill()
+                UIBezierPath(roundedRect: CGRect(x: markerX - 1.5, y: line.minY + 2, width: 3, height: bottom - line.minY - 6), cornerRadius: 1.5).fill()
             case .bullet, .ordered:
                 if let task = row.task {
                     let side = round(font.pointSize * 0.82)

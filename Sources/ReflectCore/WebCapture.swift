@@ -172,18 +172,45 @@ public enum WebCapture {
 
     /// The passages highlighted on what a note reads: on its own page,
     /// under its Highlights; on another page, or a PDF, under the row that
-    /// links to it — as a page saved to a day keeps them.
+    /// links to it, each a bullet of its own quoted with `> `.
     public static func highlights(in source: String, of address: String) -> [String] {
         if url(in: source) == address { return highlights(in: source) }
         let rows = Row.unfold(OutlineMarkdown.parse(source).rows)
         guard let index = rows.firstIndex(where: { $0.text.contains(address) }) else { return [] }
+        return passages(under: index, in: rows)
+    }
+
+    /// The passages in the bullets right under a row: a quoted one's lines
+    /// after its first — quote rows under it, as they are read — with it.
+    private static func passages(under index: Int, in rows: [Row]) -> [String] {
         var found: [String] = []
         var at = index + 1
         while at < rows.count, rows[at].depth > rows[index].depth {
-            if rows[at].depth == rows[index].depth + 1 { found.append(clean(rows[at].text)) }
-            at += 1
+            guard rows[at].depth == rows[index].depth + 1 else {
+                at += 1
+                continue
+            }
+            var lines = [unquoted(rows[at].text)]
+            var next = at + 1
+            while next < rows.count, rows[next].kind == .quote, rows[next].depth > rows[at].depth {
+                lines.append(unquoted(rows[next].text))
+                next += 1
+            }
+            found.append(lines.joined(separator: "\n"))
+            at = next
         }
         return found.filter { !$0.isEmpty }
+    }
+
+    /// A highlight quoted, as a row's text: `> ` before it, on one line — a
+    /// line after `> ` would be a quote of its own, under the bullet.
+    static func quoted(_ passage: String) -> String { "> " + oneLine(passage) }
+
+    /// A highlight's words, quoted or not.
+    static func unquoted(_ text: String) -> String {
+        clean(text).components(separatedBy: "\n").map { line in
+            line.hasPrefix(">") ? line.dropFirst().trimmingCharacters(in: .whitespaces) : line
+        }.joined(separator: "\n")
     }
 
     /// A note with a passage highlighted on what it reads, where
@@ -198,8 +225,9 @@ public enum WebCapture {
         var end = index + 1
         while end < rows.count, rows[end].depth > depth { end += 1 }
         let children = rows[(index + 1)..<end].filter { $0.depth == depth + 1 }
-        guard !children.contains(where: { clean($0.text) == text }) else { return source }
-        var row = Row(kind: .bullet, depth: depth + 1, text: text)
+        guard !passages(under: index, in: rows).contains(where: { oneLine($0) == oneLine(text) }) else { return source }
+        // A bullet of its own, quoted: shown as the passage, a block quote.
+        var row = Row(kind: .bullet, depth: depth + 1, text: quoted(text))
         if let sibling = children.last {
             row.extraIndent = sibling.extraIndent
             row.marker = sibling.marker

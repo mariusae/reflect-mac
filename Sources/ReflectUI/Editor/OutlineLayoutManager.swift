@@ -154,6 +154,13 @@ package final class OutlineLayoutManager: NSLayoutManager {
             guard let frame = frame(of: paragraph, origin: origin) else { continue }
             let indent = origin.x + metrics.textIndent(for: row)
 
+            // `- > words`: a quote's bar for its bullet.
+            let quoted = QuotedBullet.marker(in: storage.string as NSString, paragraph: paragraph, row: row) != nil
+            if quoted {
+                metrics.typography.ink.tertiary.setFill()
+                NSBezierPath(roundedRect: NSRect(x: indent - metrics.indent / 2 - 1.5, y: frame.minY, width: 3, height: frame.height),
+                             xRadius: 1.5, yRadius: 1.5).fill()
+            }
             switch row.kind {
             case .code:
                 NSColor.quaternaryLabelColor.withAlphaComponent(0.12).setFill()
@@ -178,7 +185,7 @@ package final class OutlineLayoutManager: NSLayoutManager {
                 break
             }
 
-            var handle = Self.handle(for: row)
+            var handle = quoted ? .none : Self.handle(for: row)
             // A row that shows no bullet is still a row: under the pointer,
             // it shows a ghost of one.
             if case .none = handle, index == view.hoveredRow, row.kind != .rule { handle = .ghost }

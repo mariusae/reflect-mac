@@ -38,9 +38,14 @@ import ReflectCore
 
     @Test func highlightsGoUnderTheRowLinkingThere() {
         let once = WebCapture.highlighting("The second pass", in: note, of: "assets/paper.pdf")
-        #expect(once.contains("  - The paper: [paper.pdf](assets/paper.pdf), and a picture ![](assets/a.png)\n    - The second pass\n"))
+        #expect(once.contains("  - The paper: [paper.pdf](assets/paper.pdf), and a picture ![](assets/a.png)\n    - > The second pass\n"))
         #expect(WebCapture.highlighting("The second pass", in: once, of: "assets/paper.pdf") == once)
         #expect(WebCapture.highlights(in: once, of: "assets/paper.pdf") == ["The second pass"])
         #expect(WebCapture.highlights(in: once, of: "https://paulgraham.com/hwh.html").isEmpty)
+        // Across lines: on one, quoted; not again.
+        let lines = WebCapture.highlighting("First line\nsecond line", in: once, of: "assets/paper.pdf")
+        #expect(lines.contains("    - > First line second line\n"))
+        #expect(WebCapture.highlights(in: lines, of: "assets/paper.pdf") == ["The second pass", "First line second line"])
+        #expect(WebCapture.highlighting("First line\nsecond line", in: lines, of: "assets/paper.pdf") == lines)
     }
 }
