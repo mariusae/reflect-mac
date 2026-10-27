@@ -13,6 +13,8 @@ cp "$(swift build -c release --show-bin-path)/Prism" "$app/Contents/MacOS/Prism"
 for family in monasans monaspace recursive gofont literata jetbrainsmono source plex fraunces alegreya lato; do
   cp Frameworks/$family/*.[ot]tf "$app/Contents/Resources/Fonts/"
 done
+# Chronicle, for the reader: the owner's, when fetch-fonts.sh found it.
+cp Frameworks/hoefler/ChronicleSSm-*.otf "$app/Contents/Resources/Fonts/" 2>/dev/null || true
 # The icon is drawn by a script, and only redrawn when the script changes.
 if [ ! -f build/PrismIcon.icns ] || [ scripts/make-prism-icon.swift -nt build/PrismIcon.icns ]; then
   iconset=build/PrismIcon.iconset

@@ -424,8 +424,10 @@ package enum InlineMarkdown {
                 switch $0.kind { case .link(let t), .url(let t): t == target; default: false }
             }), text.substring(with: span.range) == rowText, let card = images.rich(target, text: linkText) else { return }
             let face = RichCardFace(card, linkText: linkText)
+            // On its last letter: drawn under the line the link ends on —
+            // not between its lines, the link whole and wrapped, the caret in it.
             storage.addAttribute(.outlineImage, value: ImageBox(source: target, size: RichCard.size(of: face, typography: typography), isCard: true),
-                                 range: NSRange(location: span.range.location, length: 1))
+                                 range: NSRange(location: NSMaxRange(span.range) - 1, length: 1))
         }
         let found = InlineMarkup.spans(in: text, range: body)
         let resolved = images?.resolve(found) ?? found.map(unshown)
@@ -433,7 +435,7 @@ package enum InlineMarkdown {
         /// small and grey — the card says the rest. Whole while the caret is in it.
         func flatSite(_ span: InlineSpan, _ target: String) -> NSRange? {
             guard typography.flat, !span.hidesCard, text.substring(with: span.range) == rowText,
-                  storage.attribute(.outlineImage, at: span.range.location, effectiveRange: nil) != nil,
+                  span.range.length > 0, storage.attribute(.outlineImage, at: NSMaxRange(span.range) - 1, effectiveRange: nil) != nil,
                   caret.map({ NSLocationInRange($0, span.range) || $0 == NSMaxRange(span.range) }) != true,
                   var host = URL(string: target)?.host() else { return nil }
             if host.hasPrefix("www.") { host.removeFirst(4) }

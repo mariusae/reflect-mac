@@ -55,6 +55,13 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         }
         observe()
         startNow()
+        NotificationCenter.default.addObserver(forName: .prismReader, object: nil, queue: .main) { [weak self] note in
+            let reading = note.object as? Bool ?? false
+            MainActor.assumeIsolated {
+                UIView.animate(withDuration: 0.25) { self?.bar.alpha = reading ? 0 : 1 }
+                self?.bar.isUserInteractionEnabled = !reading
+            }
+        }
         openForScript()
         QuickActions.onPending = { [weak self] in self?.openQuickAction() }
         DispatchQueue.main.async { [weak self] in self?.openQuickAction() }
@@ -470,19 +477,14 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         }
     }
 
-    /// Today's note, as last read: read again when it changes, or the day does.
-    private var todayText: (day: Day, revision: Int, text: String)?
-
     private func tickNow() {
-        let today = Day.today
-        if todayText?.day != today || todayText?.revision != store.revision {
-            todayText = (today, store.revision, store.text(GraphPaths.dailyPath(for: today)))
-        }
+        // Today's note read each time: however it changed — typed in, moved
+        // on the hours, synced — the ring as it is.
+        let text = store.text(GraphPaths.dailyPath(for: .today))
         let date = Date()
         let seconds = date.timeIntervalSince(Calendar.current.startOfDay(for: date))
         let minutes = seconds / 60
-        guard let text = todayText?.text,
-              let block = DayBlocks.blocks(in: text).last(where: { Double($0.start) <= minutes && minutes < Double($0.end) }) else {
+        guard let block = DayBlocks.blocks(in: text).last(where: { Double($0.start) <= minutes && minutes < Double($0.end) }) else {
             if bar.now != nil { bar.now = nil }
             return
         }
@@ -672,7 +674,17 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
     func noteMenu(_ path: String, sheet: SheetController?) -> UIMenu {
         let entry = store.index?.entry(path)
         let day = GraphPaths.day(fromDailyPath: path)
-        var items: [UIMenuElement] = [
+        var items: [UIMenuElement] = []
+        // A link note: its page, to read.
+        if day == nil, WebCapture.url(in: store.text(path)) != nil {
+            items.append(UIAction(title: "Open Page", image: UIImage(systemName: "globe")) { [weak self, weak sheet] _ in
+                guard let self else { return }
+                sheet?.saveAll()
+                let from: UIViewController = sheet?.parent ?? shownStack.topViewController ?? self
+                ReaderController.open(notePath: path, store: store, from: from)
+            })
+        }
+        items += [
             UIAction(title: entry?.isInInbox == true ? "Take Out of Inbox" : "Add to Inbox",
                      image: UIImage(systemName: entry?.isInInbox == true ? "tray.and.arrow.up" : "tray.and.arrow.down")) { [weak self] _ in
                 self?.store.setFrontmatter(path, "inbox", entry?.isInInbox == true ? nil : "true")
@@ -902,6 +914,12 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
                 bar.field.resignFirstResponder()
                 (stacks[.search]?.viewControllers.first as? SearchController)?.searchEverything(rest)
             case "note": open(PanePlace(path: rest))
+            // A link note opened, and its page read.
+            case "reader":
+                open(PanePlace(path: rest))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    if let note = self.shownStack.topViewController { ReaderController.open(notePath: rest, store: self.store, from: note) }
+                }
             case "dictated": DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.addToToday(rest) }
             default: break
             }

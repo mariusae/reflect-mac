@@ -141,15 +141,15 @@ extension NSImage {
     }
 }
 
-/// The block on now, about Daily's mark: unlike a note's ring of how far
-/// its tasks are along — dark, filling — a heavier ring in now's red, full
-/// at the block's start and running down to its end, a bead at its tip as
-/// on a clock's hand; the rest of the circle a faint track.
+/// The block on now, about Daily's mark: how far along it is, as the now
+/// line is down it on the hours — round from twelve o'clock, a bead where
+/// now is; in now's red, heavier than a note's dark ring of its tasks, the
+/// rest of the circle a faint red track.
 @MainActor
 enum NowRing {
     static func draw(_ now: NowPill.Now, in rect: NSRect, flipped: Bool = true) {
         let total = Double(max(1, now.block.duration)) * 60
-        let left = max(0, min(1, now.remaining / total))
+        let along = max(0, min(1, 1 - now.remaining / total))
         let width: CGFloat = 2.5
         let radius = min(rect.width, rect.height) / 2 - width / 2
         let center = NSPoint(x: rect.midX, y: rect.midY)
@@ -157,9 +157,9 @@ enum NowRing {
         track.lineWidth = width
         Ink.now.withAlphaComponent(0.16).setStroke()
         track.stroke()
-        // From twelve o'clock, round as a clock goes, as much as is left.
+        // From twelve o'clock, round as a clock goes, as far as it has come.
         let start: CGFloat = flipped ? -90 : 90
-        let end = start + (flipped ? 1 : -1) * 360 * CGFloat(left)
+        let end = start + (flipped ? 1 : -1) * 360 * CGFloat(along)
         let arc = NSBezierPath()
         arc.appendArc(withCenter: center, radius: radius, startAngle: start, endAngle: end, clockwise: !flipped)
         arc.lineWidth = width

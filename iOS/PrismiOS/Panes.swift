@@ -51,6 +51,8 @@ final class PaneBar: UIView {
     var onBack: (() -> Void)?
     var onForward: (() -> Void)?
     var onLinked: (() -> Void)?
+    /// The count held: what links here, dealt out of it — the thumb's state, and where it is, in the window.
+    var onLinkedHeld: ((UIGestureRecognizer.State, CGPoint) -> Void)?
     var onFace: ((DayFace) -> Void)?
     /// The ⋯, asked for each time it opens.
     var menu: (() -> UIMenu)?
@@ -122,6 +124,9 @@ final class PaneBar: UIView {
         linked.configuration = linksStyle
         linked.accessibilityLabel = "Linked From"
         linked.addAction(UIAction { [weak self] _ in self?.onLinked?() }, for: .touchUpInside)
+        let hold = UILongPressGestureRecognizer(target: self, action: #selector(heldLinked(_:)))
+        hold.minimumPressDuration = 0.3
+        linked.addGestureRecognizer(hold)
         more.setImage(Self.mark("ellipsis"), for: .normal)
         more.accessibilityLabel = "More"
         more.showsMenuAsPrimaryAction = true
@@ -148,6 +153,16 @@ final class PaneBar: UIView {
     var top: CGFloat = 0 { didSet { if top != oldValue { setNeedsLayout() } } }
     /// Where a page starts: under the clock — the controls float over its top.
     var contentTop: CGFloat { top }
+
+    @objc private func heldLinked(_ gesture: UILongPressGestureRecognizer) {
+        if gesture.state == .began { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+        onLinkedHeld?(gesture.state, gesture.location(in: nil))
+    }
+
+    /// The count, where it is: to deal what links here out of.
+    var linkedView: UIView { linked }
+    /// The controls at the right: what is dealt lies under them.
+    var trailingView: UIView { trailing }
 
     @objc private func chromeHidden(_ note: Notification) {
         setTucked(note.object as? Bool ?? false)
@@ -235,6 +250,7 @@ final class NoteController: UIViewController {
     let store: PrismStore
     private(set) var history: PaneHistory
     let bar = PaneBar()
+    private let linkedFan = LinkedFan()
     /// What shows the place: a note's sheet, or a day's hours.
     private(set) var page: UIViewController?
     /// Makes what shows a place, links followed from it brought back here.
@@ -266,6 +282,12 @@ final class NoteController: UIViewController {
         bar.onBack = { [weak self] in self?.back() }
         bar.onForward = { [weak self] in self?.goForward() }
         bar.onLinked = { [weak self] in self?.sheet?.scrollToLinked() }
+        bar.onLinkedHeld = { [weak self] state, point in
+            guard let self else { return }
+            linkedFan.held(state, at: point, bar: bar, in: view, store: store, paths: sheet?.linkedPaths ?? [],
+                           open: { [weak self] path in self?.go(PanePlace(path: path)) },
+                           showAll: { [weak self] in self?.sheet?.scrollToLinked() })
+        }
         bar.onFace = { [weak self] face in
             guard let self else { return }
             var place = history.current
@@ -278,6 +300,10 @@ final class NoteController: UIViewController {
             return menu?(history.current) ?? UIMenu()
         }
         bar.backMenu = { [weak self] in self?.backMenu() }
+        // A link note's page, swiped in from the right: to read.
+        let read = UISwipeGestureRecognizer(target: self, action: #selector(swipedToRead))
+        read.direction = .left
+        view.addGestureRecognizer(read)
         show()
     }
 
@@ -289,6 +315,22 @@ final class NoteController: UIViewController {
         // From under the clock: the controls float over its top.
         page?.view.frame = CGRect(x: 0, y: bar.contentTop, width: view.bounds.width, height: view.bounds.height - bar.contentTop)
         view.bringSubviewToFront(bar)
+    }
+
+    @objc private func swipedToRead() {
+        guard GraphPaths.day(fromDailyPath: place.path) == nil else { return }
+        sheet?.saveAll()
+        ReaderController.open(notePath: place.path, store: store, from: self)
+    }
+
+    private var openedReader = false
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // Left reading its page: in the reader again, where it was.
+        guard !openedReader else { return }
+        openedReader = true
+        if ReaderController.openNote == place.path { ReaderController.open(notePath: place.path, store: store, from: self, animated: false) }
     }
 
     /// Somewhere new, in this pane: where it was kept behind it.

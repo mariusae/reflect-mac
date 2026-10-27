@@ -30,6 +30,8 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     /// How many notes link to the note shown, once found: its bar's count.
     var onLinkedCount: ((Int) -> Void)?
     private(set) var linkedCount: Int?
+    /// The notes linking here, as last found: the newest first.
+    private(set) var linkedPaths: [String] = []
 
     // MARK: Where it was left
 
@@ -126,6 +128,15 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         scroll.topEdgeEffect.isHidden = true
         view.addSubview(scroll)
         scroll.addSubview(content)
+        // The page under a note tapped — past its end — a row there to write in.
+        let after = UITapGestureRecognizer(target: self, action: #selector(tappedPage(_:)))
+        after.cancelsTouchesInView = false
+        content.addGestureRecognizer(after)
+        scroll.addGestureRecognizer({
+            let tap = UITapGestureRecognizer(target: self, action: #selector(tappedPage(_:)))
+            tap.cancelsTouchesInView = false
+            return tap
+        }())
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardMoved(_:)),
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         // Pulled down: a sync, now.
@@ -308,6 +319,38 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         } else {
             rows.insert(.blank, at: min(at, rows.count))
             editor.replace(rows, caret: OutlineKeys.Caret(row: at, offset: 0), undoName: "New Row")
+        }
+        relayout()
+        DispatchQueue.main.async { self.reveal(block) }
+    }
+
+    /// The page tapped under the note's end — not on what follows it, what
+    /// links here: the caret at its end, in a new row — its last row, if
+    /// that is empty already.
+    @objc private func tappedPage(_ tap: UITapGestureRecognizer) {
+        guard tap.state == .ended, let block = noteBlocks.first,
+              tap.view === content || tap.view === scroll else { return }
+        let point = tap.location(in: content)
+        // On something of the page's own: its own to answer.
+        if let hit = content.hitTest(point, with: nil), hit !== content { return }
+        let below = blocks.first { $0 !== block && $0.frame.minY > block.frame.minY }
+        guard point.y > block.frame.maxY - 12, below.map({ point.y < $0.frame.minY }) ?? true else { return }
+        writeAtEnd()
+    }
+
+    /// A new row at the end of the note, the caret in it — or its last row,
+    /// when that is empty already.
+    func writeAtEnd() {
+        guard let block = noteBlocks.first else { return }
+        if !block.isLive { block.goLive() }
+        let editor = block.editor
+        var rows = editor.rows
+        editor.becomeFirstResponder()
+        if let last = rows.last, last.text.trimmingCharacters(in: .whitespaces).isEmpty, last.task == nil, last.kind.isListItem {
+            editor.setCaret(OutlineKeys.Caret(row: rows.count - 1, offset: 0))
+        } else {
+            rows.append(.blank)
+            editor.replace(rows, caret: OutlineKeys.Caret(row: rows.count - 1, offset: 0), undoName: "New Row")
         }
         relayout()
         DispatchQueue.main.async { self.reveal(block) }
@@ -497,6 +540,9 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     private func refreshLinked(_ path: String) {
         linked(to: path) { [weak self] sources, found in
             guard let self, self.kind == .note(path), !self.isTyping else { return }
+            self.linkedPaths = found.map(\.path).sorted {
+                (self.store.index?.entry($0)?.modified ?? .distantPast) > (self.store.index?.entry($1)?.modified ?? .distantPast)
+            }
             if self.linkedCount != found.count {
                 self.linkedCount = found.count
                 self.onLinkedCount?(found.count)

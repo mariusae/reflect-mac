@@ -32,9 +32,17 @@ extension OutlineTextView {
     /// Whether the link at a place in a row shows a card.
     func hasCard(row: Int, offset: Int) -> Bool {
         guard paragraphRanges.indices.contains(row), let storage = textStorage else { return false }
-        let at = paragraphRanges[row].location + offset
-        guard at < storage.length, let box = storage.attribute(.outlineImage, at: at, effectiveRange: nil) as? ImageBox else { return false }
-        return isLinkCard(box)
+        // Its card is on its last letter: looked for along the link, from where it is.
+        let row = paragraphRanges[row]
+        let at = row.location + offset
+        guard at < NSMaxRange(row) else { return false }
+        var found = false
+        storage.enumerateAttribute(.outlineImage, in: NSRange(location: at, length: NSMaxRange(row) - at)) { value, _, stop in
+            guard let box = value as? ImageBox else { return }
+            found = isLinkCard(box)
+            stop.pointee = true
+        }
+        return found
     }
 
     /// The card in a frame hidden.

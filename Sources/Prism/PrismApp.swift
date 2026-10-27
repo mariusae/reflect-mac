@@ -195,7 +195,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
     /// picture, then quits. `PRISM_NOTE` the note to go to (a graph path),
     /// `PRISM_BESIDE` one opened beside it, `PRISM_LENS` the lens chosen,
     /// `PRISM_LIST=0` the list put away, `PRISM_SEARCH` words searched for,
-    /// `PRISM_SCHEDULE=1` today's hours, `PRISM_TYPE` text typed at the
+    /// `PRISM_SCHEDULE=1` today's hours, `PRISM_READ=1` the note's page opened, `PRISM_READER=1` its reader toggled, `PRISM_TYPE` text typed at the
     /// note's end, `PRISM_LIST_STEP` ↓ pressed in the list so many times,
     /// `PRISM_FIND` ⌘K on a query, `PRISM_FACE`, `PRISM_SIZE` the type,
     /// `PRISM_DARK=1` the dark appearance, `PRISM_WAIT` seconds to wait first.
@@ -215,6 +215,12 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         if let note = environment["PRISM_NOTE"] { window.open(note) }
         if let note = environment["PRISM_BESIDE"] { window.open(note, beside: true) }
         if environment["PRISM_SCHEDULE"] == "1" { window.showSchedule(nil) }
+        if environment["PRISM_READ"] == "1" { window.readPage(nil) }
+        if environment["PRISM_READER"] == "1" { window.readerForScript?.toggleReading() }
+        // `PRISM_HIGHLIGHT=<words>`: those words, found in the page read, highlighted — once it is in.
+        if let words = environment["PRISM_HIGHLIGHT"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { window.readerForScript?.highlightForScript(words) }
+        }
         if let query = environment["PRISM_SEARCH"] { window.searchForScript(query) }
         if let text = environment["PRISM_TYPE"], let editor = window.activePaneForScript.note?.editor {
             window.window?.makeFirstResponder(editor)
@@ -265,9 +271,10 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         }
         let wait = environment["PRISM_WAIT"].flatMap(Double.init) ?? 0.8
         DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
-            window.snapshot(to: URL(fileURLWithPath: environment["PRISM_SNAP"]!))
-            session.save()
-            exit(0)
+            window.snapshot(to: URL(fileURLWithPath: environment["PRISM_SNAP"]!)) {
+                session.save()
+                exit(0)
+            }
         }
     }
 
@@ -406,6 +413,10 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             .separator(),
             item("Add Cover…", #selector(PrismWindow.addCover(_:))),
             item("Remove Cover", #selector(PrismWindow.removeCover(_:))),
+            .separator(),
+            item("Open Page", #selector(PrismWindow.readPage(_:)), "r", [.command, .shift]),
+            item("Reader", #selector(PrismWindow.toggleReaderMode(_:)), "e", [.command, .shift]),
+            item("Highlight Passage", #selector(PrismWindow.highlightPassage(_:)), "h", [.command, .shift]),
             .separator(),
             item("Copy Link", #selector(PrismWindow.copyNoteLink(_:))),
             item("Show in Finder", #selector(PrismWindow.revealNoteInFinder(_:))),

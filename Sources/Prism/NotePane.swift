@@ -27,6 +27,8 @@ final class NotePane: NSView, OutlineTextViewNavigator {
     var onGoTo: ((NotePane, NSView) -> Void)?
     /// Notes to review, or the sync failed: its warning clicked.
     var onStatus: ((NSView) -> Void)?
+    /// A link note's globe clicked: its page opened beside it, or closed.
+    var onRead: ((NotePane) -> Void)?
 
     private let chrome = PaneChrome()
     /// Under the floating controls, once anything has gone up under them: the page fading out.
@@ -55,6 +57,8 @@ final class NotePane: NSView, OutlineTextViewNavigator {
     var ruledLeft = false { didSet { leftRule.isHidden = !ruledLeft } }
     private let leftRule = RuleView()
     var closable = false { didSet { chrome.closable = closable } }
+    /// Its page open beside it: the globe lit.
+    var reading = false { didSet { chrome.reading = reading } }
 
     init(session: Session, place: PanePlace) {
         self.session = session
@@ -92,6 +96,11 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         chrome.onStep = { [weak self] by in self?.stepDay(by) }
         chrome.onMonth = { [weak self] view in self?.showMonth(from: view) }
         chrome.onStatus = { [weak self] view in self?.onStatus?(view) }
+        chrome.onRead = { [weak self] in
+            guard let self else { return }
+            onActivate?(self)
+            onRead?(self)
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(typed(_:)), name: NSText.didChangeNotification, object: nil)
         show()
     }
@@ -247,6 +256,7 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         chrome.isDay = ref.day != nil || GraphPaths.week(fromWeeklyPath: ref.path) != nil
         chrome.face = ref.day != nil ? place.face : nil
         chrome.linkedCount = place.face == .schedule && ref.day != nil ? nil : shownSources?.count
+        chrome.canRead = ref.day == nil && ReaderPane.url(of: ref.path, session: session) != nil
         setTucked(false)
         needsLayout = true
     }
@@ -610,6 +620,7 @@ final class PaneChrome: NSView {
     var onStep: ((Int) -> Void)?
     var onMonth: ((NSView) -> Void)?
     var onStatus: ((NSView) -> Void)?
+    var onRead: (() -> Void)?
 
     private let left = GlassCapsule()
     private let middle = GlassCapsule()
@@ -626,6 +637,7 @@ final class PaneChrome: NSView {
         NSImage(systemSymbolName: "calendar.day.timeline.left", accessibilityDescription: "Schedule")!,
     ], trackingMode: .selectOne, target: nil, action: nil)
     private let linked = NSButton()
+    private let read = CloseButton(symbol: "globe", pointSize: 13, toolTip: "Open the Page Beside (⇧⌘R)")
     private let warning = CloseButton(symbol: "exclamationmark.triangle.fill", pointSize: 12, toolTip: "")
     private let menuButton = CloseButton(symbol: "ellipsis", pointSize: 13, toolTip: "This Note")
     private let close = CloseButton(symbol: "xmark", pointSize: 11, toolTip: "Close This Pane (⌘W)")
@@ -639,6 +651,15 @@ final class PaneChrome: NSView {
     var canGoBack = false { didSet { back.isEnabled = canGoBack; needsLayout = true } }
     var canGoForward = false { didSet { needsLayout = true } }
     var closable = false { didSet { needsLayout = true } }
+    /// A link note: its page to read.
+    var canRead = false { didSet { needsLayout = true } }
+    var reading = false {
+        didSet {
+            read.image = NSImage(systemSymbolName: reading ? "globe.americas.fill" : "globe", accessibilityDescription: "The Page")?
+                .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
+            read.toolTip = reading ? "Close the Page (⇧⌘R)" : "Open the Page Beside (⇧⌘R)"
+        }
+    }
     /// A day, or a week: stepped through, a month to pick from.
     var isDay = false { didSet { needsLayout = true } }
     var face: DayFace? {
@@ -667,7 +688,7 @@ final class PaneChrome: NSView {
         for capsule in [left, middle, right] { addSubview(capsule) }
         for (button, action) in [(back, #selector(backClicked)), (forward, #selector(forwardClicked)), (earlier, #selector(earlierClicked)),
                                  (later, #selector(laterClicked)), (month, #selector(monthClicked)), (menuButton, #selector(menuClicked)),
-                                 (close, #selector(closeClicked)), (warning, #selector(warningClicked))] {
+                                 (close, #selector(closeClicked)), (warning, #selector(warningClicked)), (read, #selector(readClicked))] {
             button.contentTintColor = Ink.text
             button.target = self
             button.action = action
@@ -694,7 +715,7 @@ final class PaneChrome: NSView {
         linked.imagePosition = .imageLeading
         linked.contentTintColor = Ink.text
         linked.toolTip = "What links here"
-        for view in [faces, linked, warning, menuButton, close] as [NSView] { right.content.addSubview(view) }
+        for view in [faces, read, linked, warning, menuButton, close] as [NSView] { right.content.addSubview(view) }
     }
 
     @available(*, unavailable)
@@ -724,6 +745,7 @@ final class PaneChrome: NSView {
     @objc private func closeClicked() { onClose?() }
     @objc private func linkedClicked() { onLinked?() }
     @objc private func warningClicked() { onStatus?(warning) }
+    @objc private func readClicked() { onRead?() }
     @objc private func faceChosen() { onFace?(faces.selectedSegment == 1 ? .schedule : .outline) }
 
     /// Out of the way, read down into the page; back, read up.
@@ -750,11 +772,13 @@ final class PaneChrome: NSView {
             x = forward.frame.maxX
         }
         left.frame = NSRect(x: max(12, leading), y: y, width: x + 4, height: side)
-        // At the right, from the edge in: ×, ⋯, the warning, what links here, the faces.
+        // At the right, from the edge in: ×, ⋯, the warning, what links here, the page to read, the faces.
         var widths: [(NSView, CGFloat)] = []
         if !faces.isHidden { faces.sizeToFit() }
         faces.isHidden = face == nil
         if !faces.isHidden { widths.append((faces, faces.frame.width + 6)) }
+        read.isHidden = !canRead
+        if canRead { widths.append((read, 28)) }
         linked.isHidden = (linkedCount ?? 0) == 0
         if !linked.isHidden {
             linked.sizeToFit()

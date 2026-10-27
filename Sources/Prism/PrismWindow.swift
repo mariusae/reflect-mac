@@ -1,4 +1,5 @@
 import AppKit
+import WebKit
 import ReflectCore
 import ReflectUI
 import PrismCore
@@ -17,6 +18,8 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         var active = 0
         var frame: String?
         var query: String?
+        /// The link note whose page is read beside it.
+        var reader: String?
     }
 
     let session: Session
@@ -30,6 +33,9 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     private let listGlass = NSGlassEffectView()
     private let list = LensList()
     private var panes: [NotePane] = []
+    /// A link note's page, read in a column at its pane's right.
+    private var reader: ReaderPane?
+    private weak var readerOwner: NotePane?
     private var activeIndex = 0
     private(set) var lens: Lens = .daily
     private var listShown = true
@@ -76,6 +82,9 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         }
         if panes.isEmpty { _ = makePane(PanePlace(.day(.today))) }
         activeIndex = min(max(0, state.active), panes.count - 1)
+        if let path = state.reader {
+            openReader(path, beside: panes.first { $0.place.path == path } ?? activePane, focus: false)
+        }
         if let frame = state.frame {
             window.setFrame(NSRectFromString(frame), display: false)
         } else if let front = session.frontWindow?.window, front !== window {
@@ -108,8 +117,10 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
         responderWatch = window.observe(\.firstResponder) { [weak self] window, _ in
             MainActor.assumeIsolated {
-                guard let self, let view = window.firstResponder as? NSView,
-                      let index = self.panes.firstIndex(where: { view.isDescendant(of: $0) }) else { return }
+                guard let self, let view = window.firstResponder as? NSView else { return }
+                // In the reader: its note's pane the one worked in.
+                let pane = self.reader.flatMap { view.isDescendant(of: $0) ? self.readerOwner : nil }
+                guard let index = self.panes.firstIndex(where: { $0 === pane || view.isDescendant(of: $0) }) else { return }
                 self.activate(index)
             }
         }
@@ -127,7 +138,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
     var state: State {
         State(lens: lens, listShown: listShown, panes: panes.map(\.history), active: activeIndex,
-              frame: window.map { NSStringFromRect($0.frame) }, query: searchQuery.isEmpty ? nil : searchQuery)
+              frame: window.map { NSStringFromRect($0.frame) }, query: searchQuery.isEmpty ? nil : searchQuery, reader: reader?.notePath)
     }
 
     override func showWindow(_ sender: Any?) {
@@ -151,7 +162,8 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             guard let self, let index = panes.firstIndex(where: { $0 === pane }) else { return }
             activate(index)
         }
-        pane.onMoved = { [weak self] _ in
+        pane.onMoved = { [weak self] pane in
+            self?.followReader(pane)
             self?.updatePanes()
             self?.refreshList()
             self?.session.writeWindows()
@@ -165,6 +177,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         pane.onClose = { [weak self] pane in self?.closePane(pane) }
         pane.onGoTo = { [weak self] pane, view in self?.openCommandBar("", from: view) }
         pane.onStatus = { [weak self] view in self?.showStatusMenu(from: view) }
+        pane.onRead = { [weak self] pane in self?.toggleReader(beside: pane) }
         root.addSubview(pane, positioned: .below, relativeTo: listGlass)
         panes.append(pane)
         return pane
@@ -183,6 +196,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         for (i, pane) in panes.enumerated() {
             pane.isActive = i == activeIndex
             pane.closable = panes.count > 1
+            pane.reading = reader != nil && readerOwner === pane
         }
         list.selected = activePane.place.path
         window?.title = NotePane.name(of: activePane.ref, session: session).0
@@ -215,6 +229,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     private func closePane(_ pane: NotePane) {
         guard panes.count > 1, let index = panes.firstIndex(where: { $0 === pane }) else { return }
         pane.saveNotes()
+        if readerOwner === pane { closeReader() }
         pane.removeFromSuperview()
         panes.remove(at: index)
         activeIndex = 0
@@ -243,6 +258,54 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     }
 
     func shows(_ ref: NoteRef) -> Bool { panes.contains { $0.shows(ref) } }
+
+    // MARK: The reader
+
+    /// A link note's page read beside its pane — or, read there already, closed.
+    private func toggleReader(beside pane: NotePane) {
+        if let reader, readerOwner === pane, reader.notePath == pane.place.path { return closeReader() }
+        guard openReader(pane.place.path, beside: pane, focus: true) else { return NSSound.beep() }
+    }
+
+    /// A link note's page, in a column at the right of the pane it is shown in.
+    @discardableResult
+    private func openReader(_ path: String, beside pane: NotePane, focus: Bool) -> Bool {
+        guard let url = ReaderPane.url(of: path, session: session) else { return false }
+        if let reader { dismissReader(reader) }
+        let reader = ReaderPane(session: session, notePath: path, url: url)
+        reader.onClose = { [weak self] _ in self?.closeReader() }
+        root.addSubview(reader, positioned: .below, relativeTo: listGlass)
+        self.reader = reader
+        readerOwner = pane
+        updatePanes()
+        layoutWindow()
+        if focus { reader.focus() }
+        session.writeWindows()
+        return true
+    }
+
+    private func closeReader() {
+        guard let reader else { return }
+        dismissReader(reader)
+        self.reader = nil
+        readerOwner = nil
+        updatePanes()
+        layoutWindow()
+        activePane.focusNote()
+        session.writeWindows()
+    }
+
+    private func dismissReader(_ reader: ReaderPane) {
+        reader.savePlace()
+        reader.removeFromSuperview()
+    }
+
+    /// The reader's pane gone to another link note: its page read instead.
+    private func followReader(_ pane: NotePane) {
+        guard let reader, readerOwner === pane, pane.place.path != reader.notePath,
+              ReaderPane.url(of: pane.place.path, session: session) != nil else { return }
+        openReader(pane.place.path, beside: pane, focus: false)
+    }
 
     // MARK: The lens, and its list
 
@@ -543,10 +606,17 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             lenses.frame = NSRect(x: 16, y: bounds.height - 16 - size.height, width: size.width, height: size.height)
         }
         let left = listShown ? listGlass.frame.maxX + inset / 2 : 0
-        let width = (bounds.width - left) / CGFloat(panes.count)
-        for (i, pane) in panes.enumerated() {
-            pane.frame = NSRect(x: (left + CGFloat(i) * width).rounded(), y: 0, width: (i == panes.count - 1 ? bounds.width - left - CGFloat(i) * width : width).rounded(),
-                                height: bounds.height)
+        // The columns side by side, evenly: the panes, the reader at its pane's right.
+        var columns: [NSView] = []
+        for pane in panes {
+            columns.append(pane)
+            if let reader, readerOwner === pane { columns.append(reader) }
+        }
+        let width = (bounds.width - left) / CGFloat(columns.count)
+        for (i, column) in columns.enumerated() {
+            let x = (left + CGFloat(i) * width).rounded()
+            let end = i == columns.count - 1 ? bounds.width : (left + CGFloat(i + 1) * width).rounded()
+            column.frame = NSRect(x: x, y: 0, width: end - x, height: bounds.height)
         }
         for (i, pane) in panes.enumerated() {
             pane.ruledLeft = i > 0
@@ -654,10 +724,24 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
     /// ⌘W: the pane worked in, beside another; else the window.
     @objc func closePaneOrWindow(_ sender: Any?) {
+        // In the reader: the reader.
+        if let reader, let view = window?.firstResponder as? NSView, view.isDescendant(of: reader) { return closeReader() }
         if panes.count > 1 { closePane(activePane) } else { window?.performClose(sender) }
     }
 
     @objc func syncNow(_ sender: Any?) { session.syncNow() }
+
+    /// ⇧⌘R: the note's page, open beside it — or closed.
+    @objc func readPage(_ sender: Any?) { toggleReader(beside: activePane) }
+
+    /// ⇧⌘E: the page read beside, its words alone — or as the site has it.
+    @objc func toggleReaderMode(_ sender: Any?) {
+        guard let reader else { return NSSound.beep() }
+        reader.toggleReading()
+    }
+
+    /// ⇧⌘H: the passage chosen in the reader, into its note's Highlights.
+    @objc func highlightPassage(_ sender: Any?) { reader?.highlightSelection() }
 
     // MARK: The note's own
 
@@ -756,7 +840,17 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         case #selector(addCover(_:)): return note?.day == nil && note != nil
         case #selector(removeCover(_:)): return note?.cover != nil
         case #selector(trashNote(_:)): return note?.day == nil && note != nil
-        case #selector(closePaneOrWindow(_:)): item.title = panes.count > 1 ? "Close Pane" : "Close Window"
+        case #selector(readPage(_:)):
+            let reading = reader != nil && readerOwner === activePane && reader?.notePath == activePane.place.path
+            item.title = reading ? "Close Page" : "Open Page"
+            return reading || ReaderPane.url(of: activePane.place.path, session: session) != nil
+        case #selector(highlightPassage(_:)): return reader != nil
+        case #selector(toggleReaderMode(_:)):
+            item.state = reader?.reading == true ? .on : .off
+            return reader != nil
+        case #selector(closePaneOrWindow(_:)):
+            let inReader = reader.map { reader in (window?.firstResponder as? NSView)?.isDescendant(of: reader) == true } ?? false
+            item.title = inReader ? "Close Page" : panes.count > 1 ? "Close Pane" : "Close Window"
         default: break
         }
         return true
@@ -764,12 +858,35 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
     // MARK: Scripts
 
-    func snapshot(to url: URL) {
-        guard let view = window?.contentView else { return }
+    /// The window drawn to a picture — the reader's page, drawn out of
+    /// the process, taken from it and laid in, what floats over it after.
+    func snapshot(to url: URL, done: @escaping () -> Void = {}) {
+        guard let view = window?.contentView else { return done() }
         view.layoutSubtreeIfNeeded()
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return done() }
         view.cacheDisplay(in: view.bounds, to: rep)
-        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+        let write = { try? rep.representation(using: .png, properties: [:])?.write(to: url) }
+        guard let reader, let web = reader.subviews.first(where: { $0 is WKWebView }) as? WKWebView else {
+            write()
+            return done()
+        }
+        web.takeSnapshot(with: nil) { image, _ in
+            if let image, let context = NSGraphicsContext(bitmapImageRep: rep) {
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = context
+                let flip = { (rect: NSRect) in NSRect(x: rect.minX, y: view.bounds.height - rect.maxY, width: rect.width, height: rect.height) }
+                image.draw(in: flip(web.convert(web.bounds, to: view)))
+                for over in reader.subviews.drop(while: { $0 !== web }).dropFirst() where !over.isHidden {
+                    guard let piece = over.bitmapImageRepForCachingDisplay(in: over.bounds) else { continue }
+                    over.cacheDisplay(in: over.bounds, to: piece)
+                    piece.draw(in: flip(over.convert(over.bounds, to: view)), from: .zero, operation: .sourceOver, fraction: 1,
+                               respectFlipped: true, hints: nil)
+                }
+                NSGraphicsContext.restoreGraphicsState()
+            }
+            write()
+            done()
+        }
     }
 
     func chooseForScript(_ lens: Lens) { choose(lens, keepShown: true) }
@@ -788,6 +905,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         }
     }
     var activePaneForScript: NotePane { activePane }
+    var readerForScript: ReaderPane? { reader }
     func commandBarForScript(_ query: String) { openCommandBar(query) }
 }
 

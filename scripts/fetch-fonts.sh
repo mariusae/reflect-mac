@@ -91,7 +91,7 @@ google_fonts ibmplexsans plex 'IBMPlexSans[wdth,wght].ttf' 'IBMPlexSans-Italic[w
 google_fonts ibmplexmono plex IBMPlexMono-Regular.ttf IBMPlexMono-Italic.ttf IBMPlexMono-Medium.ttf \
   IBMPlexMono-SemiBold.ttf IBMPlexMono-Bold.ttf IBMPlexMono-BoldItalic.ttf
 
-# Ideal Sans with Operator Mono, Hoefler & Co's: not fetched — their licence
+# Ideal Sans with Operator Mono, and Chronicle for the reader, Hoefler & Co's: not fetched — their licence
 # is the owner's — but copied from the owner's own fonts, when there, for
 # the iPhone app to bundle. Never committed: Frameworks/ is not.
 hoefler="${HOEFLER_FONTS:-$HOME/Library/Mobile Documents/com~apple~CloudDocs/Fonts}"
@@ -104,6 +104,12 @@ if [ -d "$hoefler/HCo_IdealSansSSm_Pro/OpenType" ] && [ -d "$hoefler/HCo_Operato
   for face in Book BookItalic Medium MediumItalic Bold BoldItalic; do
     [ -s "$out/OperatorMonoSSm-$face.otf" ] || cp "$hoefler/HCo_OperatorMonoSSm/OpenType/OperatorMonoSSm-$face.otf" "$out/"
   done
+  chronicle="$hoefler/HCo_ChronicleSSm_Basic/Fonts (OpenType)"
+  if [ -d "$chronicle" ]; then
+    for face in Book BookItalic Medium Bold BoldItalic; do
+      [ -s "$out/ChronicleSSm-$face.otf" ] || cp "$chronicle/ChronicleSSm-$face.otf" "$out/"
+    done
+  fi
 fi
 
 echo "fonts in Frameworks/: $(ls Frameworks/*/*.[ot]tf | wc -l | tr -d ' ')"

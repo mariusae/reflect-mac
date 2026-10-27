@@ -66,10 +66,10 @@ final class BottomBar: UIView, UITextFieldDelegate {
     private(set) var isSmall = false
     /// The lens shown: its mark filled.
     var lens: Lens = .daily { didSet { if lens != oldValue { styleLenses() } } }
-    /// The block on now, of today's: about Daily's mark, a ring running down — how much is left, of how long.
+    /// The block on now, of today's: about Daily's mark, a ring of how far along — how much is left, of how long.
     var now: (left: TimeInterval, total: TimeInterval, title: String)? {
         didSet {
-            nowRing.fraction = now.map { max(0, min(1, $0.left / max(1, $0.total))) }
+            nowRing.fraction = now.map { max(0, min(1, 1 - $0.left / max(1, $0.total))) }
             lensButtons[.daily]?.accessibilityValue = now.map { now in
                 let minutes = Int((now.left / 60).rounded(.up))
                 return "Now: \(now.title.isEmpty ? "a block" : now.title), \(minutes) minutes left"
@@ -390,12 +390,12 @@ final class ShortLabel: UILabel {
     }
 }
 
-/// The block on now, about Daily's mark: unlike a note's ring of how far
-/// its tasks are along — dark, filling — a heavier ring in now's red, full
-/// at the block's start and running down to its end, a bead at its tip as
-/// on a clock's hand; the rest of the circle a faint track.
+/// The block on now, about Daily's mark: how far along it is, as the now
+/// line is down it on the hours — round from twelve o'clock, a bead where
+/// now is; in now's red, heavier than a note's dark ring of its tasks,
+/// the rest of the circle a faint red track.
 final class NowRingView: UIView {
-    /// How much of the block is left, 0 to 1: nil, none on.
+    /// How far along the block is, 0 to 1: nil, none on.
     var fraction: Double? { didSet { if fraction != oldValue { update() } } }
     private let track = CAShapeLayer()
     private let arc = CAShapeLayer()
@@ -436,7 +436,7 @@ final class NowRingView: UIView {
         let center = CGPoint(x: bounds.midX, y: bounds.midY)
         track.path = UIBezierPath(arcCenter: center, radius: radius, startAngle: 0, endAngle: 2 * .pi, clockwise: true).cgPath
         track.strokeColor = color.withAlphaComponent(0.16).cgColor
-        // From twelve o'clock, round as a clock goes, as much as is left.
+        // From twelve o'clock, round as a clock goes, as far as it has come.
         let start = -CGFloat.pi / 2, end = start + 2 * .pi * CGFloat(fraction)
         arc.path = UIBezierPath(arcCenter: center, radius: radius, startAngle: start, endAngle: end, clockwise: true).cgPath
         arc.strokeColor = color.cgColor

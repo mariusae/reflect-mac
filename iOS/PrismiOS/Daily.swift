@@ -20,6 +20,7 @@ final class DayPager: UIViewController, UIPageViewControllerDataSource, UIPageVi
     var onChange: (() -> Void)?
 
     let bar = PaneBar()
+    private let linkedFan = LinkedFan()
     private let pages = UIPageViewController(transitionStyle: .scroll, navigationOrientation: .horizontal,
                                              options: [.interPageSpacing: 0])
     private(set) var day: Day
@@ -67,6 +68,12 @@ final class DayPager: UIViewController, UIPageViewControllerDataSource, UIPageVi
         view.addSubview(bar)
         bar.onFace = { [weak self] face in self?.setFace(face) }
         bar.onLinked = { [weak self] in self?.sheet?.scrollToLinked() }
+        bar.onLinkedHeld = { [weak self] state, point in
+            guard let self else { return }
+            linkedFan.held(state, at: point, bar: bar, in: view, store: store, paths: sheet?.linkedPaths ?? [],
+                           open: { [weak self] path in self?.onOpen?(PanePlace(path: path), nil) },
+                           showAll: { [weak self] in self?.sheet?.scrollToLinked() })
+        }
         bar.menu = { [weak self] in
             guard let self else { return UIMenu() }
             return menu?(place) ?? UIMenu()
