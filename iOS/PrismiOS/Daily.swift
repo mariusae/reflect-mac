@@ -277,6 +277,10 @@ final class DayPager: UIViewController, UIPageViewControllerDataSource, UIPageVi
     /// The day so far down under the bar, and what is over it shown as much.
     private func place(_ amount: CGFloat) {
         reveal = max(0, amount)
+        // The day's room for the controls given up as it comes down: out
+        // from under them, it needs none — the week and month have it.
+        let room = max(0, PaneBar.height - reveal)
+        if pages.additionalSafeAreaInsets.top != room { pages.additionalSafeAreaInsets.top = room }
         let top = bar.contentTop
         pages.view.frame = CGRect(x: 0, y: top + reveal, width: view.bounds.width, height: max(0, view.bounds.height - top - reveal))
         pages.view.layer.cornerRadius = min(28, reveal)
@@ -477,10 +481,8 @@ final class WeekStripView: UIView {
         let today = Day.today
         let symbols = NoteCalendar.weekdaySymbols()
         let label = Card.label(size: 15)
-        if letters {
-            let letter = NSAttributedString(string: "W", attributes: label)
-            letter.draw(at: CGPoint(x: (weekCell.midX - letter.size().width / 2).rounded(), y: weekCell.minY))
-        } else if let week {
+        // Over the week's number, no letter: its colour and column say it, and a W there reads as Wednesday's.
+        if !letters, let week {
             let cell = weekCell
             let chosen = week == chosenWeek
             let center = CGPoint(x: cell.midX, y: cell.minY + 32)

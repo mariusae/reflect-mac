@@ -113,7 +113,8 @@ final class BottomBar: UIView, UITextFieldDelegate {
         wellButton.accessibilityLabel = "Search"
         wellButton.accessibilityHint = "The name of what is shown; tapped, search"
         well.addSubview(wellButton)
-        smallTitle.font = Typeface.current.heading(15, weight: .semibold)
+        // Quieter than the month and the day's ring over it, which say the same.
+        smallTitle.font = Typeface.current.body(15, weight: .medium)
         smallTitle.textColor = Ink.text
         smallTitle.textAlignment = .center
         // Its words kept in its middle as it grows and shrinks, not redrawn at once at the end's size.

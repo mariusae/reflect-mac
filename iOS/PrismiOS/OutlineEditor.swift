@@ -102,13 +102,16 @@ struct PhoneMetrics: Equatable {
         return face.heading(round(face.size(size) * scale), weight: level <= 2 ? .bold : .semibold)
     }
 
-    func font(for row: Row) -> UIFont {
+    func font(for row: Row, heads: Bool = false) -> UIFont {
         switch row.kind {
         case .heading(let level): heading(level)
         case .code: code
-        default: body
+        default: heads ? groupHead : body
         }
     }
+
+    /// A group's head: a step heavier than the text, its Medium.
+    var groupHead: UIFont { face.body(face.size(size), weight: .medium) }
 
     /// Where a row's text starts: one step in for each level, its marker
     /// hung in the step before it.
@@ -150,6 +153,10 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
         var range = text.paragraphRange(for: NSRange(location: min(edited.location, text.length), length: min(edited.length, text.length - min(edited.location, text.length))))
         if NSMaxRange(range) < text.length {
             range = NSUnionRange(range, text.paragraphRange(for: NSRange(location: NSMaxRange(range), length: 0)))
+        }
+        // And the row before: a group's head or not by whether this is its child.
+        if range.location > 0 {
+            range = NSUnionRange(range, text.paragraphRange(for: NSRange(location: range.location - 1, length: 0)))
         }
         if mask.contains(.editedCharacters) { unify(storage, in: range, inserted: edited) }
         slots = PhoneTimeSlot.slots(storage, metrics: metrics, caret: caret)
@@ -227,10 +234,14 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
         for paragraph in OutlineText.paragraphs(text.substring(with: range) as NSString) {
             let paragraph = NSRange(location: paragraph.location + range.location, length: paragraph.length)
             let style = Self.rowStyle(storage, paragraph)
-            let row = style.row
+            var row = style.row
+            // Its words, for how long it is: a style keeps only its kind.
+            row.text = text.substring(with: paragraph).trimmingCharacters(in: .newlines)
             let previous = paragraph.location > 0 ? OutlineText.style(storage, at: paragraph.location - 1).row : nil
+            let next = NSMaxRange(paragraph) < text.length ? OutlineText.style(storage, at: NSMaxRange(paragraph)).row : nil
+            let heads = row.headsGroup(before: next)
             let slot = slots[paragraph.location]
-            var attributes = attributes(for: row, after: previous)
+            var attributes = attributes(for: row, after: previous, heads: heads)
             if let slot, slot.mark.head != nil {
                 // Room over a block's words for its time and length.
                 attributes[.prismSpaceBefore] = (attributes[.prismSpaceBefore] as? CGFloat ?? 0) + slot.measures.header
@@ -240,7 +251,7 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             if let slot { storage.addAttribute(.prismTimeSlot, value: slot, range: paragraph) }
             switch row.kind {
             case .code, .rule: break
-            default: styleInline(storage, in: paragraph, row: row)
+            default: styleInline(storage, in: paragraph, row: row, heads: heads)
             }
             // `- > words`: a quote — its words grey, its `> ` written out only where the caret is.
             if let marker = QuotedBullet.marker(in: text, paragraph: paragraph, row: row) {
@@ -304,8 +315,8 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
         storage.addAttribute(.prismCollapsed, value: true, range: paragraph)
     }
 
-    func attributes(for row: Row, after previous: Row?) -> [NSAttributedString.Key: Any] {
-        let font = metrics.font(for: row)
+    func attributes(for row: Row, after previous: Row?, heads: Bool = false) -> [NSAttributedString.Key: Any] {
+        let font = metrics.font(for: row, heads: heads)
         let paragraph = NSMutableParagraphStyle()
         let indent = metrics.textIndent(for: row)
         paragraph.firstLineHeadIndent = indent
@@ -318,6 +329,8 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             // and room above it, a section's start.
             paragraph.lineHeightMultiple = 1.12
             before = round(metrics.size * (level <= 2 ? 1.25 : 0.9))
+        } else if row.startsGroup(after: previous) {
+            before = round(metrics.size * 0.6)
         }
         // Given as the line is laid out — see `prismSpaceBefore`.
         paragraph.paragraphSpacingBefore = 0
@@ -330,6 +343,8 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
         }
         if row.task?.isDone == true {
             attributes[.foregroundColor] = Ink.secondary
+        }
+        if row.isStruck {
             attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
             attributes[.strikethroughColor] = Ink.faint
         }
@@ -378,10 +393,10 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
 
     /// The inline Markdown in a row, drawn: its marks hidden — but for the
     /// span the caret is in — links as pills, and the rest as it reads.
-    private func styleInline(_ storage: NSTextStorage, in paragraph: NSRange, row: Row) {
+    private func styleInline(_ storage: NSTextStorage, in paragraph: NSRange, row: Row, heads: Bool) {
         let text = storage.mutableString
         let body = NSRange(location: paragraph.location, length: max(0, paragraph.length - 1))
-        let base = metrics.font(for: row)
+        let base = metrics.font(for: row, heads: heads)
         func font(at location: Int) -> UIFont { storage.attribute(.font, at: location, effectiveRange: nil) as? UIFont ?? base }
         let inHeading: Bool = { if case .heading = row.kind { true } else { false } }()
         let spans = InlineMarkup.spans(in: text, range: body)

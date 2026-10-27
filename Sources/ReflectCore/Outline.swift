@@ -110,6 +110,25 @@ public struct Row: Equatable, Sendable {
     public var canHaveChildren: Bool { kind.isListItem }
 
     public var isFolded: Bool { !folded.isEmpty }
+
+    /// Done, and struck through: a short task, as a line through a line. A
+    /// long one only greyed — struck through, a paragraph is all lines.
+    public var isStruck: Bool {
+        task?.isDone == true && text.count <= 80 && !text.contains(where: \.isNewline)
+    }
+
+    /// A top-level item with children — open or folded — a group's head,
+    /// set a little heavier. Not a task: it is a thing to do, not a heading.
+    public func headsGroup(before next: Row?) -> Bool {
+        guard depth == 0, kind.isListItem, task == nil else { return false }
+        return isFolded || (next?.depth ?? 0) > 0
+    }
+
+    /// A top-level item after another's children: a new group, given room above.
+    public func startsGroup(after previous: Row?) -> Bool {
+        guard let previous, depth == 0, kind.isListItem else { return false }
+        return previous.depth > 0 && previous.kind.isListItem
+    }
 }
 
 extension Outline {

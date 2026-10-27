@@ -1123,7 +1123,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
 
     // MARK: Scripted checks
 
-    /// `-PrismOpen <what>` at launch: `inbox`, `pinned`, `tasks`,
+    /// `-PrismOpen <what>` at launch: `today`, `inbox`, `pinned`, `tasks`,
     /// `schedule`, `search:<words>`, `find:<words>`, `note:<path>`,
     /// `dictated:<text>`.
     /// `-PrismOpen <step>[;<step>…]`: each step after the one before.
@@ -1138,6 +1138,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         let (head, rest) = spec.firstIndex(of: ":").map { (String(spec[..<$0]), String(spec[spec.index(after: $0)...])) } ?? (spec, "")
         DispatchQueue.main.async { [self] in
             switch head {
+            case "today": show(.daily)
             case "inbox": show(.inbox)
             case "pinned": show(.pinned)
             case "tasks": show(.tasks)
