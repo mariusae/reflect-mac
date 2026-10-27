@@ -124,7 +124,6 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         scroll.alwaysBounceVertical = true
         scroll.keyboardDismissMode = .interactive
         scroll.contentInsetAdjustmentBehavior = .always
-        scroll.showsVerticalScrollIndicator = false
         scroll.topEdgeEffect.isHidden = true
         view.addSubview(scroll)
         scroll.addSubview(content)
@@ -637,10 +636,13 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         guard width > 0 else { return }
         let top = scroll.contentOffset.y + scroll.adjustedContentInset.top
         let anchor = blocks.last { $0.frame.minY <= top && $0.frame.height > 0 }.map { ($0, top - $0.frame.minY) }
+        // Wide — an iPad — a measure to read in, in the middle; a phone's whole width, else.
+        let measure = width > 480 ? min(width - 64, 760) : width
+        let x = ((width - measure) / 2).rounded()
         var y: CGFloat = 0
         for block in blocks {
-            let height = block.height(width: width)
-            block.frame = CGRect(x: 0, y: y, width: width, height: height)
+            let height = block.height(width: measure)
+            block.frame = CGRect(x: x, y: y, width: measure, height: height)
             y += height
         }
         // Room under the last, to read it clear of the bar.

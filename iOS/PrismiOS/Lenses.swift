@@ -55,7 +55,6 @@ final class NoteListController: UIViewController, LensPage {
         super.viewDidLoad()
         view.backgroundColor = Ink.page
         list.alwaysBounceVertical = true
-        list.showsVerticalScrollIndicator = false
         list.contentInsetAdjustmentBehavior = .never
         view.addSubview(list)
         view.addSubview(bar)
@@ -198,6 +197,9 @@ final class NoteSummaryRow: UIControl {
             picture.image = cover
             picture.contentMode = .scaleAspectFill
             picture.backgroundColor = .clear
+        } else if GraphPaths.day(fromDailyPath: path) != nil {
+            // A day: by its name alone — the month over the days says what it is.
+            picture.image = nil
         } else {
             picture.image = UIImage(systemName: "doc.text", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular))
             picture.contentMode = .center
@@ -217,12 +219,13 @@ final class NoteSummaryRow: UIControl {
     override func layoutSubviews() {
         super.layoutSubviews()
         let side: CGFloat = 44, x = NoteBlock.side
-        picture.frame = CGRect(x: x, y: (bounds.height - side) / 2, width: side, height: side)
+        picture.isHidden = picture.image == nil
+        picture.frame = CGRect(x: x, y: (bounds.height - side) / 2, width: picture.isHidden ? 0 : side, height: side)
         let right = hasDone ? bounds.width - 56 : bounds.width - NoteBlock.side
         doneButton.frame = CGRect(x: bounds.width - 56, y: 0, width: 48, height: bounds.height)
         let ageSize = age.intrinsicContentSize
         age.frame = CGRect(x: right - ageSize.width, y: 15, width: ageSize.width, height: ageSize.height)
-        let textX = picture.frame.maxX + 14
+        let textX = picture.isHidden ? x : picture.frame.maxX + 14
         name.frame = CGRect(x: textX, y: 13, width: age.frame.minX - 10 - textX, height: 21)
         words.frame = CGRect(x: textX, y: 35, width: right - textX, height: 19)
     }

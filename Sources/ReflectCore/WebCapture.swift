@@ -170,6 +170,45 @@ public enum WebCapture {
         return merging(Page(url: url, title: "", highlights: [passage]), into: source)
     }
 
+    /// The passages highlighted on what a note reads: on its own page,
+    /// under its Highlights; on another page, or a PDF, under the row that
+    /// links to it — as a page saved to a day keeps them.
+    public static func highlights(in source: String, of address: String) -> [String] {
+        if url(in: source) == address { return highlights(in: source) }
+        let rows = Row.unfold(OutlineMarkdown.parse(source).rows)
+        guard let index = rows.firstIndex(where: { $0.text.contains(address) }) else { return [] }
+        var found: [String] = []
+        var at = index + 1
+        while at < rows.count, rows[at].depth > rows[index].depth {
+            if rows[at].depth == rows[index].depth + 1 { found.append(clean(rows[at].text)) }
+            at += 1
+        }
+        return found.filter { !$0.isEmpty }
+    }
+
+    /// A note with a passage highlighted on what it reads, where
+    /// `highlights(in:of:)` finds them, unless it is there already.
+    public static func highlighting(_ passage: String, in source: String, of address: String) -> String {
+        if url(in: source) == address { return highlighting(passage, in: source) }
+        let text = clean(passage)
+        var outline = OutlineMarkdown.parse(source)
+        var rows = Row.unfold(outline.rows)
+        guard !text.isEmpty, let index = rows.firstIndex(where: { $0.text.contains(address) }) else { return source }
+        let depth = rows[index].depth
+        var end = index + 1
+        while end < rows.count, rows[end].depth > depth { end += 1 }
+        let children = rows[(index + 1)..<end].filter { $0.depth == depth + 1 }
+        guard !children.contains(where: { clean($0.text) == text }) else { return source }
+        var row = Row(kind: .bullet, depth: depth + 1, text: text)
+        if let sibling = children.last {
+            row.extraIndent = sibling.extraIndent
+            row.marker = sibling.marker
+        }
+        rows.insert(row, at: end)
+        outline.rows = rows
+        return OutlineMarkdown.serialize(outline)
+    }
+
     private static func oneLine(_ text: String) -> String {
         text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
     }

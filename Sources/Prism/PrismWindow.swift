@@ -43,6 +43,8 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     /// The note whose headings ⌘K's `#` lists.
     private weak var headingPane: NotePane?
     private var responderWatch: NSKeyValueObservation?
+    /// A mouse's back and forward buttons, over this window.
+    private var mouseButtons: Any?
     private var searchQuery = ""
 
     private var activePane: NotePane { panes[min(activeIndex, panes.count - 1)] }
@@ -115,6 +117,11 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         }
         commandBar.onClose = { [weak self] in self?.closeCommandBar() }
 
+        mouseButtons = NSEvent.addLocalMonitorForEvents(matching: .otherMouseDown) { [weak self] event in
+            guard let self, event.window === self.window, [3, 4].contains(event.buttonNumber) else { return event }
+            self.mouseStep(event.buttonNumber == 3 ? -1 : 1, at: event.locationInWindow)
+            return nil
+        }
         responderWatch = window.observe(\.firstResponder) { [weak self] window, _ in
             MainActor.assumeIsolated {
                 guard let self, let view = window.firstResponder as? NSView else { return }
@@ -147,6 +154,8 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     }
 
     func windowWillClose(_ notification: Notification) {
+        if let mouseButtons { NSEvent.removeMonitor(mouseButtons) }
+        mouseButtons = nil
         session.windowClosed(self)
     }
 
@@ -270,9 +279,10 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     /// A link note's page, in a column at the right of the pane it is shown in.
     @discardableResult
     private func openReader(_ path: String, beside pane: NotePane, focus: Bool) -> Bool {
-        guard let url = ReaderPane.url(of: path, session: session) else { return false }
+        let sources = ReaderPane.sources(of: path, session: session)
+        guard !sources.isEmpty else { return false }
         if let reader { dismissReader(reader) }
-        let reader = ReaderPane(session: session, notePath: path, url: url)
+        let reader = ReaderPane(session: session, notePath: path, sources: sources)
         reader.onClose = { [weak self] _ in self?.closeReader() }
         root.addSubview(reader, positioned: .below, relativeTo: listGlass)
         self.reader = reader
@@ -303,7 +313,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     /// The reader's pane gone to another link note: its page read instead.
     private func followReader(_ pane: NotePane) {
         guard let reader, readerOwner === pane, pane.place.path != reader.notePath,
-              ReaderPane.url(of: pane.place.path, session: session) != nil else { return }
+              !ReaderPane.sources(of: pane.place.path, session: session).isEmpty else { return }
         openReader(pane.place.path, beside: pane, focus: false)
     }
 
@@ -516,6 +526,8 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
     func notesChanged(_ paths: Set<String>) {
         panes.forEach { $0.notesChanged(paths) }
+        // The reader's note written to: a link added, or taken out, among what it reads.
+        if let reader, paths.contains(reader.notePath) { reader.refresh(ReaderPane.sources(of: reader.notePath, session: session)) }
         refreshList()
         updatePanes()
     }
@@ -657,6 +669,19 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         session.writeWindows()
     }
 
+    /// A mouse's back or forward button: in what the pointer is over —
+    /// a pane, or the page beside one, through the pages it has been to.
+    private func mouseStep(_ by: Int, at point: NSPoint) {
+        let local = root.convert(point, from: nil)
+        if let reader, reader.frame.contains(local) {
+            if !reader.step(by) { NSSound.beep() }
+            return
+        }
+        let pane = panes.first { $0.frame.contains(local) } ?? activePane
+        if let index = panes.firstIndex(where: { $0 === pane }) { activate(index) }
+        if by < 0 { pane.goBack() } else { pane.goForward() }
+    }
+
     @objc func goBack(_ sender: Any?) { activePane.goBack() }
     @objc func goForward(_ sender: Any?) { activePane.goForward() }
 
@@ -742,6 +767,10 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
     /// ⇧⌘H: the passage chosen in the reader, into its note's Highlights.
     @objc func highlightPassage(_ sender: Any?) { reader?.highlightSelection() }
+
+    /// ⌥⌘← ⌥⌘→: what the reader's note links to before, or next.
+    @objc func previousSource(_ sender: Any?) { reader?.turn(-1) }
+    @objc func nextSource(_ sender: Any?) { reader?.turn(1) }
 
     // MARK: The note's own
 
@@ -843,7 +872,9 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         case #selector(readPage(_:)):
             let reading = reader != nil && readerOwner === activePane && reader?.notePath == activePane.place.path
             item.title = reading ? "Close Page" : "Open Page"
-            return reading || ReaderPane.url(of: activePane.place.path, session: session) != nil
+            return reading || !ReaderPane.sources(of: activePane.place.path, session: session).isEmpty
+        case #selector(previousSource(_:)): return (reader?.index ?? 0) > 0
+        case #selector(nextSource(_:)): return reader.map { $0.index < $0.sources.count - 1 } ?? false
         case #selector(highlightPassage(_:)): return reader != nil
         case #selector(toggleReaderMode(_:)):
             item.state = reader?.reading == true ? .on : .off
@@ -866,7 +897,13 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return done() }
         view.cacheDisplay(in: view.bounds, to: rep)
         let write = { try? rep.representation(using: .png, properties: [:])?.write(to: url) }
-        guard let reader, let web = reader.subviews.first(where: { $0 is WKWebView }) as? WKWebView else {
+        guard let reader, let web = reader.subviews.first(where: { $0 is WKWebView }) as? WKWebView, !web.isHidden else {
+            if let reader, let context = NSGraphicsContext(bitmapImageRep: rep) {
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = context
+                reader.drawPDFForScript(in: view)
+                NSGraphicsContext.restoreGraphicsState()
+            }
             write()
             return done()
         }
@@ -906,6 +943,10 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     }
     var activePaneForScript: NotePane { activePane }
     var readerForScript: ReaderPane? { reader }
+    func nowCardForScript() {
+        layoutWindow()
+        lenses.showNowCardForScript()
+    }
     func commandBarForScript(_ query: String) { openCommandBar(query) }
 }
 

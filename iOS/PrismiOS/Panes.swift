@@ -36,6 +36,8 @@ enum PlaceNames {
 extension Notification.Name {
     /// Read down into a page: the floating controls out of the way — or, read back up, in again.
     static let prismChromeHidden = Notification.Name("PrismChromeHidden")
+    /// The room the bars leave at the window's left edge changed: laid out again.
+    static let prismEdgeRoom = Notification.Name("PrismEdgeRoom")
 }
 
 /// Over every pane, floating on glass, the same in the same places: at the
@@ -46,6 +48,11 @@ extension Notification.Name {
 final class PaneBar: UIView {
     /// The room the controls take over the page, under the clock.
     static let height: CGFloat = 52
+    /// Room left at the window's left edge, before the controls: the
+    /// iPad's sidebar button there. A bar along that edge keeps clear of it.
+    static var edgeRoom: CGFloat = 0 {
+        didSet { if edgeRoom != oldValue { NotificationCenter.default.post(name: .prismEdgeRoom, object: nil) } }
+    }
     private static let capsule: CGFloat = 44
 
     var onBack: (() -> Void)?
@@ -134,11 +141,22 @@ final class PaneBar: UIView {
             done(self?.menu?().children ?? [])
         }])
         for view in [back, forward, linked, more] as [UIView] { view.tintColor = Ink.text }
+        // A pointer, on the iPad: each lit under it.
+        for button in [back, forward, linked, more] { button.isPointerInteractionEnabled = true }
         addSubview(leading)
         addSubview(trailing)
         for view in [back, forward] as [UIView] { leading.contentView.addSubview(view) }
         for view in [faces, linked, more] as [UIView] { trailing.contentView.addSubview(view) }
         NotificationCenter.default.addObserver(self, selector: #selector(chromeHidden(_:)), name: .prismChromeHidden, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(edgeRoomChanged), name: .prismEdgeRoom, object: nil)
+    }
+
+    @objc private func edgeRoomChanged() { setNeedsLayout() }
+
+    /// Room at the left: the sidebar button's, along the window's edge.
+    private var leftRoom: CGFloat {
+        guard PaneBar.edgeRoom > 0, let window else { return 0 }
+        return convert(bounds.origin, to: window).x < 20 ? PaneBar.edgeRoom : 0
     }
 
     @available(*, unavailable)
@@ -207,7 +225,7 @@ final class PaneBar: UIView {
             x = forward.frame.maxX
         }
         leading.isHidden = x == 0
-        leading.frame = CGRect(x: 16, y: y, width: x, height: side)
+        leading.frame = CGRect(x: 16 + leftRoom, y: y, width: x, height: side)
         // At the right: the faces, how many link here, ⋯ — in that order.
         var width: CGFloat = 4
         faces.isHidden = face == nil

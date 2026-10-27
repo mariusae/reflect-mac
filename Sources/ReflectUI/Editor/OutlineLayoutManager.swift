@@ -57,6 +57,13 @@ package final class OutlineLayoutManager: NSLayoutManager {
         guard let container = textContainers.first, numberOfGlyphs > 0 else {
             return super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: color)
         }
+        // A highlight across lines: each line's words alone — not, as a
+        // selection is, out to the edge and back from the other.
+        if let words = wordRects(forCharacterRange: charRange, color: color, container: container) {
+            return words.withUnsafeBufferPointer { buffer in
+                super.fillBackgroundRectArray(buffer.baseAddress!, count: words.count, forCharacterRange: charRange, color: color)
+            }
+        }
         let rects = (0..<rectCount).map { i -> NSRect in
             var rect = rectArray[i]
             let glyph = glyphIndex(for: NSPoint(x: rect.midX, y: rect.minY + 1), in: container)
@@ -69,6 +76,26 @@ package final class OutlineLayoutManager: NSLayoutManager {
         rects.withUnsafeBufferPointer { buffer in
             super.fillBackgroundRectArray(buffer.baseAddress!, count: rectCount, forCharacterRange: charRange, color: color)
         }
+    }
+
+    /// The text's own background — a highlight's — line by line, as far as
+    /// its words go on each; nil for any other, a selection's.
+    private func wordRects(forCharacterRange charRange: NSRange, color: NSColor, container: NSTextContainer) -> [NSRect]? {
+        guard let storage = textStorage, charRange.length > 0, NSMaxRange(charRange) <= storage.length,
+              let background = storage.attribute(.backgroundColor, at: charRange.location, effectiveRange: nil) as? NSColor,
+              background == color else { return nil }
+        let origin = outlineView?.textContainerOrigin ?? .zero
+        let glyphs = glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
+        var rects: [NSRect] = []
+        enumerateLineFragments(forGlyphRange: glyphs) { line, _, _, lineGlyphs, _ in
+            let piece = NSIntersectionRange(glyphs, lineGlyphs)
+            guard piece.length > 0 else { return }
+            var rect = self.boundingRect(forGlyphRange: piece, in: container)
+            rect.origin.y = line.minY
+            rect.size.height = line.height - self.timelineFoot(atGlyph: piece.location)
+            rects.append(rect.offsetBy(dx: origin.x, dy: origin.y))
+        }
+        return rects.isEmpty ? nil : rects
     }
 
     /// Underlines — and misspellings' dots — under the row's text, not

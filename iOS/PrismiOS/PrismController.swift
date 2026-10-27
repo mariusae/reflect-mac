@@ -11,7 +11,9 @@ import ReflectGit2
 /// pinned, search — each its own stack: its list at the foot, a note
 /// opened over it, swiped back from. A note's pane goes on from note to
 /// note as links are followed, back and forward, as a browser's tab does.
-/// Wide — the Duo open — the lens on the one side, the note on the other.
+/// Wide — an iPad — the lens's list in a sidebar on glass at the left, the
+/// note beside it the rest of the height; a link note's page in a column
+/// at the note's right.
 final class PrismController: UIViewController, UINavigationControllerDelegate, UIGestureRecognizerDelegate {
     let store: PrismStore
     private let bar = BottomBar()
@@ -58,6 +60,8 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         NotificationCenter.default.addObserver(forName: .prismReader, object: nil, queue: .main) { [weak self] note in
             let reading = note.object as? Bool ?? false
             MainActor.assumeIsolated {
+                // Wide, the page is in a column: the bar stays, in the sidebar.
+                guard self?.isWide != true else { return }
                 UIView.animate(withDuration: 0.25) { self?.bar.alpha = reading ? 0 : 1 }
                 self?.bar.isUserInteractionEnabled = !reading
             }
@@ -136,18 +140,9 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             return
         }
         saveAll()
-        let old = stacks[self.lens]
         self.lens = lens
         bar.lens = lens == .search ? lensBeforeSearch : lens
-        let new = stack(lens)
-        if let old {
-            old.willMove(toParent: nil)
-            old.view.removeFromSuperview()
-            old.removeFromParent()
-        }
-        addChild(new)
-        view.insertSubview(new.view, belowSubview: bar)
-        new.didMove(toParent: self)
+        arrange()
         setChromeHidden(false)
         view.setNeedsLayout()
         updateBarTitle()
@@ -182,6 +177,21 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
     func open(_ place: PanePlace, row: Int? = nil) {
         if bar.isSearching { leaveSearch(back: false) }
         saveAll()
+        if isWide, lens == .daily {
+            // Daily, wide: a day shown by the days beside; a note gone on to, over them.
+            let daily = stack(.daily)
+            if let day = GraphPaths.day(fromDailyPath: place.path) {
+                daily.popToRootViewController(animated: false)
+                if place.face != dayPager?.face { dayPager?.setFace(place.face) }
+                dayPager?.show(day)
+                markChosen()
+                return
+            }
+            let note = makeNoteController(PaneHistory(place), inStack: true)
+            daily.pushViewController(note, animated: true)
+            if let row { DispatchQueue.main.async { note.sheet?.mark(unfoldedRow: row) } }
+            return
+        }
         if isWide {
             showDetail(place, row: row)
             return
@@ -251,7 +261,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
     /// and a note on the right. `-PrismPairWidth` to try it narrower.
     private var pairWidth: CGFloat {
         let set = UserDefaults.standard.double(forKey: "PrismPairWidth")
-        return set > 0 ? CGFloat(set) : 600
+        return set > 0 ? CGFloat(set) : 680
     }
     private(set) var isWide = false
     /// The note pane, wide: on the right.
@@ -265,10 +275,9 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             return
         }
         let note = makeNoteController(PaneHistory(place), inStack: false)
-        addChild(note)
-        view.insertSubview(note.view, belowSubview: bar)
-        note.didMove(toParent: self)
         detail = note
+        detailLens = lens
+        arrange()
         view.setNeedsLayout()
         if let row { DispatchQueue.main.async { note.sheet?.mark(unfoldedRow: row) } }
         markChosen()
@@ -277,9 +286,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
     private func removeDetail() -> PaneHistory? {
         guard let detail else { return nil }
         detail.sheet?.saveAll()
-        detail.willMove(toParent: nil)
-        detail.view.removeFromSuperview()
-        detail.removeFromParent()
+        detach(detail)
         self.detail = nil
         return detail.history
     }
@@ -289,18 +296,25 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         guard wide != isWide else { return }
         isWide = wide
         if wide {
+            closeReaderColumn()
             let navigation = shownStack
-            if let note = navigation.topViewController as? NoteController {
+            // Daily keeps what is over its days: the days are beside them now.
+            if lens != .daily, let note = navigation.topViewController as? NoteController {
                 note.sheet?.saveAll()
                 let history = note.history
                 navigation.popToRootViewController(animated: false)
                 showDetail(history.current)
                 detail?.replaceHistory(history)
             }
-        } else if let history = removeDetail() {
-            let note = makeNoteController(history, inStack: true)
-            shownStack.pushViewController(note, animated: false)
+        } else {
+            closeReaderColumn()
+            let owner = detailLens ?? lens
+            if let history = removeDetail() {
+                let note = makeNoteController(history, inStack: true)
+                stack(owner).pushViewController(note, animated: false)
+            }
         }
+        arrange()
         markChosen()
     }
 
@@ -308,49 +322,268 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
     private func markChosen() {
         let chosen = isWide ? detail?.place.path : nil
         for lens in [Lens.inbox, .pinned] { (stacks[lens]?.viewControllers.first as? NoteListController)?.chosen = chosen }
+        daySidebar?.chosen = isWide ? dayPager?.place.path : nil
     }
+
+    // MARK: The iPad's sidebar, the note, the page
+
+    /// Which lens's stack the note beside was opened from: back onto it, narrow.
+    private var detailLens: Lens?
+    /// Daily's list, wide: the month and the days, the day itself beside.
+    private var daySidebar: DaySidebarController?
+    /// The sidebar out, wide — or put away, the note the whole width.
+    private var sidebarShown = UserDefaults.standard.object(forKey: "PadSidebar") as? Bool ?? true
+    private let sidebarGlass = UIVisualEffectView(effect: UIGlassEffect())
+    private let sidebarButton = SidebarButton()
+    /// A link note's page, wide: in a column at the note's right — over it, in portrait.
+    private var readerColumn: ReaderController?
+
+    private func makeDaySidebar() -> DaySidebarController {
+        if let daySidebar { return daySidebar }
+        let sidebar = DaySidebarController(store: store)
+        sidebar.onDay = { [weak self] day in
+            guard let self else { return }
+            saveAll()
+            stack(.daily).popToRootViewController(animated: false)
+            dayPager?.show(day)
+            markChosen()
+        }
+        sidebar.onWeek = { [weak self] week in
+            self?.stack(.daily).popToRootViewController(animated: false)
+            self?.dayPager?.show(week)
+        }
+        sidebar.menu = { [weak self] in self?.appMenu() ?? UIMenu() }
+        daySidebar = sidebar
+        return sidebar
+    }
+
+    /// What is shown, and where: narrow, the lens's stack, the whole of it;
+    /// wide, the lens's list in the sidebar and the note beside — Daily's
+    /// days beside its stack of the day — and the page, when it is open.
+    private func arrange(laying: Bool = false) {
+        var wanted: [UIViewController] = []
+        if isWide {
+            if sidebarShown { wanted.append(lens == .daily ? makeDaySidebar() : stack(lens)) }
+            if lens == .daily { wanted.append(stack(.daily)) } else if let detail { wanted.append(detail) }
+            if let readerColumn { wanted.append(readerColumn) }
+        } else {
+            wanted.append(stack(lens))
+        }
+        let all: [UIViewController] = Array(stacks.values) + [detail, daySidebar, readerColumn].compactMap { $0 }
+        for controller in all where controller.parent === self && !wanted.contains(where: { $0 === controller }) { detach(controller) }
+        for controller in wanted where controller.parent !== self { attach(controller) }
+        // In the sidebar, on its glass: no ground of their own.
+        let sidebar: UIViewController? = isWide && sidebarShown ? (lens == .daily ? daySidebar : stacks[lens]) : nil
+        for controller in all where controller !== daySidebar { setGround(controller, clear: controller === sidebar) }
+        // Asked from layout itself: not laid out again for it.
+        if !laying { view.setNeedsLayout() }
+    }
+
+    /// The grounds a controller's views had, before the sidebar's glass showed through them.
+    private var grounds: [ObjectIdentifier: UIColor?] = [:]
+
+    /// A controller's ground — and its children's, down — cleared to the glass, or as it was.
+    private func setGround(_ controller: UIViewController, clear: Bool) {
+        guard controller.isViewLoaded else { return }
+        let key = ObjectIdentifier(controller.view)
+        if clear {
+            if grounds[key] == nil { grounds[key] = .some(controller.view.backgroundColor) }
+            controller.view.backgroundColor = .clear
+        } else if let ground = grounds.removeValue(forKey: key) {
+            controller.view.backgroundColor = ground
+        }
+        controller.children.forEach { setGround($0, clear: clear) }
+    }
+
+    private func attach(_ controller: UIViewController) {
+        addChild(controller)
+        view.insertSubview(controller.view, belowSubview: bar)
+        controller.didMove(toParent: self)
+    }
+
+    private func detach(_ controller: UIViewController) {
+        controller.willMove(toParent: nil)
+        controller.view.removeFromSuperview()
+        controller.removeFromParent()
+    }
+
+    /// The sidebar out, or put away: ⌥⌘L, or the button by the window's edge.
+    @objc func flipSidebar() {
+        guard isWide else { return }
+        sidebarShown.toggle()
+        UserDefaults.standard.set(sidebarShown, forKey: "PadSidebar")
+        arrange()
+        UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.88, initialSpringVelocity: 0) {
+            self.view.layoutIfNeeded()
+        }
+    }
+
+    /// A link note's page, wide: in its column.
+    private func presentReader(_ reader: ReaderController) -> Bool {
+        guard isWide else { return false }
+        closeReaderColumn()
+        reader.onClose = { [weak self] in self?.closeReaderColumn() }
+        readerColumn = reader
+        arrange()
+        return true
+    }
+
+    private func closeReaderColumn() {
+        guard let reader = readerColumn else { return }
+        readerColumn = nil
+        detach(reader)
+        view.setNeedsLayout()
+    }
+
+    /// The widths: the sidebar's, inset on its glass; the note's; the page's.
+    private var sidebarWidth: CGFloat { min(380, max(300, (view.bounds.width * 0.3).rounded())) }
+    private static let inset: CGFloat = 8
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let width = view.bounds.width
-        setWide(width >= pairWidth)
-        let half = (width / 2).rounded()
-        let left = isWide ? CGRect(x: 0, y: 0, width: half, height: view.bounds.height) : view.bounds
-        let navigation = shownStack
-        if navigation.parent == nil {
-            addChild(navigation)
-            view.insertSubview(navigation.view, belowSubview: bar)
-            navigation.didMove(toParent: self)
+        let bounds = view.bounds
+        setWide(bounds.width >= pairWidth)
+        if ReaderController.present == nil {
+            ReaderController.present = { [weak self] reader in self?.presentReader(reader) ?? false }
         }
-        navigation.view.frame = left
-        if isWide {
-            let right = CGRect(x: half, y: 0, width: width - half, height: view.bounds.height)
-            detail?.view.frame = right
-            if detailRule.superview == nil {
-                detailRule.backgroundColor = Ink.rule
-                view.addSubview(detailRule)
-            }
-            detailRule.isHidden = false
-            detailRule.frame = CGRect(x: half - 0.5, y: 0, width: 1 / max(view.traitCollection.displayScale, 1), height: view.bounds.height)
-            if emptyDetail.superview == nil {
-                emptyDetail.text = "Choose a note"
-                emptyDetail.font = Typeface.current.body(17)
-                emptyDetail.textColor = Ink.faint
-                emptyDetail.textAlignment = .center
-                view.insertSubview(emptyDetail, at: 0)
-            }
-            emptyDetail.isHidden = detail != nil
-            emptyDetail.frame = right
-            barLeading?.constant = 0
-            barTrailing?.constant = -(width - half)
-        } else {
-            detailRule.isHidden = true
+        arrange(laying: true)
+        if sidebarGlass.superview == nil {
+            sidebarGlass.cornerConfiguration = .uniformCorners(radius: .fixed(26))
+            view.insertSubview(sidebarGlass, at: 0)
+            sidebarButton.onTap = { [weak self] in self?.flipSidebar() }
+            view.addSubview(sidebarButton)
+        }
+        guard isWide else {
+            stack(lens).view.frame = bounds
+            sidebarGlass.isHidden = true
+            sidebarButton.isHidden = true
             emptyDetail.isHidden = true
+            detailRule.isHidden = true
+            PaneBar.edgeRoom = 0
             barLeading?.constant = 0
             barTrailing?.constant = 0
+            view.bringSubviewToFront(bar)
+            return
         }
+        let inset = Self.inset
+        let side = sidebarShown ? sidebarWidth : 0
+        let sidebarFrame = CGRect(x: inset, y: inset, width: side, height: bounds.height - 2 * inset)
+        sidebarGlass.isHidden = !sidebarShown
+        sidebarGlass.frame = sidebarShown ? sidebarFrame : .zero
+        if sidebarShown { (lens == .daily ? daySidebar : stacks[lens])?.view.frame = sidebarFrame }
+        let left = sidebarShown ? sidebarFrame.maxX + inset / 2 : 0
+        var main = CGRect(x: left, y: 0, width: bounds.width - left, height: bounds.height)
+        // The page: beside the note when there is room for both, else over it.
+        if let readerColumn {
+            if main.width >= 900 {
+                let width = (main.width * 0.5).rounded()
+                readerColumn.view.frame = CGRect(x: main.maxX - width, y: 0, width: width, height: bounds.height)
+                main.size.width -= width
+                detailRule.isHidden = false
+                detailRule.frame = CGRect(x: main.maxX - 0.5, y: 0, width: 1 / max(view.traitCollection.displayScale, 1), height: bounds.height)
+            } else {
+                readerColumn.view.frame = main
+                detailRule.isHidden = true
+            }
+        } else {
+            detailRule.isHidden = true
+        }
+        if detailRule.superview == nil {
+            detailRule.backgroundColor = Ink.rule
+            view.addSubview(detailRule)
+        }
+        let shownDetail: UIViewController? = lens == .daily ? stacks[.daily] : detail
+        shownDetail?.view.frame = main
+        if emptyDetail.superview == nil {
+            emptyDetail.text = "Choose a note"
+            emptyDetail.font = Typeface.current.body(17)
+            emptyDetail.textColor = Ink.faint
+            emptyDetail.textAlignment = .center
+            view.insertSubview(emptyDetail, at: 0)
+        }
+        emptyDetail.isHidden = shownDetail != nil
+        emptyDetail.frame = main
+        // The sidebar's button, by the window's left edge; the bars beside it keep clear.
+        let top = view.safeAreaInsets.top
+        sidebarButton.isHidden = false
+        sidebarButton.onGlass = sidebarShown
+        sidebarButton.frame = CGRect(x: 16 + (sidebarShown ? inset : 0), y: top + (PaneBar.height - 44) / 2, width: 44, height: 44)
+        PaneBar.edgeRoom = 52
+        // The bar at the sidebar's foot — put away, floating at the window's, left.
+        let barWidth = sidebarShown ? side : min(400, bounds.width - 32)
+        barLeading?.constant = sidebarShown ? inset : 8
+        barTrailing?.constant = -(bounds.width - (barLeading?.constant ?? 0) - barWidth)
         view.bringSubviewToFront(bar)
+        view.bringSubviewToFront(sidebarButton)
     }
+
+    // MARK: The keyboard
+
+    /// A hardware keyboard's: the Mac's keys, held ⌘ listing them.
+    override var keyCommands: [UIKeyCommand]? {
+        var commands = Lens.allCases.enumerated().map { i, lens in
+            UIKeyCommand(title: lens.title, action: #selector(keyLens(_:)), input: "\(i + 1)", modifierFlags: .command,
+                         propertyList: lens.rawValue)
+        }
+        commands += [
+            UIKeyCommand(title: "Go to…", action: #selector(keySearch), input: "k", modifierFlags: .command),
+            UIKeyCommand(title: "New Note", action: #selector(keyNewNote), input: "n", modifierFlags: .command),
+            UIKeyCommand(title: "Today", action: #selector(keyToday), input: "d", modifierFlags: .command),
+            UIKeyCommand(title: "Back", action: #selector(keyBack), input: "[", modifierFlags: .command),
+            UIKeyCommand(title: "Forward", action: #selector(keyForward), input: "]", modifierFlags: .command),
+            UIKeyCommand(title: "Open Page", action: #selector(keyPage), input: "r", modifierFlags: [.command, .shift]),
+        ]
+        if isWide {
+            commands.append(UIKeyCommand(title: sidebarShown ? "Hide Sidebar" : "Show Sidebar", action: #selector(flipSidebar),
+                                         input: "l", modifierFlags: [.command, .alternate]))
+        }
+        if readerColumn != nil {
+            commands += [
+                UIKeyCommand(title: "Reader", action: #selector(keyReader), input: "e", modifierFlags: [.command, .shift]),
+                UIKeyCommand(title: "Highlight Passage", action: #selector(keyHighlight), input: "h", modifierFlags: [.command, .shift]),
+                UIKeyCommand(title: "Close Page", action: #selector(keyClosePage), input: "w", modifierFlags: .command),
+            ]
+        }
+        // Over the text being typed in: these first, before it takes the keys.
+        commands.forEach { $0.wantsPriorityOverSystemBehavior = true }
+        return commands
+    }
+
+    /// The note worked in: beside the list, wide; else on top of the lens's stack.
+    private var currentNote: NoteController? {
+        if isWide, lens != .daily { return detail }
+        return shownStack.topViewController as? NoteController
+    }
+
+    @objc private func keyLens(_ command: UIKeyCommand) {
+        guard let raw = command.propertyList as? String, let lens = Lens(rawValue: raw) else { return }
+        if lens == .search { showSearch() } else { show(lens) }
+    }
+
+    @objc private func keySearch() { showSearch() }
+    @objc private func keyNewNote() { compose() }
+
+    @objc private func keyToday() {
+        if bar.isSearching { leaveSearch(back: false) }
+        show(.daily)
+        shownStack.popToRootViewController(animated: false)
+        dayPager?.show(.today)
+        markChosen()
+    }
+
+    @objc private func keyBack() { currentNote?.back() }
+    @objc private func keyForward() { currentNote?.goForward() }
+
+    @objc private func keyPage() {
+        if readerColumn != nil { return closeReaderColumn() }
+        guard let note = currentNote else { return }
+        note.sheet?.saveAll()
+        ReaderController.open(notePath: note.place.path, store: store, from: note)
+    }
+
+    @objc private func keyReader() { readerColumn?.toggleReading() }
+    @objc private func keyHighlight() { readerColumn?.highlightSelection() }
+    @objc private func keyClosePage() { closeReaderColumn() }
 
     // MARK: The bar
 
@@ -409,7 +642,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
     /// The name of what is shown, for the bar gathered small.
     private func updateBarTitle() {
         let path: String?
-        if isWide, let detail { path = detail.place.path } else if let note = shownStack.topViewController as? NoteController {
+        if isWide, lens != .daily, let detail { path = detail.place.path } else if let note = shownStack.topViewController as? NoteController {
             path = note.place.path
         } else if lens == .daily, let pager = dayPager {
             path = pager.place.path
@@ -607,7 +840,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         open(PanePlace(path: path))
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
             guard let self else { return }
-            let note = isWide ? detail : shownStack.topViewController as? NoteController
+            let note = isWide && lens != .daily ? detail : shownStack.topViewController as? NoteController
             note?.sheet?.focusFirst()
         }
     }
@@ -675,8 +908,8 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         let entry = store.index?.entry(path)
         let day = GraphPaths.day(fromDailyPath: path)
         var items: [UIMenuElement] = []
-        // A link note: its page, to read.
-        if day == nil, WebCapture.url(in: store.text(path)) != nil {
+        // A note linking to a page, or holding a PDF: that, to read.
+        if !ReaderController.sources(of: path, store: store).isEmpty {
             items.append(UIAction(title: "Open Page", image: UIImage(systemName: "globe")) { [weak self, weak sheet] _ in
                 guard let self else { return }
                 sheet?.saveAll()
@@ -893,8 +1126,15 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
     /// `-PrismOpen <what>` at launch: `inbox`, `pinned`, `tasks`,
     /// `schedule`, `search:<words>`, `find:<words>`, `note:<path>`,
     /// `dictated:<text>`.
+    /// `-PrismOpen <step>[;<step>…]`: each step after the one before.
     private func openForScript() {
-        guard let spec = UserDefaults.standard.string(forKey: "PrismOpen") else { return }
+        guard let specs = UserDefaults.standard.string(forKey: "PrismOpen") else { return }
+        for (i, spec) in specs.components(separatedBy: ";").enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2 * Double(i)) { self.openStepForScript(spec) }
+        }
+    }
+
+    private func openStepForScript(_ spec: String) {
         let (head, rest) = spec.firstIndex(of: ":").map { (String(spec[..<$0]), String(spec[spec.index(after: $0)...])) } ?? (spec, "")
         DispatchQueue.main.async { [self] in
             switch head {
@@ -918,9 +1158,15 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             case "reader":
                 open(PanePlace(path: rest))
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                    if let note = self.shownStack.topViewController { ReaderController.open(notePath: rest, store: self.store, from: note) }
+                    let note = self.isWide && self.lens != .daily ? self.detail : self.shownStack.topViewController
+                    if let note { ReaderController.open(notePath: rest, store: self.store, from: note) }
                 }
             case "dictated": DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.addToToday(rest) }
+            case "sidebar": flipSidebar()
+            case "readermode": readerColumn?.toggleReading()
+            case "turn":
+                let shown = readerColumn ?? shownStack.topViewController as? ReaderController ?? presentedViewController as? ReaderController
+                shown?.turn(Int(rest) ?? 1)
             default: break
             }
         }
@@ -976,9 +1222,8 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         if let history = layout?.detail, exists(history) {
             pendingDetail = history
         }
-        addChild(navigation)
-        view.insertSubview(navigation.view, belowSubview: bar)
-        navigation.didMove(toParent: self)
+        _ = navigation
+        arrange()
         updateBarTitle()
     }
 

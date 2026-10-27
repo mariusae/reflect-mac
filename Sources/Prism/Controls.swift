@@ -72,8 +72,10 @@ final class CloseButton: NSButton {
 
     override func draw(_ dirtyRect: NSRect) {
         if hovering {
+            // Round, as the capsules it sits in are: a circle, or a pill.
             Ink.hover.setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+            let radius = min(bounds.width, bounds.height) / 2
+            NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
         }
         super.draw(dirtyRect)
     }

@@ -256,7 +256,7 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         chrome.isDay = ref.day != nil || GraphPaths.week(fromWeeklyPath: ref.path) != nil
         chrome.face = ref.day != nil ? place.face : nil
         chrome.linkedCount = place.face == .schedule && ref.day != nil ? nil : shownSources?.count
-        chrome.canRead = ref.day == nil && ReaderPane.url(of: ref.path, session: session) != nil
+        chrome.canRead = !ReaderPane.sources(of: ref.path, session: session).isEmpty
         setTucked(false)
         needsLayout = true
     }
@@ -885,7 +885,21 @@ final class TitleLabel: NSView {
         let height = whole.size().height
         let width = min(ceil(whole.size().width), right - 8)
         let x = max(0, ((right - width) / 2).rounded())
-        whole.draw(with: NSRect(x: x, y: ((bounds.height - height) / 2).rounded(), width: width, height: height),
+        // The capitals in the middle, as the arrows beside are — not the
+        // line's box, which has room under it for descenders.
+        var top = ((bounds.height - height) / 2).rounded()
+        if let font = name.attribute(.font, at: 0, effectiveRange: nil) as? NSFont, name.length > 0 {
+            // Where the line puts its baseline, as laid out: under its top.
+            let storage = NSTextStorage(attributedString: whole)
+            let layout = NSLayoutManager()
+            let container = NSTextContainer(size: NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude))
+            container.lineFragmentPadding = 0
+            layout.addTextContainer(container)
+            storage.addLayoutManager(layout)
+            let baseline = layout.location(forGlyphAt: 0).y
+            top = (bounds.height / 2 + font.capHeight / 2 - baseline).rounded()
+        }
+        whole.draw(with: NSRect(x: x, y: top, width: width, height: height),
                    options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
     }
 

@@ -38,7 +38,6 @@ final class ScheduleController: UIViewController, UIGestureRecognizerDelegate {
         super.viewDidLoad()
         view.backgroundColor = Ink.paper
         scroll.alwaysBounceVertical = true
-        scroll.showsVerticalScrollIndicator = false
         scroll.contentInsetAdjustmentBehavior = .always
         view.addSubview(scroll)
         grid.day = day

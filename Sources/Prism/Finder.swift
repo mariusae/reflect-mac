@@ -14,6 +14,9 @@ final class Finder: NSView, NSTextFieldDelegate {
     private let field = NSTextField()
     private let divider = NSView()
     private let hint = NSTextField(labelWithString: "")
+    /// The rows, scrolled when there are more than fit.
+    private let list = NSScrollView()
+    private let listDocument = FlippedView()
     private var rows: [FinderRow] = []
     private var places: [Place] = []
     private var selection = 0
@@ -25,7 +28,9 @@ final class Finder: NSView, NSTextFieldDelegate {
     var anchor: NSPoint? { didSet { needsLayout = true } }
     private var rowHeight: CGFloat { places.contains { $0.trail != nil } ? 54 : 40 }
 
-    private static let limit = 9
+    private static let limit = 60
+    /// How many rows show at once: the rest scrolled to.
+    private static let shown = 9
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -53,6 +58,14 @@ final class Finder: NSView, NSTextFieldDelegate {
         card.addSubview(divider)
         hint.alignment = .right
         card.addSubview(hint)
+        list.drawsBackground = false
+        list.contentView.drawsBackground = false
+        list.hasVerticalScroller = true
+        list.autohidesScrollers = true
+        list.scrollerStyle = .overlay
+        list.verticalScrollElasticity = .none
+        list.documentView = listDocument
+        card.addSubview(list)
     }
 
     @available(*, unavailable)
@@ -92,7 +105,7 @@ final class Finder: NSView, NSTextFieldDelegate {
             let row = FinderRow(place: place, face: face, thumbnail: places.contains { $0.cover != nil })
             row.onHover = { [weak self] in self?.hovered(index) }
             row.onClick = { [weak self] newColumn in self?.choose(index, newColumn: newColumn) }
-            card.addSubview(row)
+            listDocument.addSubview(row)
             return row
         }
         select(0)
@@ -103,6 +116,9 @@ final class Finder: NSView, NSTextFieldDelegate {
         guard !rows.isEmpty else { return }
         selection = min(max(index, 0), rows.count - 1)
         for (i, row) in rows.enumerated() { row.selected = i == selection }
+        // Chosen past what shows: scrolled to.
+        let row = rows[selection]
+        if row.frame.height > 0 { row.scrollToVisible(row.bounds.insetBy(dx: 0, dy: -8)) }
     }
 
     private func choose(_ index: Int, newColumn: Bool = false) {
@@ -119,7 +135,8 @@ final class Finder: NSView, NSTextFieldDelegate {
         }
         let width = min(600, bounds.width - 48)
         let fieldHeight: CGFloat = 60
-        let height = fieldHeight + (rows.isEmpty ? 0 : 1 + 8 + CGFloat(rows.count) * rowHeight + 8)
+        let listHeight = CGFloat(min(rows.count, Self.shown)) * rowHeight + 16
+        let height = fieldHeight + (rows.isEmpty ? 0 : 1 + listHeight)
         if let anchor {
             // Dropped from the title it was opened from: under it, about its middle.
             let x = min(max(16, floor(anchor.x - width / 2)), bounds.width - 16 - width)
@@ -140,12 +157,16 @@ final class Finder: NSView, NSTextFieldDelegate {
         field.frame = NSRect(x: 22, y: height - fieldHeight + floor((fieldHeight - fieldSize) / 2),
                              width: hint.frame.minX - 22 - 12, height: fieldSize)
         divider.frame = NSRect(x: 0, y: height - fieldHeight - 1, width: width, height: rows.isEmpty ? 0 : 1)
-        var y = height - fieldHeight - 1 - 8
-        for row in rows {
-            y -= rowHeight
-            row.frame = NSRect(x: 8, y: y, width: width - 16, height: rowHeight)
+        list.isHidden = rows.isEmpty
+        list.frame = NSRect(x: 0, y: 0, width: width, height: rows.isEmpty ? 0 : listHeight)
+        listDocument.frame = NSRect(x: 0, y: 0, width: width, height: CGFloat(rows.count) * rowHeight + 16)
+        for (i, row) in rows.enumerated() {
+            row.frame = NSRect(x: 8, y: 8 + CGFloat(i) * rowHeight, width: width - 16, height: rowHeight)
         }
     }
+
+    /// The wheel over it: its list's, never the page's under it.
+    override func scrollWheel(with event: NSEvent) {}
 
     override func mouseDown(with event: NSEvent) {
         if !card.frame.contains(convert(event.locationInWindow, from: nil)) { onClose?() }

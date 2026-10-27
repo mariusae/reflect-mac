@@ -1,9 +1,12 @@
 import UIKit
 import WebKit
+import PDFKit
 import ReflectCore
 import PrismCore
 
-/// A link note's page, the whole screen: as the site has it — or, the
+/// What a note links to, the whole screen — its own page, a link note's,
+/// or any page it links to, or a PDF it holds, ‹ › at the foot from one to
+/// the next: a page as the site has it — or, the
 /// reader turned on, its words alone, set in Chronicle on the paper, the
 /// site's chrome, its ads, its menus left behind — a band at the top saying
 /// where it is from, gone as the page is read down. Read down to
@@ -12,10 +15,22 @@ import PrismCore
 /// marked there each time the page is read again.
 final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler {
     private let store: PrismStore
-    /// The link note it is read from: its highlights go there.
+    /// The note it is read from: its highlights go there.
     let notePath: String
-    let url: URL
+    /// Everything in the note to read, and which is read.
+    private let sources: [ReaderSource]
+    private var index: Int
+    private var item: ReaderSource { sources[index] }
+    private var url: URL { item.url }
     private var web: ReaderWebView!
+    private let pdf = ReaderPDFView()
+    /// The passages highlighted before, marked on the PDF.
+    private var pdfMarks: [(PDFPage, PDFAnnotation)] = []
+    /// ‹ 2 of 3 ›, at the foot, for a note with more than one.
+    private let carousel = UIVisualEffectView(effect: UIGlassEffect())
+    private let earlier = UIButton(type: .system)
+    private let later = UIButton(type: .system)
+    private let count = UILabel()
     private let band = UIVisualEffectView(effect: UIGlassEffect())
     private let icon = UIImageView()
     private let back = UIButton(type: .system)
@@ -34,18 +49,19 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
     private var lastY: CGFloat = 0
     private var travel: CGFloat = 0
 
-    init(store: PrismStore, notePath: String, url: URL) {
+    init(store: PrismStore, notePath: String, sources: [ReaderSource]) {
         self.store = store
         self.notePath = notePath
-        self.url = url
-        reading = ReaderPlace.reads(url)
+        self.sources = sources
+        index = ReaderPlace.chosen(in: sources, for: notePath)
+        reading = ReaderPlace.reads(sources[index].url)
         super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Which link note has its page open in the reader: open again on coming back.
+    /// Which note has what it links to open in the reader: open again on coming back.
     static var openNote: String? {
         get { UserDefaults.standard.string(forKey: "Reader.openNote") }
         set { UserDefaults.standard.set(newValue, forKey: "Reader.openNote") }
@@ -73,6 +89,12 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
             MainActor.assumeIsolated { self?.scrolled() }
         }
         view.addSubview(web)
+        pdf.autoScales = true
+        pdf.displayMode = .singlePageContinuous
+        pdf.backgroundColor = Ink.paper
+        pdf.isHidden = true
+        pdf.onHighlight = { [weak self] in self?.highlightSelection() }
+        view.addSubview(pdf)
 
         band.cornerConfiguration = .uniformCorners(radius: .fixed(22))
         icon.contentMode = .scaleAspectFit
@@ -85,9 +107,12 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         headline.font = Typeface.current.body(14, weight: .medium)
         headline.textColor = Ink.text
         headline.lineBreakMode = .byTruncatingTail
-        back.setImage(UIImage(systemName: "chevron.left", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)), for: .normal)
+        // In a column, beside the note: closed, not gone back from.
+        back.setImage(UIImage(systemName: onClose == nil ? "chevron.left" : "xmark",
+                              withConfiguration: UIImage.SymbolConfiguration(pointSize: onClose == nil ? 17 : 15, weight: .semibold)), for: .normal)
         back.tintColor = Ink.text
-        back.accessibilityLabel = "Back to the Note"
+        back.accessibilityLabel = onClose == nil ? "Back to the Note" : "Close the Page"
+        for button in [back, type, reader] { button.isPointerInteractionEnabled = true }
         back.addAction(UIAction { [weak self] _ in self?.close() }, for: .touchUpInside)
         type.setImage(UIImage(systemName: "textformat.size", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .regular)), for: .normal)
         type.tintColor = Ink.text
@@ -98,6 +123,22 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         reader.addAction(UIAction { [weak self] _ in self?.toggleReading() }, for: .touchUpInside)
         for view in [back, icon, source, headline, reader, type] as [UIView] { band.contentView.addSubview(view) }
         view.addSubview(band)
+        carousel.cornerConfiguration = .capsule()
+        for (button, symbol, by) in [(earlier, "chevron.left", -1), (later, "chevron.right", 1)] {
+            button.setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)), for: .normal)
+            button.tintColor = Ink.text
+            button.isPointerInteractionEnabled = true
+            button.addAction(UIAction { [weak self] _ in self?.turn(by) }, for: .touchUpInside)
+            carousel.contentView.addSubview(button)
+        }
+        earlier.accessibilityLabel = "What the Note Links to Before"
+        later.accessibilityLabel = "What the Note Links to Next"
+        count.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        count.textColor = Ink.secondary
+        count.textAlignment = .center
+        carousel.contentView.addSubview(count)
+        carousel.isHidden = sources.count < 2
+        view.addSubview(carousel)
         band.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tappedBand)))
         spinner.hidesWhenStopped = true
         view.addSubview(spinner)
@@ -123,7 +164,12 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         Self.openNote = notePath
     }
 
-    private func close() {
+    /// Shown in a column of its own, beside the note, on the iPad: its ×
+    /// closes it, not back.
+    var onClose: (() -> Void)?
+
+    func close() {
+        if let onClose { return onClose() }
         if let navigation = navigationController { navigation.popViewController(animated: true) } else { dismiss(animated: true) }
     }
 
@@ -138,7 +184,21 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
     @objc private func leaving() { savePlace() }
 
     @objc private func tappedBand() {
-        web.evaluateJavaScript("window.scrollTo({top: 0, behavior: 'smooth'})")
+        if item.isPDF { pdf.document?.page(at: 0).map(pdf.go(to:)) } else { web.evaluateJavaScript("window.scrollTo({top: 0, behavior: 'smooth'})") }
+    }
+
+    /// The next of the note's sources, or the one before.
+    func turn(_ by: Int) {
+        let next = index + by
+        guard sources.indices.contains(next) else { return }
+        savePlace()
+        index = next
+        ReaderPlace.choose(item, for: notePath, first: index == 0)
+        reading = ReaderPlace.reads(url)
+        spinner.stopAnimating()
+        icon.image = UIImage(systemName: "globe")
+        UISelectionFeedbackGenerator().selectionChanged()
+        load()
     }
 
     override func viewDidLayoutSubviews() {
@@ -151,7 +211,8 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         icon.frame = CGRect(x: back.frame.maxX, y: (bandHeight - 26) / 2, width: 26, height: 26)
         type.isHidden = !reading
         type.frame = CGRect(x: band.bounds.width - (reading ? 48 : 4), y: 0, width: reading ? 44 : 0, height: bandHeight)
-        reader.frame = CGRect(x: type.frame.minX - 40, y: 0, width: 40, height: bandHeight)
+        reader.isHidden = item.isPDF
+        reader.frame = CGRect(x: type.frame.minX - (item.isPDF ? 0 : 40), y: 0, width: item.isPDF ? 0 : 40, height: bandHeight)
         let textX = icon.frame.maxX + 10
         source.frame = CGRect(x: textX, y: 9, width: reader.frame.minX - textX - 4, height: 14)
         headline.frame = CGRect(x: textX, y: 24, width: reader.frame.minX - textX - 4, height: 19)
@@ -161,6 +222,14 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
             web.scrollView.contentInset = UIEdgeInsets(top: inset, left: 0, bottom: view.safeAreaInsets.bottom + 40, right: 0)
             web.scrollView.verticalScrollIndicatorInsets.top = inset
         }
+        pdf.frame = CGRect(x: 0, y: inset - 4, width: view.bounds.width, height: view.bounds.height - inset + 4)
+        let countWidth = ceil(count.intrinsicContentSize.width) + 8
+        let carouselWidth = 44 + countWidth + 44
+        carousel.frame = CGRect(x: ((view.bounds.width - carouselWidth) / 2).rounded(),
+                                y: view.bounds.height - max(view.safeAreaInsets.bottom, 12) - 8 - 44, width: carouselWidth, height: 44)
+        earlier.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
+        count.frame = CGRect(x: 44, y: 0, width: countWidth, height: 44)
+        later.frame = CGRect(x: 44 + countWidth, y: 0, width: 44, height: 44)
         spinner.center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
         failure.frame = CGRect(x: 32, y: view.bounds.midY - 60, width: view.bounds.width - 64, height: 120)
     }
@@ -170,6 +239,17 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
     private func load() {
         restored = false
         failure.isHidden = true
+        count.text = "\(index + 1) of \(sources.count)"
+        earlier.isEnabled = index > 0
+        later.isEnabled = index < sources.count - 1
+        web.isHidden = item.isPDF
+        pdf.isHidden = !item.isPDF
+        if item.isPDF {
+            view.setNeedsLayout()
+            setBandHidden(false)
+            return showPDF()
+        }
+        pdf.document = nil
         reader.setImage(UIImage(systemName: reading ? "doc.plaintext.fill" : "doc.plaintext",
                                 withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .regular)), for: .normal)
         reader.accessibilityLabel = reading ? "The Page as the Site Has It" : "Reader"
@@ -196,7 +276,7 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
     }
 
     /// The reader on, or off: the page set again, where it was read to in that.
-    private func toggleReading() {
+    func toggleReading() {
         savePlace()
         reading.toggle()
         ReaderPlace.setReads(reading, for: url)
@@ -206,7 +286,7 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
 
     /// The band as the site has it: its address, its title.
     private func showSite() {
-        guard !reading else { return }
+        guard !reading, !item.isPDF else { return }
         source.text = ((web.url ?? url).host() ?? "").replacingOccurrences(of: "www.", with: "").uppercased()
         headline.text = web.title.flatMap { $0.isEmpty ? nil : $0 } ?? SliceBlock.name(notePath, store: store)
     }
@@ -238,6 +318,8 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut]) { [self] in
             band.alpha = hidden ? 0 : 1
             band.transform = hidden ? CGAffineTransform(translationX: 0, y: -(band.frame.maxY + 8)) : .identity
+            carousel.alpha = hidden ? 0 : 1
+            carousel.transform = hidden ? CGAffineTransform(translationX: 0, y: view.bounds.height - carousel.frame.minY) : .identity
         }
     }
 
@@ -256,12 +338,57 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         // The passages highlighted before, marked again; then where it was read to.
-        if let marking = ReaderPage.marking(WebCapture.highlights(in: store.text(notePath))) { webView.evaluateJavaScript(marking) }
+        if let marking = ReaderPage.marking(highlights) { webView.evaluateJavaScript(marking) }
         if !reading { faviconFromPage() }
         // The first page in, where it was read to: not a link followed from it.
         guard !restored else { return }
         restored = true
         webView.evaluateJavaScript("prismRestore(\(ReaderPlace.saved(url, reading: reading)))")
+    }
+
+    /// The passages highlighted on what is read, as the note has them.
+    private var highlights: [String] { WebCapture.highlights(in: store.text(notePath), of: item.address) }
+
+    // MARK: A PDF
+
+    private func showPDF() {
+        web.stopLoading()
+        icon.image = UIImage(systemName: "doc.richtext")
+        guard let document = PDFDocument(url: url), document.pageCount > 0 else {
+            pdf.document = nil
+            source.text = "PDF"
+            headline.text = item.name
+            failure.text = "This PDF could not be read."
+            failure.isHidden = false
+            return
+        }
+        pdf.document = document
+        pdfMarks = []
+        let title = (document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        source.text = "PDF – \(document.pageCount) \(document.pageCount == 1 ? "PAGE" : "PAGES")"
+        headline.text = title ?? item.name
+        let page = min(document.pageCount - 1, Int(ReaderPlace.saved(url, reading: false) * Double(document.pageCount)))
+        if page > 0, let at = document.page(at: page) { pdf.go(to: at) }
+        markPDF()
+    }
+
+    /// The passages highlighted before, marked on the PDF's pages: not written into it.
+    private func markPDF() {
+        guard let document = pdf.document else { return }
+        for (page, mark) in pdfMarks { page.removeAnnotation(mark) }
+        pdfMarks = []
+        for passage in highlights {
+            var found = document.findString(passage, withOptions: .caseInsensitive)
+            if found.isEmpty { found = document.findString(passage.replacingOccurrences(of: "\n", with: " "), withOptions: .caseInsensitive) }
+            for line in found.flatMap({ $0.selectionsByLine() }) {
+                for page in line.pages {
+                    let mark = PDFAnnotation(bounds: line.bounds(for: page), forType: .highlight, withProperties: nil)
+                    mark.color = UIColor.systemYellow.withAlphaComponent(0.45)
+                    page.addAnnotation(mark)
+                    pdfMarks.append((page, mark))
+                }
+            }
+        }
     }
 
     /// The site's icon, as its page names it.
@@ -290,6 +417,13 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
     }
 
     private func savePlace() {
+        if item.isPDF {
+            // The page it is at, as a part of the way through: its middle, to come back to it.
+            if let document = pdf.document, let page = pdf.currentPage, document.pageCount > 0 {
+                ReaderPlace.save((Double(document.index(for: page)) + 0.5) / Double(document.pageCount), for: url, reading: false)
+            }
+            return
+        }
         web?.evaluateJavaScript("prismPlace()") { [placeURL, reading] value, _ in
             if let fraction = value as? Double { ReaderPlace.save(fraction, for: placeURL, reading: reading) }
         }
@@ -330,16 +464,25 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
 
     // MARK: Highlighting
 
-    /// The passage chosen: marked in the page, and written into the note, under its Highlights.
-    private func highlightSelection() {
-        web.evaluateJavaScript("prismHighlight()") { [weak self] value, _ in
-            guard let self, let passage = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !passage.isEmpty else { return }
-            let before = store.text(notePath)
-            let after = WebCapture.highlighting(passage, in: before)
-            guard after != before else { return }
-            store.write(after, path: notePath)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+    /// The passage chosen: marked in the page, and written into the note —
+    /// under its Highlights, or under the row linking to what is read.
+    func highlightSelection() {
+        if item.isPDF {
+            write(pdf.currentSelection?.string ?? "")
+            pdf.clearSelection()
+            return markPDF()
         }
+        web.evaluateJavaScript("prismHighlight()") { [weak self] value, _ in self?.write(value as? String ?? "") }
+    }
+
+    private func write(_ passage: String) {
+        let passage = passage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !passage.isEmpty else { return }
+        let before = store.text(notePath)
+        let after = WebCapture.highlighting(passage, in: before, of: item.address)
+        guard after != before else { return }
+        store.write(after, path: notePath)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 }
 
@@ -354,13 +497,29 @@ final class ReaderWebView: WKWebView {
     }
 }
 
+/// A PDF read, its text chosen: Highlight first in the menu.
+final class ReaderPDFView: PDFView {
+    var onHighlight: (() -> Void)?
+
+    override func buildMenu(with builder: UIMenuBuilder) {
+        super.buildMenu(with: builder)
+        let highlight = UIAction(title: "Highlight", image: UIImage(systemName: "highlighter")) { [weak self] _ in self?.onHighlight?() }
+        builder.insertChild(UIMenu(options: .displayInline, children: [highlight]), atStartOfMenu: .standardEdit)
+    }
+}
+
 extension ReaderController {
-    /// A link note's page, in the reader: pushed on, from the right — or,
+    /// What a note links to, in the reader: pushed on, from the right — or,
     /// with no stack to go on, over everything.
+    /// Somewhere else to put it, given first: the iPad's column. True, put.
+    static var present: ((ReaderController) -> Bool)?
+
     @discardableResult
     static func open(notePath: String, store: PrismStore, from controller: UIViewController, animated: Bool = true) -> Bool {
-        guard let address = WebCapture.url(in: store.text(notePath)), let url = URL(string: address) else { return false }
-        let reader = ReaderController(store: store, notePath: notePath, url: url)
+        let sources = sources(of: notePath, store: store)
+        guard !sources.isEmpty else { return false }
+        let reader = ReaderController(store: store, notePath: notePath, sources: sources)
+        if let present, present(reader) { return true }
         if let navigation = controller.navigationController {
             navigation.pushViewController(reader, animated: animated)
         } else {
@@ -368,6 +527,14 @@ extension ReaderController {
             controller.present(reader, animated: animated)
         }
         return true
+    }
+}
+
+extension ReaderController {
+    /// What a note has to read: none, when it links to nothing.
+    static func sources(of notePath: String, store: PrismStore) -> [ReaderSource] {
+        guard let root = store.graph?.root else { return [] }
+        return ReaderSource.all(in: store.text(notePath), root: root)
     }
 }
 

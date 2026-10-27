@@ -51,6 +51,8 @@ final class PushRelay {
 /// silent pushes.
 final class PrismAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        // Scroll bars that read on the dark paper too.
+        UIScrollView.followPaper()
         // Silent pushes need no permission asked of the person.
         application.registerForRemoteNotifications()
         // `-PrismFakePushAfter <seconds>`: a push handled as one from the relay

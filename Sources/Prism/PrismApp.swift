@@ -216,7 +216,9 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         if let note = environment["PRISM_BESIDE"] { window.open(note, beside: true) }
         if environment["PRISM_SCHEDULE"] == "1" { window.showSchedule(nil) }
         if environment["PRISM_READ"] == "1" { window.readPage(nil) }
+        if environment["PRISM_NOW_CARD"] == "1" { window.nowCardForScript() }
         if environment["PRISM_READER"] == "1" { window.readerForScript?.toggleReading() }
+        if let by = environment["PRISM_TURN"].flatMap(Int.init) { window.readerForScript?.turn(by) }
         // `PRISM_HIGHLIGHT=<words>`: those words, found in the page read, highlighted — once it is in.
         if let words = environment["PRISM_HIGHLIGHT"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { window.readerForScript?.highlightForScript(words) }
@@ -417,6 +419,8 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("Open Page", #selector(PrismWindow.readPage(_:)), "r", [.command, .shift]),
             item("Reader", #selector(PrismWindow.toggleReaderMode(_:)), "e", [.command, .shift]),
             item("Highlight Passage", #selector(PrismWindow.highlightPassage(_:)), "h", [.command, .shift]),
+            item("Previous Link", #selector(PrismWindow.previousSource(_:)), left, [.command, .option]),
+            item("Next Link", #selector(PrismWindow.nextSource(_:)), right, [.command, .option]),
             .separator(),
             item("Copy Link", #selector(PrismWindow.copyNoteLink(_:))),
             item("Show in Finder", #selector(PrismWindow.revealNoteInFinder(_:))),

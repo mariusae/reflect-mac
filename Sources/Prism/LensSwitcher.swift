@@ -43,6 +43,9 @@ final class LensSwitcher: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Scripts': the block on now's card out, as if pointed at.
+    func showNowCardForScript() { buttons.first { $0.lens == .daily }?.showCardForScript() }
+
     /// As wide and tall as it wants: on its glass, a margin about the row.
     var preferredSize: NSSize { floats ? NSSize(width: Self.width + 12, height: Self.side + 12) : NSSize(width: Self.width, height: Self.side) }
 
@@ -70,12 +73,13 @@ private final class LensButton: NSView {
         didSet {
             guard now != oldValue else { return }
             needsDisplay = true
-            toolTip = now.map { now in
-                let name = InlineMarkup.plainText(now.block.title)
-                return "\(lens.title) (⌘\(lens.key)) — now: \(name.isEmpty ? "New Block" : name), \(BlockerClock.countdown(now.remaining)) left"
-            } ?? "\(lens.title) (⌘\(lens.key))"
+            // A block on: its card, on the pointer, says it; no tip as well.
+            toolTip = now == nil ? "\(lens.title) (⌘\(lens.key))" : nil
+            if let now { card?.show(now) } else { hideCard() }
         }
     }
+    /// The block on, its card out, the pointer on the mark.
+    private var card: NowCard?
     private var hovering = false { didSet { needsDisplay = true } }
 
     override var isFlipped: Bool { true }
@@ -96,8 +100,45 @@ private final class LensButton: NSView {
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
     }
 
-    override func mouseEntered(with event: NSEvent) { hovering = true }
-    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        showCard()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        hideCard()
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { hideCard() }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    func showCardForScript() { showCard() }
+
+    /// The block on, said in a card by the mark: under it, or over it at the window's foot.
+    private func showCard() {
+        guard let now, card == nil, let root = window?.contentView else { return }
+        let card = NowCard()
+        card.show(now)
+        root.addSubview(card)
+        let mark = convert(bounds, to: root)
+        let size = card.fittingSize
+        let below = root.isFlipped ? mark.maxY + 6 : mark.minY - 6 - size.height
+        let above = root.isFlipped ? mark.minY - 6 - size.height : mark.maxY + 6
+        let roomBelow = root.isFlipped ? root.bounds.height - mark.maxY : mark.minY
+        let x = min(max(8, mark.midX - 22), root.bounds.width - 8 - size.width)
+        card.frame = NSRect(x: x, y: roomBelow > size.height + 20 ? below : above, width: size.width, height: size.height)
+        card.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.12; card.animator().alphaValue = 1 }
+        self.card = card
+    }
+
+    private func hideCard() {
+        card?.removeFromSuperview()
+        card = nil
+    }
     override func mouseDown(with event: NSEvent) {}
     override func mouseUp(with event: NSEvent) {
         if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
@@ -124,6 +165,67 @@ private final class LensButton: NSView {
         Ink.accent.setFill()
         NSBezierPath(roundedRect: pill, xRadius: 6.5, yRadius: 6.5).fill()
         text.draw(at: NSPoint(x: pill.midX - size.width / 2, y: pill.midY - size.height / 2))
+    }
+}
+
+/// The block on now, in a card by Daily's mark: what it is, its hours,
+/// how long is left of it, how far through its checklist.
+private final class NowCard: NSView {
+    private let glass = NSGlassEffectView()
+    private let dot = NSView()
+    private let title = NSTextField(labelWithString: "")
+    private let detail = NSTextField(labelWithString: "")
+
+    override var isFlipped: Bool { true }
+
+    init() {
+        super.init(frame: .zero)
+        addSubview(glass)
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 4
+        addSubview(dot)
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        title.textColor = Ink.text
+        detail.font = .monospacedDigitSystemFont(ofSize: 11.5, weight: .regular)
+        detail.textColor = Ink.secondary
+        for label in [title, detail] {
+            label.lineBreakMode = .byTruncatingTail
+            addSubview(label)
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func show(_ now: NowPill.Now) {
+        let block = now.block
+        let name = InlineMarkup.plainText(block.title).trimmingCharacters(in: .whitespaces)
+        title.stringValue = name.isEmpty ? "New Block" : name
+        let minutes = Int((now.remaining / 60).rounded(.up))
+        var parts = [TimeStamp.span(block.start, block.end, twelveHour: TimeStamp.localeIsTwelveHour),
+                     "\(TimeStamp.length(minutes)) left"]
+        let checks = block.items.filter { $0.task != nil }
+        if !checks.isEmpty { parts.append("\(checks.filter { $0.task?.isDone == true }.count) of \(checks.count) done") }
+        detail.stringValue = parts.joined(separator: " · ")
+        needsLayout = true
+    }
+
+    override var fittingSize: NSSize {
+        let width = max(title.intrinsicContentSize.width, detail.intrinsicContentSize.width)
+        return NSSize(width: min(380, ceil(width) + 32 + 14 + 8), height: 50)
+    }
+
+    override func layout() {
+        super.layout()
+        effectiveAppearance.performAsCurrentDrawingAppearance { dot.layer?.backgroundColor = Ink.now.cgColor }
+        glass.frame = bounds
+        glass.cornerRadius = 14
+        dot.frame = NSRect(x: 14, y: 12, width: 8, height: 8)
+        let x = dot.frame.maxX + 10
+        title.frame = NSRect(x: x, y: 7, width: bounds.width - x - 14, height: 17)
+        detail.frame = NSRect(x: x, y: 26, width: bounds.width - x - 14, height: 16)
     }
 }
 

@@ -142,9 +142,12 @@ final class BottomBar: UIView, UITextFieldDelegate {
                 UISelectionFeedbackGenerator().selectionChanged()
                 self?.onLens?(lens)
             }, for: .touchUpInside)
+            // A pointer, on the iPad: lit under it.
+            button.isPointerInteractionEnabled = true
             content.addSubview(button)
             lensButtons[lens] = button
         }
+        for button in [wellButton, writeButton, closeButton] { button.isPointerInteractionEnabled = true }
         styleLenses()
         content.addSubview(nowRing)
         writeButton.setImage(Self.mark("plus", size: 21), for: .normal)

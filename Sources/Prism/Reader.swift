@@ -1,10 +1,13 @@
 import AppKit
 import WebKit
+import PDFKit
 import ReflectCore
 import ReflectUI
 import PrismCore
 
-/// A link note's page, in a column at the note's right: as the site has
+/// What a note links to, in a column at the note's right — its own page,
+/// a link note's, or any page it links to, or a PDF it holds, ‹ › from one
+/// to the next: a page as the site has
 /// it — or, the reader turned on, its words alone, set in Chronicle on the
 /// paper, the site's chrome, its ads, its menus left behind — its controls
 /// floating over the top as a note's do, gone as it is read down: where it
@@ -14,14 +17,21 @@ import PrismCore
 /// marked there each time the page is read again.
 final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
     let session: Session
-    /// The link note it is read from: its highlights go there.
+    /// The note it is read from: its highlights go there.
     let notePath: String
-    let url: URL
+    /// Everything in the note to read, and which is read.
+    private(set) var sources: [ReaderSource]
+    private(set) var index: Int
+    var source: ReaderSource { sources[index] }
+    var url: URL { source.url }
 
     /// Its × clicked.
     var onClose: ((ReaderPane) -> Void)?
 
     private let web: ReaderWebView
+    private let pdf = ReaderPDFView()
+    /// The passages highlighted before, marked on the PDF.
+    private var pdfMarks: [(PDFPage, PDFAnnotation)] = []
     private let chrome = ReaderChrome()
     private let edge = EdgeFade()
     private let leftRule = RuleView()
@@ -36,11 +46,12 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
 
     override var isFlipped: Bool { true }
 
-    init(session: Session, notePath: String, url: URL) {
+    init(session: Session, notePath: String, sources: [ReaderSource]) {
         self.session = session
         self.notePath = notePath
-        self.url = url
-        reading = ReaderPlace.reads(url)
+        self.sources = sources
+        index = ReaderPlace.chosen(in: sources, for: notePath)
+        reading = ReaderPlace.reads(sources[index].url)
         let configuration = WKWebViewConfiguration()
         configuration.userContentController.addUserScript(ReaderPage.userScript)
         web = ReaderWebView(frame: .zero, configuration: configuration)
@@ -54,6 +65,12 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
         web.onHighlight = { [weak self] in self?.highlightSelection() }
         web.onType = { [weak self] by in self?.restyle { $0.step(by) } }
         addSubview(web)
+        pdf.autoScales = true
+        pdf.displayMode = .singlePageContinuous
+        pdf.backgroundColor = Ink.paper
+        pdf.isHidden = true
+        pdf.onHighlight = { [weak self] in self?.highlightSelection() }
+        addSubview(pdf)
         edge.isHidden = true
         addSubview(edge)
         addSubview(chrome)
@@ -73,7 +90,11 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
         }
         chrome.onType = { [weak self] view in self?.showTypeMenu(from: view) }
         chrome.onReader = { [weak self] in self?.toggleReading() }
-        chrome.onTop = { [weak self] in self?.web.evaluateJavaScript("window.scrollTo({top: 0, behavior: 'smooth'})") }
+        chrome.onStep = { [weak self] by in self?.turn(by) }
+        chrome.onTop = { [weak self] in
+            guard let self else { return }
+            if source.isPDF { pdf.document?.page(at: 0).map(pdf.go(to:)) } else { web.evaluateJavaScript("window.scrollTo({top: 0, behavior: 'smooth'})") }
+        }
         titleWatch = web.observe(\.title) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.showSite() }
         }
@@ -83,19 +104,66 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    /// A link note's page, to read: nothing, when the note has no address.
-    static func url(of path: String, session: Session) -> URL? {
-        guard let source = session.graph.read(path: path), let address = WebCapture.url(in: source) else { return nil }
-        return URL(string: address)
+    /// What a note has to read: none, when it links to nothing.
+    static func sources(of path: String, session: Session) -> [ReaderSource] {
+        guard let text = session.graph.read(path: path) else { return [] }
+        return ReaderSource.all(in: text, root: session.graph.root)
     }
 
-    func focus() { window?.makeFirstResponder(web) }
+    func focus() { window?.makeFirstResponder(source.isPDF ? pdf : web) }
+
+    /// The note's sources again, changed: where it is read kept, if it is still there.
+    func refresh(_ sources: [ReaderSource]) {
+        guard !sources.isEmpty, sources != self.sources else { return }
+        let address = source.address
+        self.sources = sources
+        if let same = sources.firstIndex(where: { $0.address == address }) {
+            index = same
+            chrome.position = (index, sources.count)
+        } else {
+            index = 0
+            open()
+        }
+    }
+
+    /// The next of the note's sources, or the one before.
+    func turn(_ by: Int) {
+        let next = index + by
+        guard sources.indices.contains(next) else { return NSSound.beep() }
+        savePlace()
+        index = next
+        ReaderPlace.choose(source, for: notePath, first: index == 0)
+        open()
+    }
+
+    private func open() {
+        reading = ReaderPlace.reads(url)
+        spinner.stopAnimation(nil)
+        chrome.icon = nil
+        lastY = 0
+        setTucked(false)
+        load()
+    }
+
+    /// Back, or forward, through the pages followed in it: false, none that way.
+    func step(_ by: Int) -> Bool {
+        guard !source.isPDF else { return false }
+        if by < 0, web.canGoBack { web.goBack(); return true }
+        if by > 0, web.canGoForward { web.goForward(); return true }
+        return false
+    }
 
     // MARK: The page, or its words
 
     private func load() {
         restored = false
         failure.isHidden = true
+        chrome.position = (index, sources.count)
+        chrome.isPDF = source.isPDF
+        web.isHidden = source.isPDF
+        pdf.isHidden = !source.isPDF
+        if source.isPDF { return showPDF() }
+        pdf.document = nil
         chrome.reading = reading
         // The page's own paper, as the site has it; the app's, in the reader.
         web.setValue(!reading, forKey: "drawsBackground")
@@ -131,7 +199,7 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
 
     /// The band as the site has it: its address, its title.
     private func showSite() {
-        guard !reading else { return }
+        guard !reading, !source.isPDF else { return }
         let host = (web.url ?? url).host ?? ""
         let title = web.title.flatMap { $0.isEmpty ? nil : $0 } ?? session.name(of: notePath).title
         chrome.show(source: host.replacingOccurrences(of: "www.", with: "").uppercased(), title: title, metrics: session.metrics)
@@ -167,8 +235,54 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
     }
 
     private func markHighlights() {
-        if let marking = ReaderPage.marking(WebCapture.highlights(in: session.graph.read(path: notePath) ?? "")) {
-            web.evaluateJavaScript(marking)
+        if let marking = ReaderPage.marking(highlights) { web.evaluateJavaScript(marking) }
+    }
+
+    /// The passages highlighted on what is read, as the note has them.
+    private var highlights: [String] {
+        WebCapture.highlights(in: session.graph.read(path: notePath) ?? "", of: source.address)
+    }
+
+    // MARK: A PDF
+
+    private func showPDF() {
+        web.stopLoading()
+        guard let document = PDFDocument(url: url), document.pageCount > 0 else {
+            pdf.document = nil
+            chrome.show(source: "PDF", title: source.name, metrics: session.metrics)
+            failure.stringValue = "This PDF could not be read."
+            failure.isHidden = false
+            return
+        }
+        pdf.document = document
+        pdfMarks = []
+        let title = (document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        chrome.show(source: "PDF – \(document.pageCount) \(document.pageCount == 1 ? "PAGE" : "PAGES")", title: title ?? source.name,
+                    metrics: session.metrics)
+        chrome.icon = NSImage(systemSymbolName: "doc.richtext", accessibilityDescription: nil)
+        let page = min(document.pageCount - 1, Int(ReaderPlace.saved(url, reading: false) * Double(document.pageCount)))
+        if page > 0, let at = document.page(at: page) { pdf.go(to: at) }
+        markPDF()
+    }
+
+    /// The passages highlighted before, marked on the PDF's pages: not written into it.
+    private func markPDF() {
+        guard let document = pdf.document else { return }
+        for (page, mark) in pdfMarks { page.removeAnnotation(mark) }
+        pdfMarks = []
+        for passage in highlights {
+            var found = document.findString(passage, withOptions: .caseInsensitive)
+            if found.isEmpty {
+                found = document.findString(passage.replacingOccurrences(of: "\n", with: " "), withOptions: .caseInsensitive)
+            }
+            for line in found.flatMap({ $0.selectionsByLine() }) {
+                for page in line.pages {
+                    let mark = PDFAnnotation(bounds: line.bounds(for: page), forType: .highlight, withProperties: nil)
+                    mark.color = NSColor.systemYellow.withAlphaComponent(0.45)
+                    page.addAnnotation(mark)
+                    pdfMarks.append((page, mark))
+                }
+            }
         }
     }
 
@@ -204,6 +318,13 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
 
     /// Where it was read to, kept: closed, or the app quit.
     func savePlace() {
+        if source.isPDF {
+            // The page it is at, as a part of the way through: its middle, to come back to it.
+            if let document = pdf.document, let page = pdf.currentPage, document.pageCount > 0 {
+                ReaderPlace.save((Double(document.index(for: page)) + 0.5) / Double(document.pageCount), for: url, reading: false)
+            }
+            return
+        }
         web.evaluateJavaScript("prismPlace()") { [placeURL, reading] value, _ in
             if let fraction = value as? Double { ReaderPlace.save(fraction, for: placeURL, reading: reading) }
         }
@@ -245,6 +366,7 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
     override func layout() {
         super.layout()
         web.frame = bounds
+        pdf.frame = NSRect(x: 0, y: PaneChrome.height, width: bounds.width, height: max(0, bounds.height - PaneChrome.height))
         chrome.frame = NSRect(x: 0, y: 0, width: bounds.width, height: PaneChrome.height)
         edge.frame = NSRect(x: 0, y: 0, width: bounds.width, height: PaneChrome.height + 18)
         leftRule.frame = NSRect(x: 0, y: 0, width: 1, height: bounds.height)
@@ -300,24 +422,55 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
         web.evaluateJavaScript(style.script)
     }
 
+    /// Scripts': the PDF's pages in sight drawn into a picture of the window
+    /// — its own drawing in layers a picture of the view leaves out.
+    func drawPDFForScript(in view: NSView) {
+        guard source.isPDF, !pdf.isHidden else { return }
+        NSGraphicsContext.saveGraphicsState()
+        let clip = pdf.convert(pdf.bounds, to: view)
+        NSBezierPath(rect: NSRect(x: clip.minX, y: view.bounds.height - clip.maxY, width: clip.width, height: clip.height)).addClip()
+        for page in pdf.visiblePages {
+            let box = pdf.convert(pdf.convert(page.bounds(for: pdf.displayBox), from: page), to: view)
+            let rect = NSRect(x: box.minX, y: view.bounds.height - box.maxY, width: box.width, height: box.height)
+            page.thumbnail(of: NSSize(width: rect.width * 2, height: rect.height * 2), for: pdf.displayBox).draw(in: rect)
+        }
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
     // MARK: Highlighting
 
     /// Scripts': the words found in the page, chosen, and highlighted.
     func highlightForScript(_ words: String) {
+        if source.isPDF {
+            guard let found = pdf.document?.findString(words, withOptions: .caseInsensitive).first else { return }
+            pdf.setCurrentSelection(found, animate: false)
+            return highlightSelection()
+        }
         guard let data = try? JSONEncoder().encode(words), let quoted = String(data: data, encoding: .utf8) else { return }
         web.evaluateJavaScript("window.find(\(quoted))") { [weak self] _, _ in self?.highlightSelection() }
     }
 
-    /// The passage chosen: marked in the page, and written into the note, under its Highlights.
+    /// The passage chosen: marked in the page, and written into the note —
+    /// under its Highlights, or under the row linking to what is read.
     func highlightSelection() {
+        if source.isPDF {
+            let passage = pdf.currentSelection?.string ?? ""
+            write(passage)
+            pdf.clearSelection()
+            return markPDF()
+        }
         web.evaluateJavaScript("prismHighlight()") { [weak self] value, _ in
-            guard let self, let passage = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !passage.isEmpty else {
-                return NSSound.beep()
-            }
-            session.change(notePath) { source in
-                let after = WebCapture.highlighting(passage, in: source)
-                return after == source ? nil : after
-            }
+            self?.write(value as? String ?? "")
+        }
+    }
+
+    private func write(_ passage: String) {
+        let passage = passage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !passage.isEmpty else { return NSSound.beep() }
+        let address = source.address
+        session.change(notePath) { source in
+            let after = WebCapture.highlighting(passage, in: source, of: address)
+            return after == source ? nil : after
         }
     }
 }
@@ -358,20 +511,54 @@ final class ReaderWebView: WKWebView {
     }
 }
 
+/// A PDF read: Highlight in its menu, a passage chosen, and ⇧⌘H.
+final class ReaderPDFView: PDFView {
+    var onHighlight: (() -> Void)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event) ?? NSMenu()
+        guard currentSelection?.string?.isEmpty == false else { return menu }
+        let highlight = NSMenuItem(title: "Highlight", action: #selector(highlight), keyEquivalent: "")
+        highlight.target = self
+        highlight.image = NSImage(systemSymbolName: "highlighter", accessibilityDescription: nil)
+        menu.insertItem(highlight, at: 0)
+        menu.insertItem(.separator(), at: 1)
+        return menu
+    }
+
+    @objc private func highlight() { onHighlight?() }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "h",
+           window?.firstResponder.map({ ($0 as? NSView)?.isDescendant(of: self) == true }) == true {
+            onHighlight?()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
 /// The reader's controls, floating on glass over its top: at the left, the
 /// page's icon, its site and how long it takes, its title — clicked, back
-/// to the top; at the right, the type, and ×.
+/// to the top; at the right, ‹ › through what the note has to read, when
+/// it has more than one, the reader, the type, and ×.
 final class ReaderChrome: NSView {
     var onClose: (() -> Void)?
     var onType: ((NSView) -> Void)?
     var onTop: (() -> Void)?
     var onReader: (() -> Void)?
+    var onStep: ((Int) -> Void)?
 
     private let band = GlassCapsule()
     private let right = GlassCapsule()
     private let iconView = NSImageView()
     private let source = NSTextField(labelWithString: "")
     private let headline = NSTextField(labelWithString: "")
+    private let previous = CloseButton(symbol: "chevron.left", pointSize: 11, toolTip: "What the Note Links to Before (⌥⌘←)")
+    private let next = CloseButton(symbol: "chevron.right", pointSize: 11, toolTip: "What the Note Links to Next (⌥⌘→)")
+    private let count = NSTextField(labelWithString: "")
+    private let divider = RuleView()
     private let reader = CloseButton(symbol: "doc.plaintext", pointSize: 13, toolTip: "Reader: the Words Alone (⇧⌘E)")
     private let type = CloseButton(symbol: "textformat.size", pointSize: 13, toolTip: "Type (⌘- ⌘+)")
     private let close = CloseButton(symbol: "xmark", pointSize: 11, toolTip: "Close the Page (⇧⌘R)")
@@ -389,6 +576,21 @@ final class ReaderChrome: NSView {
             needsLayout = true
         }
     }
+
+    /// Which of the note's sources is read, of how many: ‹ › for more than one.
+    var position = (0, 1) {
+        didSet {
+            count.stringValue = "\(position.0 + 1) of \(position.1)"
+            previous.isEnabled = position.0 > 0
+            next.isEnabled = position.0 < position.1 - 1
+            previous.alphaValue = previous.isEnabled ? 1 : 0.35
+            next.alphaValue = next.isEnabled ? 1 : 0.35
+            needsLayout = true
+        }
+    }
+
+    /// A PDF: no reader, no type, of its own.
+    var isPDF = false { didSet { needsLayout = true } }
 
     var icon: NSImage? {
         didSet { iconView.image = icon ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil) }
@@ -413,7 +615,13 @@ final class ReaderChrome: NSView {
         }
         for view in [iconView, source, headline] as [NSView] { band.content.addSubview(view) }
         band.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(topClicked)))
-        for (button, action) in [(reader, #selector(readerClicked)), (type, #selector(typeClicked)), (close, #selector(closeClicked))] {
+        count.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        count.textColor = Ink.secondary
+        count.alignment = .center
+        right.content.addSubview(count)
+        right.content.addSubview(divider)
+        for (button, action) in [(previous, #selector(previousClicked)), (next, #selector(nextClicked)), (reader, #selector(readerClicked)),
+                                 (type, #selector(typeClicked)), (close, #selector(closeClicked))] {
             button.contentTintColor = Ink.text
             button.target = self
             button.action = action
@@ -433,6 +641,8 @@ final class ReaderChrome: NSView {
 
     @objc private func typeClicked() { onType?(type) }
     @objc private func readerClicked() { onReader?() }
+    @objc private func previousClicked() { onStep?(-1) }
+    @objc private func nextClicked() { onStep?(1) }
     @objc private func closeClicked() { onClose?() }
     @objc private func topClicked() { onTop?() }
 
@@ -449,13 +659,25 @@ final class ReaderChrome: NSView {
         super.layout()
         let side: CGFloat = 34
         let y = ((PaneChrome.height - side) / 2).rounded()
-        reader.frame = NSRect(x: 4, y: 4, width: 28, height: side - 8)
-        type.isHidden = !reading
-        type.frame = NSRect(x: reader.frame.maxX, y: 4, width: reading ? 28 : 0, height: side - 8)
+        // ‹ 2 of 3 ›, a rule, then what the page is read in.
+        let many = position.1 > 1
+        for view in [previous, next, count, divider] as [NSView] { view.isHidden = !many }
+        previous.frame = NSRect(x: 4, y: 4, width: many ? 24 : 0, height: side - 8)
+        let countWidth = many ? ceil(count.intrinsicContentSize.width) + 4 : 0
+        count.frame = NSRect(x: previous.frame.maxX, y: (side - 15) / 2, width: countWidth, height: 15)
+        next.frame = NSRect(x: count.frame.maxX, y: 4, width: many ? 24 : 0, height: side - 8)
+        divider.frame = NSRect(x: next.frame.maxX + 4, y: 9, width: 1, height: side - 18)
+        var x = many ? divider.frame.maxX + 4 : 4
+        reader.isHidden = isPDF
+        reader.frame = NSRect(x: x, y: 4, width: isPDF ? 0 : 28, height: side - 8)
+        x = reader.frame.maxX
+        type.isHidden = !reading || isPDF
+        type.frame = NSRect(x: x, y: 4, width: type.isHidden ? 0 : 28, height: side - 8)
         close.frame = NSRect(x: type.frame.maxX, y: 4, width: 26, height: side - 8)
         right.frame = NSRect(x: bounds.width - 12 - (close.frame.maxX + 4), y: y, width: close.frame.maxX + 4, height: side)
         // The band: as wide as what it says, as far as the room goes.
-        let words = max(source.intrinsicContentSize.width, headline.intrinsicContentSize.width)
+        // What they say, measured: a truncating label's own size is what it was last given.
+        let words = ceil(max(source.attributedStringValue.size().width, headline.attributedStringValue.size().width)) + 4
         let width = max(0, min(12 + 20 + 8 + words + 14, right.frame.minX - 10 - 12, 520))
         band.isHidden = width < 80
         band.frame = NSRect(x: 12, y: y, width: width, height: side)
