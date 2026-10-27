@@ -237,14 +237,16 @@ final class DayPager: UIViewController, UIPageViewControllerDataSource, UIPageVi
         return pan
     }()
 
-    private var weekHeight: CGFloat { WeekStripView.height }
-    private var monthHeight: CGFloat { calendar?.preferredHeight(width: view.bounds.width) ?? 420 }
+    /// Over the day, under the bar's controls — which float there still — the week, then the month.
+    private var lead: CGFloat { PaneBar.height }
+    private var weekHeight: CGFloat { lead + WeekStripView.height }
+    private var monthHeight: CGFloat { lead + (calendar?.preferredHeight(width: view.bounds.width) ?? 420) }
 
     /// The month shown, at once — from the menu.
     func showCalendar(_ shown: Bool) { settle(at: shown ? monthHeight : 0, animated: true) }
 
     private func prepareOver() {
-        let top = bar.contentTop
+        let top = bar.contentTop + lead
         if strip == nil {
             let strip = WeekStripView(day: day, marks: marks())
             strip.onChoose = { [weak self] day in self?.show(day, animated: false) }
@@ -256,7 +258,7 @@ final class DayPager: UIViewController, UIPageViewControllerDataSource, UIPageVi
             view.insertSubview(strip, belowSubview: pages.view)
             self.strip = strip
         }
-        strip?.frame = CGRect(x: 0, y: top, width: view.bounds.width, height: weekHeight)
+        strip?.frame = CGRect(x: 0, y: top, width: view.bounds.width, height: WeekStripView.height)
         if calendar == nil, let calendar = makeCalendar?(day) {
             calendar.onChoose = { [weak self] day in self?.show(day, animated: false) }
             calendar.onChooseWeek = { [weak self] week in self?.show(week) }
@@ -266,7 +268,7 @@ final class DayPager: UIViewController, UIPageViewControllerDataSource, UIPageVi
             calendar.view.backgroundColor = .clear
             self.calendar = calendar
         }
-        calendar?.view.frame = CGRect(x: 0, y: top, width: view.bounds.width, height: monthHeight)
+        calendar?.view.frame = CGRect(x: 0, y: top, width: view.bounds.width, height: monthHeight - lead)
         view.backgroundColor = Ink.shelf
         pages.view.backgroundColor = Ink.paper
         pages.view.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
@@ -279,7 +281,7 @@ final class DayPager: UIViewController, UIPageViewControllerDataSource, UIPageVi
         pages.view.frame = CGRect(x: 0, y: top + reveal, width: view.bounds.width, height: max(0, view.bounds.height - top - reveal))
         pages.view.layer.cornerRadius = min(28, reveal)
         let week = weekHeight, month = monthHeight
-        strip?.alpha = reveal <= week ? reveal / week : max(0, 1 - (reveal - week) / max(1, (month - week) * 0.5))
+        strip?.alpha = reveal <= week ? max(0, reveal - lead) / (week - lead) : max(0, 1 - (reveal - week) / max(1, (month - week) * 0.5))
         calendar?.view.alpha = reveal <= week ? 0 : min(1, (reveal - week) / max(1, (month - week) * 0.6))
         if reveal == 0 { view.backgroundColor = Ink.page }
     }
