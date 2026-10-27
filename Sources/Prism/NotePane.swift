@@ -637,7 +637,7 @@ final class PaneChrome: NSView {
         NSImage(systemSymbolName: "calendar.day.timeline.left", accessibilityDescription: "Schedule")!,
     ], trackingMode: .selectOne, target: nil, action: nil)
     private let linked = NSButton()
-    private let read = CloseButton(symbol: "globe", pointSize: 13, toolTip: "Open the Page Beside (⇧⌘R)")
+    private let read = CloseButton(symbol: "globe", pointSize: 13, toolTip: "Read Beside (⇧⌘R)")
     private let warning = CloseButton(symbol: "exclamationmark.triangle.fill", pointSize: 12, toolTip: "")
     private let menuButton = CloseButton(symbol: "ellipsis", pointSize: 13, toolTip: "This Note")
     private let close = CloseButton(symbol: "xmark", pointSize: 11, toolTip: "Close This Pane (⌘W)")
@@ -657,7 +657,7 @@ final class PaneChrome: NSView {
         didSet {
             read.image = NSImage(systemSymbolName: reading ? "globe.americas.fill" : "globe", accessibilityDescription: "The Page")?
                 .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
-            read.toolTip = reading ? "Close the Page (⇧⌘R)" : "Open the Page Beside (⇧⌘R)"
+            read.toolTip = reading ? "Close the Reader (⇧⌘R)" : "Read Beside (⇧⌘R)"
         }
     }
     /// A day, or a week: stepped through, a month to pick from.

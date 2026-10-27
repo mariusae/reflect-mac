@@ -43,8 +43,17 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
     private var titleWatch: NSKeyValueObservation?
     private var lastY: CGFloat = 0
     private var travel: CGFloat = 0
+    /// Turned to another of the note's sources: the page gone at once, the
+    /// spinner till the next is in.
+    private var switching = false
 
     override var isFlipped: Bool { true }
+
+    /// The paper, under a page not in yet.
+    override func draw(_ dirtyRect: NSRect) {
+        Ink.paper.setFill()
+        dirtyRect.fill()
+    }
 
     init(session: Session, notePath: String, sources: [ReaderSource]) {
         self.session = session
@@ -138,7 +147,11 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
 
     private func open() {
         reading = ReaderPlace.reads(url)
-        spinner.stopAnimation(nil)
+        // The page before gone at once, not left there till the next is in.
+        web.stopLoading()
+        web.alphaValue = 0
+        switching = true
+        spinner.startAnimation(nil)
         chrome.icon = nil
         lastY = 0
         setTucked(false)
@@ -162,7 +175,10 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
         chrome.isPDF = source.isPDF
         web.isHidden = source.isPDF
         pdf.isHidden = !source.isPDF
-        if source.isPDF { return showPDF() }
+        if source.isPDF {
+            shown()
+            return showPDF()
+        }
         pdf.document = nil
         chrome.reading = reading
         // The page's own paper, as the site has it; the app's, in the reader.
@@ -177,9 +193,10 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
         spinner.startAnimation(nil)
         ReaderArticle.fetch(url) { [weak self] article in
             guard let self else { return }
-            spinner.stopAnimation(nil)
+            if !switching { spinner.stopAnimation(nil) }
             guard reading else { return }
             guard let article else {
+                shown()
                 failure.stringValue = "This page could not be read.\n\(url.host() ?? "")"
                 failure.isHidden = false
                 return
@@ -200,8 +217,9 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
     /// The band as the site has it: its address, its title.
     private func showSite() {
         guard !reading, !source.isPDF else { return }
-        let host = (web.url ?? url).host ?? ""
-        let title = web.title.flatMap { $0.isEmpty ? nil : $0 } ?? session.name(of: notePath).title
+        // Turning to it: what was there before is not its.
+        let host = (switching ? url : web.url ?? url).host ?? ""
+        let title = (switching ? nil : web.title.flatMap { $0.isEmpty ? nil : $0 }) ?? session.name(of: notePath).title
         chrome.show(source: host.replacingOccurrences(of: "www.", with: "").uppercased(), title: title, metrics: session.metrics)
     }
 
@@ -223,7 +241,26 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
     /// Prism's own paper and ink.
     private static let paper = ReaderPage.Paper(paper: ("#faf7f2", "#1d1b18"), ink: ("#2b2724", "#ece6dc"), soft: ("#6f665d", "#a79e92"))
 
+    /// The page turned to, in: shown, the spinner gone.
+    private func shown() {
+        guard switching else { return }
+        switching = false
+        spinner.stopAnimation(nil)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            web.animator().alphaValue = 1
+        }
+        showSite()
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { shown() }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        // Stopped for the next: not the page turned to failing.
+        if (error as NSError).code != NSURLErrorCancelled { shown() }
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        shown()
         // The passages highlighted before, marked again; then where it was read to.
         markHighlights()
         // The first page in, where it was read to: not a link followed from it.

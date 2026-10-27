@@ -531,7 +531,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             UIKeyCommand(title: "Today", action: #selector(keyToday), input: "d", modifierFlags: .command),
             UIKeyCommand(title: "Back", action: #selector(keyBack), input: "[", modifierFlags: .command),
             UIKeyCommand(title: "Forward", action: #selector(keyForward), input: "]", modifierFlags: .command),
-            UIKeyCommand(title: "Open Page", action: #selector(keyPage), input: "r", modifierFlags: [.command, .shift]),
+            UIKeyCommand(title: "Read Note", action: #selector(keyPage), input: "r", modifierFlags: [.command, .shift]),
         ]
         if isWide {
             commands.append(UIKeyCommand(title: sidebarShown ? "Hide Sidebar" : "Show Sidebar", action: #selector(flipSidebar),
@@ -541,7 +541,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             commands += [
                 UIKeyCommand(title: "Reader", action: #selector(keyReader), input: "e", modifierFlags: [.command, .shift]),
                 UIKeyCommand(title: "Highlight Passage", action: #selector(keyHighlight), input: "h", modifierFlags: [.command, .shift]),
-                UIKeyCommand(title: "Close Page", action: #selector(keyClosePage), input: "w", modifierFlags: .command),
+                UIKeyCommand(title: "Close Reader", action: #selector(keyClosePage), input: "w", modifierFlags: .command),
             ]
         }
         // Over the text being typed in: these first, before it takes the keys.
@@ -910,7 +910,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         var items: [UIMenuElement] = []
         // A note linking to a page, or holding a PDF: that, to read.
         if !ReaderController.sources(of: path, store: store).isEmpty {
-            items.append(UIAction(title: "Open Page", image: UIImage(systemName: "globe")) { [weak self, weak sheet] _ in
+            items.append(UIAction(title: "Read Note", image: UIImage(systemName: "globe")) { [weak self, weak sheet] _ in
                 guard let self else { return }
                 sheet?.saveAll()
                 let from: UIViewController = sheet?.parent ?? shownStack.topViewController ?? self

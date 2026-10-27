@@ -48,6 +48,9 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
     private var bandHidden = false
     private var lastY: CGFloat = 0
     private var travel: CGFloat = 0
+    /// Turned to another of the note's sources: the page gone at once, the
+    /// spinner till the next is in.
+    private var switching = false
 
     init(store: PrismStore, notePath: String, sources: [ReaderSource]) {
         self.store = store
@@ -195,7 +198,11 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         index = next
         ReaderPlace.choose(item, for: notePath, first: index == 0)
         reading = ReaderPlace.reads(url)
-        spinner.stopAnimating()
+        // The page before gone at once, not left there till the next is in.
+        web.stopLoading()
+        web.alpha = 0
+        switching = true
+        spinner.startAnimating()
         icon.image = UIImage(systemName: "globe")
         UISelectionFeedbackGenerator().selectionChanged()
         load()
@@ -206,7 +213,8 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         let top = view.safeAreaInsets.top
         web.frame = view.bounds
         let bandHeight: CGFloat = 52
-        band.frame = CGRect(x: 12, y: top + 4, width: view.bounds.width - 24, height: bandHeight)
+        band.bounds = CGRect(x: 0, y: 0, width: view.bounds.width - 24, height: bandHeight)
+        band.center = CGPoint(x: view.bounds.midX, y: top + 4 + bandHeight / 2)
         back.frame = CGRect(x: 4, y: 0, width: 40, height: bandHeight)
         icon.frame = CGRect(x: back.frame.maxX, y: (bandHeight - 26) / 2, width: 26, height: 26)
         type.isHidden = !reading
@@ -217,7 +225,7 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         source.frame = CGRect(x: textX, y: 9, width: reader.frame.minX - textX - 4, height: 14)
         headline.frame = CGRect(x: textX, y: 24, width: reader.frame.minX - textX - 4, height: 19)
         // The words start under the band, and scroll up under it.
-        let inset = band.frame.maxY + 12
+        let inset = band.center.y + bandHeight / 2 + 12
         if web.scrollView.contentInset.top != inset {
             web.scrollView.contentInset = UIEdgeInsets(top: inset, left: 0, bottom: view.safeAreaInsets.bottom + 40, right: 0)
             web.scrollView.verticalScrollIndicatorInsets.top = inset
@@ -225,8 +233,11 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         pdf.frame = CGRect(x: 0, y: inset - 4, width: view.bounds.width, height: view.bounds.height - inset + 4)
         let countWidth = ceil(count.intrinsicContentSize.width) + 8
         let carouselWidth = 44 + countWidth + 44
-        carousel.frame = CGRect(x: ((view.bounds.width - carouselWidth) / 2).rounded(),
-                                y: view.bounds.height - max(view.safeAreaInsets.bottom, 12) - 8 - 44, width: carouselWidth, height: 44)
+        // By the screen's own edge: not above the room the app's bar is given, gone while it is read.
+        let foot = max(view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom, 12) + 4
+        // At the foot, always: placed by its centre, which its sliding away leaves be — not its frame, which that moves.
+        carousel.bounds = CGRect(x: 0, y: 0, width: carouselWidth, height: 44)
+        carousel.center = CGPoint(x: view.bounds.midX.rounded(), y: view.bounds.height - foot - 22)
         earlier.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
         count.frame = CGRect(x: 44, y: 0, width: countWidth, height: 44)
         later.frame = CGRect(x: 44 + countWidth, y: 0, width: 44, height: 44)
@@ -245,6 +256,7 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         web.isHidden = item.isPDF
         pdf.isHidden = !item.isPDF
         if item.isPDF {
+            shown()
             view.setNeedsLayout()
             setBandHidden(false)
             return showPDF()
@@ -264,9 +276,10 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         spinner.startAnimating()
         ReaderArticle.fetch(url) { [weak self] article in
             guard let self else { return }
-            spinner.stopAnimating()
+            if !switching { spinner.stopAnimating() }
             guard reading else { return }
             guard let article else {
+                shown()
                 failure.text = "This page could not be read.\n\(url.host() ?? "")"
                 failure.isHidden = false
                 return
@@ -287,8 +300,9 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
     /// The band as the site has it: its address, its title.
     private func showSite() {
         guard !reading, !item.isPDF else { return }
-        source.text = ((web.url ?? url).host() ?? "").replacingOccurrences(of: "www.", with: "").uppercased()
-        headline.text = web.title.flatMap { $0.isEmpty ? nil : $0 } ?? SliceBlock.name(notePath, store: store)
+        // Turning to it: what was there before is not its.
+        source.text = ((switching ? url : web.url ?? url).host() ?? "").replacingOccurrences(of: "www.", with: "").uppercased()
+        headline.text = (switching ? nil : web.title.flatMap { $0.isEmpty ? nil : $0 }) ?? SliceBlock.name(notePath, store: store)
     }
 
     /// Where its place is kept: in the reader, the note's page; else the page the site is on.
@@ -317,9 +331,9 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         bandHidden = hidden
         UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut]) { [self] in
             band.alpha = hidden ? 0 : 1
-            band.transform = hidden ? CGAffineTransform(translationX: 0, y: -(band.frame.maxY + 8)) : .identity
+            band.transform = hidden ? CGAffineTransform(translationX: 0, y: -(band.center.y + band.bounds.height / 2 + 8)) : .identity
             carousel.alpha = hidden ? 0 : 1
-            carousel.transform = hidden ? CGAffineTransform(translationX: 0, y: view.bounds.height - carousel.frame.minY) : .identity
+            carousel.transform = hidden ? CGAffineTransform(translationX: 0, y: view.bounds.height - carousel.center.y + carousel.bounds.height / 2) : .identity
         }
     }
 
@@ -336,7 +350,23 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         web.loadHTMLString(ReaderPage.html(article, style: .current), baseURL: url)
     }
 
+    /// The page turned to, in: shown, the spinner gone.
+    private func shown() {
+        guard switching else { return }
+        switching = false
+        spinner.stopAnimating()
+        UIView.animate(withDuration: 0.15) { self.web.alpha = 1 }
+        showSite()
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { shown() }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        // Stopped for the next: not the page turned to failing.
+        if (error as NSError).code != NSURLErrorCancelled { shown() }
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        shown()
         // The passages highlighted before, marked again; then where it was read to.
         if let marking = ReaderPage.marking(highlights) { webView.evaluateJavaScript(marking) }
         if !reading { faviconFromPage() }

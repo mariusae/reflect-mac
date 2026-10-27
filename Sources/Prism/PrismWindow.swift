@@ -871,7 +871,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         case #selector(trashNote(_:)): return note?.day == nil && note != nil
         case #selector(readPage(_:)):
             let reading = reader != nil && readerOwner === activePane && reader?.notePath == activePane.place.path
-            item.title = reading ? "Close Page" : "Open Page"
+            item.title = reading ? "Close Reader" : "Read Note"
             return reading || !ReaderPane.sources(of: activePane.place.path, session: session).isEmpty
         case #selector(previousSource(_:)): return (reader?.index ?? 0) > 0
         case #selector(nextSource(_:)): return reader.map { $0.index < $0.sources.count - 1 } ?? false
@@ -881,7 +881,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             return reader != nil
         case #selector(closePaneOrWindow(_:)):
             let inReader = reader.map { reader in (window?.firstResponder as? NSView)?.isDescendant(of: reader) == true } ?? false
-            item.title = inReader ? "Close Page" : panes.count > 1 ? "Close Pane" : "Close Window"
+            item.title = inReader ? "Close Reader" : panes.count > 1 ? "Close Pane" : "Close Window"
         default: break
         }
         return true

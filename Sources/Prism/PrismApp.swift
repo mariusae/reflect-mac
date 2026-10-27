@@ -416,7 +416,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("Add Cover…", #selector(PrismWindow.addCover(_:))),
             item("Remove Cover", #selector(PrismWindow.removeCover(_:))),
             .separator(),
-            item("Open Page", #selector(PrismWindow.readPage(_:)), "r", [.command, .shift]),
+            item("Read Note", #selector(PrismWindow.readPage(_:)), "r", [.command, .shift]),
             item("Reader", #selector(PrismWindow.toggleReaderMode(_:)), "e", [.command, .shift]),
             item("Highlight Passage", #selector(PrismWindow.highlightPassage(_:)), "h", [.command, .shift]),
             item("Previous Link", #selector(PrismWindow.previousSource(_:)), left, [.command, .option]),
