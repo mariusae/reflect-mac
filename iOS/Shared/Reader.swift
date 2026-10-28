@@ -45,6 +45,7 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
     private var reading: Bool
     private var titleWatch: NSKeyValueObservation?
     private var offsetWatch: NSKeyValueObservation?
+    private var pdfOffsetWatch: NSKeyValueObservation?
     private var bandHidden = false
     private var lastY: CGFloat = 0
     private var travel: CGFloat = 0
@@ -183,6 +184,8 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
 
     /// Its controls gone as the page is read down, or back: the app's to follow.
     var onChromeHidden: ((Bool) -> Void)?
+    /// The page, or the PDF, scrolled by hand: begun on.
+    var onScrolledByHand: (() -> Void)?
 
     func close() {
         if let onClose { return onClose() }
@@ -348,6 +351,7 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
     /// Read down: the band gone; read back up, or at the top, back.
     private func scrolled() {
         let scroll = web.scrollView
+        if scroll.isTracking { onScrolledByHand?() }
         let y = scroll.contentOffset.y + scroll.adjustedContentInset.top
         let delta = y - lastY
         lastY = y
@@ -439,6 +443,12 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         }
         pdf.document = document
         pdfMarks = []
+        // Its scrolling, as the page's: by hand, it is begun on.
+        if pdfOffsetWatch == nil, let scroll = pdf.subviews.lazy.compactMap({ $0 as? UIScrollView }).first {
+            pdfOffsetWatch = scroll.observe(\.contentOffset) { [weak self] scroll, _ in
+                MainActor.assumeIsolated { if scroll.isTracking { self?.onScrolledByHand?() } }
+            }
+        }
         let title = (document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String).flatMap { $0.isEmpty ? nil : $0 }
         source.text = "PDF – \(document.pageCount) \(document.pageCount == 1 ? "PAGE" : "PAGES")"
         headline.text = title ?? item.name

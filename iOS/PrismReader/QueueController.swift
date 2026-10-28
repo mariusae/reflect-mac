@@ -8,8 +8,15 @@ import PrismCore
 final class QueueController: UIViewController {
     private let store: PrismStore
     private var reader: ReaderController?
-    /// The note read: kept while it is still to be read, whatever else comes in.
+    /// The note shown.
     private var shownPath: String?
+    /// The note begun — scrolled — kept in front till it
+    /// is done or snoozed, whatever comes back from snoozing older; across
+    /// launches too. This reader's own: another device has its own.
+    private var begun: String? {
+        get { UserDefaults.standard.string(forKey: "Queue.begun") }
+        set { UserDefaults.standard.set(newValue, forKey: "Queue.begun") }
+    }
 
     /// At the foot, on glass: Snooze, and Done.
     private let bar = UIVisualEffectView(effect: UIGlassEffect())
@@ -103,13 +110,16 @@ final class QueueController: UIViewController {
 
     // MARK: The queue
 
-    /// The queue as the notes now have it: the link read kept, while it is
+    /// The queue as the notes now have it: the link begun, while it is
     /// still to be read; else the oldest.
     func refresh() {
         guard isViewLoaded, let index = store.index, let root = store.graph?.root else { return }
         let (items, next) = ReadingQueue.items(index: index, root: root)
-        if let shownPath, items.contains(where: { $0.path == shownPath }) { return }
-        show(items.first?.path, next: next)
+        // Let go of only by Done or Snooze here: out of the queue for a
+        // moment — the graph still loading, or syncing — it is still begun.
+        let path = begun.flatMap { begun in items.contains { $0.path == begun } ? begun : nil } ?? items.first?.path
+        if path != nil, path == shownPath { return }
+        show(path, next: next)
     }
 
     private func show(_ path: String?, next: Date?) {
@@ -124,6 +134,11 @@ final class QueueController: UIViewController {
             reader.footRoom = Self.barHeight + 12
             reader.carouselAtLeft = true
             reader.onChromeHidden = { [weak self] hidden in self?.setBarHidden(hidden) }
+            // Scrolled, and it is begun.
+            reader.onScrolledByHand = { [weak self] in
+                guard let self, self.shownPath == path, self.begun != path else { return }
+                self.begun = path
+            }
             addChild(reader)
             reader.view.frame = view.bounds
             reader.view.alpha = old == nil ? 1 : 0
@@ -168,6 +183,7 @@ final class QueueController: UIViewController {
     /// Read: out of the inbox — unsnoozed, were it — and the next.
     private func finish() {
         guard let path = shownPath else { return }
+        begun = nil
         store.setFrontmatter(path, "inbox", nil)
         store.setFrontmatter(path, ReadingQueue.snoozeKey, nil)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -188,6 +204,7 @@ final class QueueController: UIViewController {
     /// Put off: back in the queue when its time comes, in its place by age.
     private func put(off snooze: ReadingQueue.Snooze) {
         guard let path = shownPath else { return }
+        begun = nil
         store.setFrontmatter(path, ReadingQueue.snoozeKey, ReadingQueue.written(snooze.until(from: Date())))
         UISelectionFeedbackGenerator().selectionChanged()
         refresh()
@@ -203,3 +220,4 @@ final class QueueController: UIViewController {
         }
     }
 }
+
