@@ -1,0 +1,44 @@
+{
+  "fill-specializations": [
+    { "value": { "linear-gradient": [ "srgb:0.99216,0.98431,0.96863,1.00000", "srgb:0.92157,0.89804,0.85490,1.00000" ] } },
+    { "appearance": "dark", "value": { "linear-gradient": [ "srgb:0.17255,0.15686,0.14118,1.00000", "srgb:0.07843,0.07059,0.06275,1.00000" ] } }
+  ],
+  "groups": [
+    {
+      "name": "Fan",
+      "layers": [
+        {
+          "image-name": "4-card.svg",
+          "name": "Card 4",
+          "fill-specializations": [
+            { "appearance": "tinted", "value": { "solid": "srgb:0.96000,0.96000,0.96000,1.00000" } }
+          ]
+        },
+        {
+          "image-name": "3-card.svg",
+          "name": "Card 3",
+          "fill-specializations": [
+            { "appearance": "tinted", "value": { "solid": "srgb:0.82000,0.82000,0.82000,1.00000" } }
+          ]
+        },
+        {
+          "image-name": "2-card.svg",
+          "name": "Card 2",
+          "fill-specializations": [
+            { "appearance": "tinted", "value": { "solid": "srgb:0.68000,0.68000,0.68000,1.00000" } }
+          ]
+        },
+        {
+          "image-name": "1-card.svg",
+          "name": "Card 1",
+          "fill-specializations": [
+            { "appearance": "tinted", "value": { "solid": "srgb:0.55000,0.55000,0.55000,1.00000" } }
+          ]
+        }
+      ],
+      "shadow": { "kind": "neutral", "opacity": 0.5 },
+      "translucency": { "enabled": false, "value": 0.5 }
+    }
+  ],
+  "supported-platforms": { "squares": [ "macOS" ] }
+}

@@ -3,12 +3,16 @@
 //
 //   swift scripts/make-prism-icon.swift out.png [--full] [--dark | --tinted]
 //   swift scripts/make-prism-icon.swift --svg dir
+//   swift scripts/make-prism-icon.swift --icon Prism.icon
 //
 // `--full`: the whole square, for iOS, which rounds its corners itself; else
 // the Mac's tile, inset, with its shadow. `--dark`: on warm black. `--tinted`:
 // grey cards on black, for iOS to tint. `--glyph`: the fan alone on
 // nothing, filling the square — a browser's toolbar icon. `--svg`: each card, and the ground,
-// as a layer of its own, for Icon Composer to make glass of.
+// as a layer of its own, for Icon Composer to make glass of. `--icon`: the
+// Mac's icon as Icon Composer has it — the cards as layers on the paper,
+// which macOS draws light, dark, clear or tinted as Appearance asks: the
+// paper warm black in the dark, each card its own grey, tinted.
 import AppKit
 
 let size: CGFloat = 1024
@@ -166,6 +170,59 @@ func svgLayers(into folder: URL) throws {
         """
         try svg(body).write(to: folder.appendingPathComponent("\(i + 1)-card.svg"), atomically: true, encoding: .utf8)
     }
+}
+
+/// The whole `.icon`: its cards as layers, the front one first, on the
+/// paper — light, or dark — each card its grey when the icon is tinted.
+func iconBundle(at bundle: URL) throws {
+    let assets = bundle.appendingPathComponent("Assets")
+    try? FileManager.default.removeItem(at: bundle)
+    try svgLayers(into: assets)
+    // The paper is the icon's fill, not a layer: it changes with the appearance.
+    try FileManager.default.removeItem(at: assets.appendingPathComponent("0-ground.svg"))
+    func srgb(_ hex: UInt32) -> String {
+        let c = color(hex)
+        return String(format: "srgb:%.5f,%.5f,%.5f,1.00000", c.redComponent, c.greenComponent, c.blueComponent)
+    }
+    func grey(_ white: CGFloat) -> String { String(format: "srgb:%.5f,%.5f,%.5f,1.00000", white, white, white) }
+    let layers = cards.enumerated().reversed().map { i, card in
+        """
+                {
+                  "image-name": "\(i + 1)-card.svg",
+                  "name": "Card \(i + 1)",
+                  "fill-specializations": [
+                    { "appearance": "tinted", "value": { "solid": "\(grey(card.grey))" } }
+                  ]
+                }
+        """
+    }.joined(separator: ",\n")
+    let json = """
+    {
+      "fill-specializations": [
+        { "value": { "linear-gradient": [ "\(srgb(0xfdfbf7))", "\(srgb(0xebe5da))" ] } },
+        { "appearance": "dark", "value": { "linear-gradient": [ "\(srgb(0x2c2824))", "\(srgb(0x141210))" ] } }
+      ],
+      "groups": [
+        {
+          "name": "Fan",
+          "layers": [
+    \(layers)
+          ],
+          "shadow": { "kind": "neutral", "opacity": 0.5 },
+          "translucency": { "enabled": false, "value": 0.5 }
+        }
+      ],
+      "supported-platforms": { "squares": [ "macOS" ] }
+    }
+
+    """
+    try json.write(to: bundle.appendingPathComponent("icon.json"), atomically: true, encoding: .utf8)
+}
+
+if let at = arguments.firstIndex(of: "--icon") {
+    let path = arguments.index(after: at) < arguments.endIndex ? arguments[arguments.index(after: at)] : "Prism.icon"
+    try iconBundle(at: URL(fileURLWithPath: path))
+    exit(0)
 }
 
 if let at = arguments.firstIndex(of: "--svg") {

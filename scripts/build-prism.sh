@@ -63,6 +63,27 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+# From macOS 26 the icon is Icon Composer's (Resources/Icons/Prism.icon,
+# drawn by the same script): the cards as layers on the paper, which the
+# system draws light, dark, clear or tinted as Appearance ▸ Icon & widget
+# style asks — compiled by Xcode's actool into Assets.car, the bundle
+# naming it (CFBundleIconName). Without Xcode, PrismIcon.icns stays.
+if [ scripts/make-prism-icon.swift -nt Resources/Icons/Prism.icon/icon.json ]; then
+  swift scripts/make-prism-icon.swift --icon Resources/Icons/Prism.icon
+fi
+rm -f "$app/Contents/Resources/Assets.car"
+# (absolute paths: actool's helper may not run where we are)
+if xcrun actool "$PWD/Resources/Icons/Prism.icon" --compile "$(cd "$app/Contents/Resources" && pwd)" --app-icon Prism \
+     --platform macosx --minimum-deployment-target 26.0 --output-partial-info-plist "$PWD/build/icon-partial.plist" >/dev/null 2>&1 \
+   && [ -f "$app/Contents/Resources/Assets.car" ]; then
+  rm -f "$app/Contents/Resources/Prism.icns"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string Prism" "$app/Contents/Info.plist"
+fi
+# The Finder and the Dock cache a bundle's icon by its path: the bundle
+# is touched and registered again so a new icon shows at the next launch.
+touch "$app"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app" >/dev/null 2>&1 || true
+
 codesign --force --sign - "$app" >/dev/null 2>&1
 echo "built $app"
 
