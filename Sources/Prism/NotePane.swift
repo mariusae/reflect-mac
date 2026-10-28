@@ -257,9 +257,18 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         chrome.face = ref.day != nil ? place.face : nil
         chrome.linkedCount = place.face == .schedule && ref.day != nil ? nil : shownSources?.count
         chrome.canRead = !ReaderPane.sources(of: ref.path, session: session).isEmpty
-        setTucked(false)
+        // Back for another note — not for this one saved, or renamed as it
+        // is typed in: put away by typing, back by scrolling up or the pointer.
+        if ref != barRef {
+            if !renaming { setTucked(false) }
+            barRef = ref
+        }
         needsLayout = true
     }
+
+    /// The note the bar was last shown for.
+    private var barRef: NoteRef?
+    private var renaming = false
 
     /// What the bar calls a note: a day as people say it, its date beside;
     /// a week by its days; any other note its title, and how long ago.
@@ -406,7 +415,9 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         let selection = note?.editor.selectedRange()
         let typing = note.map { window?.firstResponder === $0.editor } ?? false
         if let note { letGo(note) }
+        renaming = true
         show()
+        renaming = false
         if let editor = note?.editor, let selection {
             if typing { window?.makeFirstResponder(editor) }
             editor.setSelectedRange(NSRange(location: min(selection.location, (editor.string as NSString).length), length: 0))
@@ -563,6 +574,8 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         let y = scroll.contentView.bounds.minY
         let delta = y - lastScrollY
         lastScrollY = y
+        // Not moved — the page grown or shrunk as it is typed in — nothing.
+        guard delta != 0 else { return }
         if y <= 2 {
             travel = 0
             return setTucked(false)
