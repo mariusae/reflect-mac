@@ -179,7 +179,9 @@ enum Typeface: String, CaseIterable {
             return Settings(size: 18, lineHeight: 1.4, rowSpacing: 0.16, indent: 1.6, lineLength: 660, headingScale: 1.37,
                             textStyle: nil, headingStyle: nil, smoothing: true)
         }
-        return Settings(size: Double(round(16 * scale * 2) / 2), lineHeight: lineHeight, rowSpacing: 0.34, indent: 1.6,
+        // Ideal Sans at 15: its Book holds its own there, the column with room.
+        let size = self == .ideal ? 15 : Double(round(16 * scale * 2) / 2)
+        return Settings(size: size, lineHeight: lineHeight, rowSpacing: 0.34, indent: 1.6,
                         lineLength: self == .ideal && flat ? 600 : 660, headingScale: 1.5, textStyle: styles.text, headingStyle: styles.heading,
                         // Styrene's regular is heavy already: without the
                         // smoothing that thickens strokes, it reads as a regular should.
