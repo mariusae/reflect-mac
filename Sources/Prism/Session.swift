@@ -13,6 +13,8 @@ final class Session {
     let index: NoteIndex
     let images: ImageStore
     private(set) var windows: [PrismWindow] = []
+    /// The reading queue's window, when open: one — two would read the same link.
+    private(set) var readingQueue: ReadingQueueWindow?
 
     var face: Typeface {
         didSet { typographyChanged() }
@@ -104,6 +106,28 @@ final class Session {
         restored = true
     }
 
+    /// The reading queue's window, brought forward — opened, if it is not.
+    @discardableResult
+    func openReadingQueue() -> ReadingQueueWindow {
+        let queue = readingQueue ?? ReadingQueueWindow(session: self)
+        readingQueue = queue
+        if !Self.scripted { UserDefaults.standard.set(true, forKey: "Queue.open") }
+        return queue
+    }
+
+    func readingQueueClosed(_ queue: ReadingQueueWindow) {
+        guard queue === readingQueue else { return }
+        readingQueue = nil
+        // Closed by hand: not open again next time. Quitting leaves it to open again.
+        if !Self.quitting { UserDefaults.standard.set(false, forKey: "Queue.open") }
+    }
+
+    /// Whether the reading queue was open when Prism was last left.
+    var readingQueueWasOpen: Bool { UserDefaults.standard.bool(forKey: "Queue.open") }
+
+    /// Set as Prism quits: windows closed then were open when it was left.
+    static var quitting = false
+
     /// Whether the windows have been put back: till then, nothing is noted over what was left.
     private var restored = false
 
@@ -137,6 +161,7 @@ final class Session {
         if paths.count > 40 { index.scan() } else { paths.forEach(index.refresh) }
         freshBacklinks = []
         windows.forEach { $0.notesChanged(paths) }
+        readingQueue?.notesChanged(paths)
         refreshReview()
         refreshNow()
     }

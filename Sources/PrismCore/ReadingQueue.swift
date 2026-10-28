@@ -49,6 +49,23 @@ public enum ReadingQueue {
         return stamp.date(from: value) ?? day.date(from: value)
     }
 
+    /// When a link comes back, as said: "today at 18:00", "tomorrow at
+    /// 8:00", "on Saturday at 9:00", "on November 27 at 8:00".
+    public static func when(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if calendar.isDate(date, inSameDayAs: now) { return "today at \(time)" }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now), calendar.isDate(date, inSameDayAs: tomorrow) {
+            return "tomorrow at \(time)"
+        }
+        if date.timeIntervalSince(now) < 6 * 86400 { return "on \(date.formatted(.dateTime.weekday(.wide))) at \(time)" }
+        return "on \(date.formatted(.dateTime.month(.wide).day())) at \(time)"
+    }
+
+    /// What the reader says with nothing left to read.
+    public static func restDetail(next: Date?) -> String {
+        next.map { "Snoozed links come back, the first \(when($0))." } ?? "The inbox has no links left to read."
+    }
+
     /// A time as the frontmatter has it.
     public static func written(_ date: Date) -> String { stamp.string(from: date) }
 

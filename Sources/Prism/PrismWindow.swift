@@ -889,41 +889,10 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
     // MARK: Scripts
 
-    /// The window drawn to a picture — the reader's page, drawn out of
-    /// the process, taken from it and laid in, what floats over it after.
+    /// The window drawn to a picture, its reader's page and all.
     func snapshot(to url: URL, done: @escaping () -> Void = {}) {
         guard let view = window?.contentView else { return done() }
-        view.layoutSubtreeIfNeeded()
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return done() }
-        view.cacheDisplay(in: view.bounds, to: rep)
-        let write = { try? rep.representation(using: .png, properties: [:])?.write(to: url) }
-        guard let reader, let web = reader.subviews.first(where: { $0 is WKWebView }) as? WKWebView, !web.isHidden else {
-            if let reader, let context = NSGraphicsContext(bitmapImageRep: rep) {
-                NSGraphicsContext.saveGraphicsState()
-                NSGraphicsContext.current = context
-                reader.drawPDFForScript(in: view)
-                NSGraphicsContext.restoreGraphicsState()
-            }
-            write()
-            return done()
-        }
-        web.takeSnapshot(with: nil) { image, _ in
-            if let image, let context = NSGraphicsContext(bitmapImageRep: rep) {
-                NSGraphicsContext.saveGraphicsState()
-                NSGraphicsContext.current = context
-                let flip = { (rect: NSRect) in NSRect(x: rect.minX, y: view.bounds.height - rect.maxY, width: rect.width, height: rect.height) }
-                image.draw(in: flip(web.convert(web.bounds, to: view)))
-                for over in reader.subviews.drop(while: { $0 !== web }).dropFirst() where !over.isHidden {
-                    guard let piece = over.bitmapImageRepForCachingDisplay(in: over.bounds) else { continue }
-                    over.cacheDisplay(in: over.bounds, to: piece)
-                    piece.draw(in: flip(over.convert(over.bounds, to: view)), from: .zero, operation: .sourceOver, fraction: 1,
-                               respectFlipped: true, hints: nil)
-                }
-                NSGraphicsContext.restoreGraphicsState()
-            }
-            write()
-            done()
-        }
+        ReaderSnapshot.take(view, reader: reader, to: url, done: done)
     }
 
     func chooseForScript(_ lens: Lens) { choose(lens, keepShown: true) }

@@ -146,7 +146,7 @@ final class QueueController: UIViewController {
             reader.didMove(toParent: self)
             self.reader = reader
         } else {
-            restDetail.text = next.map { "Snoozed links come back, the first \(Self.when($0))." } ?? "The inbox has no links left to read."
+            restDetail.text = ReadingQueue.restDetail(next: next)
             // Back on its own when the first is due, the app open.
             if let next {
                 wake = Timer.scheduledTimer(withTimeInterval: max(1, next.timeIntervalSinceNow + 1), repeats: false) { [weak self] _ in
@@ -168,16 +168,6 @@ final class QueueController: UIViewController {
         }
     }
 
-    /// "today at 18:00", "tomorrow at 8:00", "on Saturday at 9:00".
-    private static func when(_ date: Date) -> String {
-        let calendar = Calendar.current
-        let time = date.formatted(date: .omitted, time: .shortened)
-        if calendar.isDateInToday(date) { return "today at \(time)" }
-        if calendar.isDateInTomorrow(date) { return "tomorrow at \(time)" }
-        if date.timeIntervalSinceNow < 6 * 86400 { return "on \(date.formatted(.dateTime.weekday(.wide))) at \(time)" }
-        return "on \(date.formatted(.dateTime.month(.wide).day())) at \(time)"
-    }
-
     // MARK: Done, or later
 
     /// Read: out of the inbox — unsnoozed, were it — and the next.
@@ -194,7 +184,7 @@ final class QueueController: UIViewController {
         // Its times as of when it opens.
         UIMenu(title: "Bring It Back", children: [UIDeferredMenuElement.uncached { done in
             done(ReadingQueue.Snooze.allCases.map { snooze in
-                UIAction(title: snooze.title, subtitle: Self.when(snooze.until(from: Date())), image: UIImage(systemName: snooze.symbol)) { [weak self] _ in
+                UIAction(title: snooze.title, subtitle: ReadingQueue.when(snooze.until(from: Date())), image: UIImage(systemName: snooze.symbol)) { [weak self] _ in
                     self?.put(off: snooze)
                 }
             })

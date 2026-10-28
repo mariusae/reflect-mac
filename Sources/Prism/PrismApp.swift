@@ -42,6 +42,12 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         session.writeWindows()
     }
 
+    /// File ▸ Open New Reader (⌥⇧⌘N): the inbox's links, one at a time,
+    /// the oldest first, in a window of their own — the one open brought forward.
+    @objc func openReadingQueue(_ sender: Any?) {
+        session?.openReadingQueue().showWindow(nil)
+    }
+
     /// Prism ▸ Settings: the typography window.
     @objc func showSettings(_ sender: Any?) {
         guard let session else { return }
@@ -120,6 +126,8 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         if environment["PRISM_CAPTURE_SCRIPT"] != nil { return }
         session.restoreWindows()
         session.windows.forEach { $0.showWindow(nil) }
+        // The reading queue as it was left: open, if it was.
+        if session.readingQueueWasOpen { session.openReadingQueue().showWindow(nil) }
         NSApp.activate()
     }
 
@@ -271,6 +279,19 @@ final class PrismApp: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        // `PRISM_QUEUE=1`: the reading queue's window drawn instead.
+        if environment["PRISM_QUEUE"] == "1" {
+            let queue = session.openReadingQueue()
+            queue.window?.setFrame(NSRect(x: -4000, y: 0, width: Double(environment["PRISM_WIDTH"] ?? "") ?? 860,
+                                          height: Double(environment["PRISM_HEIGHT"] ?? "") ?? 900), display: false)
+            queue.window?.orderBack(nil)
+            if environment["PRISM_READER"] == "1" { queue.readerForScript?.toggleReading() }
+            let wait = environment["PRISM_WAIT"].flatMap(Double.init) ?? 0.8
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
+                queue.snapshot(to: URL(fileURLWithPath: environment["PRISM_SNAP"]!)) { exit(0) }
+            }
+            return
+        }
         let wait = environment["PRISM_WAIT"].flatMap(Double.init) ?? 0.8
         DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
             window.snapshot(to: URL(fileURLWithPath: environment["PRISM_SNAP"]!)) {
@@ -285,6 +306,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
     /// On the way out, what is written sent — a few seconds given to it —
     /// when Prism keeps the graph in step.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Session.quitting = true
         guard let session, session.ownsSync else { return .terminateNow }
         session.save()
         Task {
@@ -331,6 +353,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("New Row in Today", #selector(PrismWindow.writeToday(_:)), "n"),
             item("New Note", #selector(PrismWindow.newNote(_:)), "n", [.command, .option]),
             item("New Window", #selector(PrismApp.newWindow(_:)), "n", [.command, .shift]),
+            item("Open New Reader", #selector(PrismApp.openReadingQueue(_:)), "n", [.command, .option, .shift]),
             .separator(),
             item("Close", #selector(PrismWindow.closePaneOrWindow(_:)), "w"),
         ])

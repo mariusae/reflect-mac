@@ -27,6 +27,18 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
 
     /// Its × clicked.
     var onClose: ((ReaderPane) -> Void)?
+    /// Its controls tucked away as it is read down, or back: what else floats over it to follow.
+    var onTucked: ((Bool) -> Void)?
+    /// The whole of a window — the reading queue's — not a column beside a
+    /// note: no rule at its left, its controls clear of the window's buttons.
+    var standalone = false {
+        didSet {
+            leftRule.isHidden = standalone
+            chrome.leading = standalone ? 80 : 12
+        }
+    }
+    /// Room at the foot for the window's own controls: the page's end above them.
+    var footRoom: CGFloat = 0 { didSet { needsLayout = true } }
 
     private let web: ReaderWebView
     private let pdf = ReaderPDFView()
@@ -393,6 +405,7 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
     /// Out of the way, read down into the page; back, read up. The fade
     /// under them the reader's only: a site's page has its own colours.
     private func setTucked(_ tucked: Bool) {
+        if tucked != chrome.isTucked { onTucked?(tucked) }
         chrome.setTucked(tucked)
         fitInsets()
         edge.isHidden = !reading || lastY <= 2 || tucked
@@ -406,8 +419,9 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
 
     private func fitInsets() {
         let top = pageBelowControls || (!reading && !source.isPDF && chrome.isTucked) ? 0 : PaneChrome.height
-        if web.obscuredContentInsets.top != top {
-            web.obscuredContentInsets = NSEdgeInsets(top: top, left: 0, bottom: 0, right: 0)
+        let bottom = chrome.isTucked ? 0 : footRoom
+        if web.obscuredContentInsets.top != top || web.obscuredContentInsets.bottom != bottom {
+            web.obscuredContentInsets = NSEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
         }
         let frame = pageBelowControls ? NSRect(x: 0, y: PaneChrome.height, width: bounds.width, height: max(0, bounds.height - PaneChrome.height)) : bounds
         if web.frame != frame { web.frame = frame }
@@ -428,7 +442,7 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
     override func layout() {
         super.layout()
         fitInsets()
-        pdf.frame = NSRect(x: 0, y: PaneChrome.height, width: bounds.width, height: max(0, bounds.height - PaneChrome.height))
+        pdf.frame = NSRect(x: 0, y: PaneChrome.height, width: bounds.width, height: max(0, bounds.height - PaneChrome.height - footRoom))
         chrome.frame = NSRect(x: 0, y: 0, width: bounds.width, height: PaneChrome.height)
         edge.frame = NSRect(x: 0, y: 0, width: bounds.width, height: PaneChrome.height + 18)
         leftRule.frame = NSRect(x: 0, y: 0, width: 1, height: bounds.height)
@@ -625,6 +639,8 @@ final class ReaderChrome: NSView {
     private let type = CloseButton(symbol: "textformat.size", pointSize: 13, toolTip: "Type (⌘- ⌘+)")
     private let close = CloseButton(symbol: "xmark", pointSize: 11, toolTip: "Close the Page (⇧⌘R)")
     private(set) var isTucked = false
+    /// Where its band starts: past the window's own buttons, in a window of its own.
+    var leading: CGFloat = 12 { didSet { needsLayout = true } }
 
     override var isFlipped: Bool { true }
     override var mouseDownCanMoveWindow: Bool { true }
@@ -740,9 +756,9 @@ final class ReaderChrome: NSView {
         // The band: as wide as what it says, as far as the room goes.
         // What they say, measured: a truncating label's own size is what it was last given.
         let words = ceil(max(source.attributedStringValue.size().width, headline.attributedStringValue.size().width)) + 4
-        let width = max(0, min(12 + 20 + 8 + words + 14, right.frame.minX - 10 - 12, 520))
+        let width = max(0, min(12 + 20 + 8 + words + 14, right.frame.minX - 10 - leading, 520))
         band.isHidden = width < 80
-        band.frame = NSRect(x: 12, y: y, width: width, height: side)
+        band.frame = NSRect(x: leading, y: y, width: width, height: side)
         iconView.frame = NSRect(x: 12, y: (side - 18) / 2, width: 18, height: 18)
         let textX = iconView.frame.maxX + 8
         let textWidth = max(0, width - textX - 14)
@@ -756,5 +772,45 @@ final class ReaderChrome: NSView {
         let local = convert(point, from: superview)
         guard [band, right].contains(where: { !$0.isHidden && $0.frame.contains(local) }) else { return nil }
         return super.hitTest(point)
+    }
+}
+
+/// A window drawn to a picture — the reader's page, drawn out of the
+/// process, taken from it and laid in, what floats over it after: the
+/// reader's own controls, and `over`, the window's.
+@MainActor
+enum ReaderSnapshot {
+    static func take(_ view: NSView, reader: ReaderPane?, over: [NSView] = [], to url: URL, done: @escaping () -> Void) {
+        view.layoutSubtreeIfNeeded()
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return done() }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        let write = { try? rep.representation(using: .png, properties: [:])?.write(to: url) }
+        guard let reader, let web = reader.subviews.first(where: { $0 is WKWebView }) as? WKWebView, !web.isHidden else {
+            if let reader, let context = NSGraphicsContext(bitmapImageRep: rep) {
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = context
+                reader.drawPDFForScript(in: view)
+                NSGraphicsContext.restoreGraphicsState()
+            }
+            write()
+            return done()
+        }
+        web.takeSnapshot(with: nil) { image, _ in
+            if let image, let context = NSGraphicsContext(bitmapImageRep: rep) {
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = context
+                let flip = { (rect: NSRect) in NSRect(x: rect.minX, y: view.bounds.height - rect.maxY, width: rect.width, height: rect.height) }
+                image.draw(in: flip(web.convert(web.bounds, to: view)))
+                for over in Array(reader.subviews.drop(while: { $0 !== web }).dropFirst()) + over where !over.isHidden {
+                    guard let piece = over.bitmapImageRepForCachingDisplay(in: over.bounds) else { continue }
+                    over.cacheDisplay(in: over.bounds, to: piece)
+                    piece.draw(in: flip(over.convert(over.bounds, to: view)), from: .zero, operation: .sourceOver, fraction: 1,
+                               respectFlipped: true, hints: nil)
+                }
+                NSGraphicsContext.restoreGraphicsState()
+            }
+            write()
+            done()
+        }
     }
 }
