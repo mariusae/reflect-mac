@@ -103,7 +103,7 @@ public final class Git: @unchecked Sendable {
 
     // MARK: The cycle
 
-    private func turn<T>(_ work: @escaping () throws -> T) async throws -> T {
+    func turn<T>(_ work: @escaping () throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 continuation.resume(with: Result { try work() })
@@ -186,7 +186,7 @@ public final class Git: @unchecked Sendable {
             return Commit(committed: false, message: nil, ahead: (try? divergence().ahead) ?? 0, skipped: skipped)
         }
         let message = describe(changes, fallback: fallback)
-        try backend.commit(message: message)
+        try backend.commit(message: Self.stamped(message))
         return Commit(committed: true, message: message, ahead: (try? divergence().ahead) ?? 0, skipped: skipped)
     }
 
@@ -265,7 +265,7 @@ public final class Git: @unchecked Sendable {
             try backend.fastForward(to: remote)
             kind = .fastForward
         } else {
-            switch try backend.merge(remote, message: "Merge changes from other devices") {
+            switch try backend.merge(remote, message: Self.stamped("Merge changes from other devices")) {
             case .merged:
                 kind = .merged
             case .conflicted(let unmerged):
@@ -274,8 +274,8 @@ public final class Git: @unchecked Sendable {
                 do {
                     let left = try resolveConflicts(unmerged)
                     report.conflicted += left
-                    try backend.commitMerge(message: left.isEmpty ? "Merge changes from other devices"
-                                                                  : "Merge changes from other devices (conflicts to review)")
+                    try backend.commitMerge(message: Self.stamped(left.isEmpty ? "Merge changes from other devices"
+                                                                                : "Merge changes from other devices (conflicts to review)"))
                 } catch {
                     backend.abortMerge()
                     throw error

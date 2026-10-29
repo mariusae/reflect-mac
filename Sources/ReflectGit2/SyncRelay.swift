@@ -77,10 +77,27 @@ public final class SyncRelayListener {
     private var failures = 0
     private var stopped = false
 
+    /// How the socket stands, to be shown.
+    public enum State: Equatable, Sendable {
+        case stopped
+        case connecting
+        /// Open, and answering, since then.
+        case listening(since: Date)
+        /// Dropped, or not let in: tried again then.
+        case waiting(until: Date, failures: Int, reason: String?)
+    }
+
+    public private(set) var state: State = .stopped { didSet { if state != oldValue { onState?(state) } } }
+    public var onState: ((State) -> Void)?
+    /// When the relay last told of a push.
+    public private(set) var lastPush: Date?
+    public let repositoryName: String
+
     /// `accessToken` gives a GitHub token good for a while yet; `onPush`
     /// is told of each push.
     public init(repository: String, accessToken: @escaping () async throws -> String, onPush: @escaping () -> Void) {
         self.repository = repository
+        repositoryName = repository
         self.accessToken = accessToken
         self.onPush = onPush
     }
@@ -89,12 +106,13 @@ public final class SyncRelayListener {
         stopped = false
         guard task == nil, let host = SyncRelay.host,
               let name = repository.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return }
+        state = .connecting
         Task {
             let token: String
             do {
                 token = try await accessToken()
             } catch {
-                return scheduleRetry()
+                return scheduleRetry(error.localizedDescription)
             }
             guard !stopped, task == nil else { return }
             var request = URLRequest(url: URL(string: "wss://\(host)/events?repository=\(name)")!)
@@ -103,13 +121,23 @@ public final class SyncRelayListener {
             self.task = task
             task.resume()
             receive(task)
+            // Answered, it is open: the relay let it in.
+            task.sendPing { [weak self, weak task] error in
+                Task { @MainActor in
+                    guard let self, let task, task === self.task else { return }
+                    if let error { self.dropped(task, error.localizedDescription) } else {
+                        self.failures = 0
+                        self.state = .listening(since: Date())
+                    }
+                }
+            }
             keepAlive?.invalidate()
             // Cloudflare closes a quiet socket; a word now and then keeps it open.
             keepAlive = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self, weak task] _ in
                 MainActor.assumeIsolated {
                     guard let self, let task, task === self.task else { return }
                     task.send(.string("ping")) { error in
-                        if error != nil { Task { @MainActor in self.dropped(task) } }
+                        if let error { Task { @MainActor in self.dropped(task, error.localizedDescription) } }
                     }
                 }
             }
@@ -122,6 +150,7 @@ public final class SyncRelayListener {
         retry?.invalidate()
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
+        state = .stopped
     }
 
     /// Opened again now — the Mac woke, or came back online.
@@ -142,29 +171,32 @@ public final class SyncRelayListener {
                     self.failures = 0
                     if text.contains("\"push\"") {
                         Log.shared.info("relay", "Told of a push")
+                        self.lastPush = Date()
                         self.onPush()
                     }
                     self.receive(task)
                 case .success:
                     self.receive(task)
-                case .failure:
-                    self.dropped(task)
+                case .failure(let error):
+                    self.dropped(task, error.localizedDescription)
                 }
             }
         }
     }
 
-    private func dropped(_ dropped: URLSessionWebSocketTask) {
+    private func dropped(_ dropped: URLSessionWebSocketTask, _ reason: String?) {
         guard dropped === task else { return }
         task = nil
         keepAlive?.invalidate()
-        scheduleRetry()
+        scheduleRetry(reason)
     }
 
-    private func scheduleRetry() {
+    private func scheduleRetry(_ reason: String?) {
         guard !stopped else { return }
         failures += 1
         let delay = min(300, 5 * pow(2, Double(min(failures - 1, 6))))
+        if let reason { Log.shared.warning("relay", "Not listening for pushes; trying again in \(Int(delay)) s", detail: reason) }
+        state = .waiting(until: Date().addingTimeInterval(delay), failures: failures, reason: reason)
         retry?.invalidate()
         retry = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.start() }

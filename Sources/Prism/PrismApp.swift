@@ -1,4 +1,5 @@
 import AppKit
+import SystemConfiguration
 import ReflectCore
 import PrismCore
 import ReflectUI
@@ -46,6 +47,12 @@ final class PrismApp: NSObject, NSApplicationDelegate {
     /// the oldest first, in a window of their own — the one open brought forward.
     @objc func openReadingQueue(_ sender: Any?) {
         session?.openReadingQueue().showWindow(nil)
+    }
+
+    /// Graph ▸ Sync Status: how syncing goes here — when it last went,
+    /// what went wrong, and when each device last pushed.
+    @objc func showSyncStatus(_ sender: Any?) {
+        session?.openSyncStatus().showWindow(nil)
     }
 
     /// Prism ▸ Settings: the typography window.
@@ -135,11 +142,14 @@ final class PrismApp: NSObject, NSApplicationDelegate {
     /// keeps in step itself; a folder another app keeps, only when asked.
     private func start(_ graph: Graph, ownsSync: Bool) {
         closeGraph()
+        // Commits say they came from this Mac, so the history tells which device last pushed.
+        Git.device = SCDynamicStoreCopyComputerName(nil, nil) as String? ?? ProcessInfo.processInfo.hostName
         let session = Session(graph: graph)
         if ownsSync { session.ownSync(prepare: graph.root == GitHubGraph.root ? GitHubGraph.prepare : {}) }
         self.session = session
         if graph.root == GitHubGraph.root {
             relay = GitHubGraph.listen { [weak session] in session?.syncForPush() }
+            session.relay = relay
         }
     }
 
@@ -289,6 +299,29 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             let wait = environment["PRISM_WAIT"].flatMap(Double.init) ?? 0.8
             DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
                 queue.snapshot(to: URL(fileURLWithPath: environment["PRISM_SNAP"]!)) { exit(0) }
+            }
+            return
+        }
+        // `PRISM_SYNC=1`: the Sync Status window drawn instead.
+        if environment["PRISM_SYNC"] == "1" {
+            let status = session.openSyncStatus()
+            status.window?.setFrame(NSRect(x: -4000, y: 0, width: Double(environment["PRISM_WIDTH"] ?? "") ?? 640,
+                                           height: Double(environment["PRISM_HEIGHT"] ?? "") ?? 720), display: false)
+            status.window?.orderBack(nil)
+            let wait = environment["PRISM_WAIT"].flatMap(Double.init) ?? 0.8
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
+                guard let view = status.window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(1) }
+                view.cacheDisplay(in: view.bounds, to: rep)
+                // On the window's paper, as it is seen.
+                let image = NSImage(size: view.bounds.size, flipped: false) { rect in
+                    view.effectiveAppearance.performAsCurrentDrawingAppearance { Ink.paper.setFill() }
+                    rect.fill()
+                    rep.draw(in: rect)
+                    return true
+                }
+                guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { exit(1) }
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: environment["PRISM_SNAP"]!))
+                exit(0)
             }
             return
         }
@@ -452,6 +485,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         ])
         submenu("Graph", [
             item("Sync Now", #selector(PrismWindow.syncNow(_:)), "r"),
+            item("Sync Status…", #selector(PrismApp.showSyncStatus(_:)), "r", [.command, .option]),
             item("GitHub Account…", #selector(PrismApp.showGitHub(_:))),
         ])
         let window = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")

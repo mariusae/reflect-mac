@@ -569,6 +569,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             failed.isEnabled = false
             menu.addItem(failed)
             menu.addItem(ClosureMenuItem(title: "Sync Now") { [weak self] in self?.session.syncNow() })
+            menu.addItem(ClosureMenuItem(title: "Sync Status…") { [weak self] in self?.session.openSyncStatus().showWindow(nil) })
         }
         if !session.toReview.isEmpty {
             if menu.numberOfItems > 0 { menu.addItem(.separator()) }

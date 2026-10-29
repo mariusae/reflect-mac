@@ -139,6 +139,26 @@ public final class LibGit2Backend: GitBackend, @unchecked Sendable {
         return git_remote_url(remote).map { String(cString: $0) }
     }
 
+    public func recentCommits(_ reference: String, limit: Int) -> [GitCommitSummary] {
+        guard var start = try? resolved(reference) else { return [] }
+        var walk: OpaquePointer?
+        guard git_revwalk_new(&walk, repository) == 0, let walk else { return [] }
+        defer { git_revwalk_free(walk) }
+        git_revwalk_sorting(walk, GIT_SORT_TIME.rawValue)
+        git_revwalk_push(walk, &start)
+        var commits: [GitCommitSummary] = []
+        var oid = git_oid()
+        while commits.count < limit, git_revwalk_next(&oid, walk) == 0 {
+            var commit: OpaquePointer?
+            guard git_commit_lookup(&commit, repository, &oid) == 0, let commit else { continue }
+            defer { git_commit_free(commit) }
+            let message = git_commit_message(commit).map { String(cString: $0) } ?? ""
+            commits.append(GitCommitSummary(id: Self.string(oid), date: Date(timeIntervalSince1970: TimeInterval(git_commit_time(commit))),
+                                            message: message.trimmingCharacters(in: .whitespacesAndNewlines)))
+        }
+        return commits
+    }
+
     public func commitCount() -> Int {
         var walk: OpaquePointer?
         guard git_revwalk_new(&walk, repository) == 0 else { return 0 }

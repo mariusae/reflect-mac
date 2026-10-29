@@ -48,6 +48,21 @@ public final class CommandLineGit: GitBackend, @unchecked Sendable {
         ((try? run(["remote"])) ?? "").split(separator: "\n").contains(Substring(name))
     }
 
+    public func remoteURL(_ name: String) -> String? {
+        let url = (try? run(["remote", "get-url", name]).trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
+        return url.isEmpty ? nil : url
+    }
+
+    public func recentCommits(_ reference: String, limit: Int) -> [GitCommitSummary] {
+        let log = (try? run(["log", "-n", String(limit), "--format=%H%x1f%ct%x1f%B%x1e", reference])) ?? ""
+        return log.split(separator: "\u{1e}").compactMap { record in
+            let fields = record.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "\u{1f}", maxSplits: 2, omittingEmptySubsequences: false)
+            guard fields.count == 3, let seconds = TimeInterval(fields[1]) else { return nil }
+            return GitCommitSummary(id: String(fields[0]), date: Date(timeIntervalSince1970: seconds),
+                                    message: fields[2].trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+
     public func commitCount() -> Int {
         Int((try? run(["rev-list", "--count", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)) ?? "") ?? 0
     }

@@ -20,7 +20,39 @@ package final class SyncController {
         case unavailable
     }
 
+    /// How syncing has gone here: kept across launches, for each repository.
+    package struct Record: Codable, Equatable {
+        package var lastAttempt: Date?
+        package var lastSuccess: Date?
+        /// The last cycle that took in what other devices pushed.
+        package var lastFullSuccess: Date?
+        package var lastFailure: Date?
+        package var lastFailureMessage: String?
+        /// What the last cycle to finish did, and how long it took.
+        package var lastReport: String?
+        package var lastTiming: String?
+    }
+
+    /// Since launch.
+    package struct Stats: Equatable {
+        package var since = Date()
+        package var syncs = 0
+        package var failures = 0
+        /// Files the merges wrote.
+        package var pulled = 0
+        package var conflicts = 0
+    }
+
     package let git: Git?
+    package private(set) var record: Record {
+        didSet {
+            guard let key = recordKey, let data = try? JSONEncoder().encode(record) else { return }
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+    package private(set) var stats = Stats()
+    /// Whether a cycle is running now, and which.
+    package private(set) var runningMode: Git.Mode?
     package private(set) var status: Status {
         didSet { onStatus?(status) }
     }
@@ -36,6 +68,7 @@ package final class SyncController {
     /// Done before each cycle — a GitHub token refreshed, when it runs out.
     package var prepare: (() async throws -> Void)?
 
+    private let recordKey: String?
     private var idleTimer: Timer?
     private var firstUnsaved: Date?
     private var running = false
@@ -54,6 +87,9 @@ package final class SyncController {
     package init(git: Git?) {
         self.git = git
         status = git == nil ? .unavailable : .idle
+        let key = git.map { "SyncRecord " + $0.root.standardizedFileURL.path }
+        recordKey = key
+        record = key.flatMap { UserDefaults.standard.data(forKey: $0) }.flatMap { try? JSONDecoder().decode(Record.self, from: $0) } ?? Record()
     }
 
     /// Something was written; commit it once writing pauses.
@@ -89,6 +125,8 @@ package final class SyncController {
             return
         }
         running = true
+        runningMode = mode
+        record.lastAttempt = Date()
         status = .syncing
         flush?()
         let name = mode == .full ? "Sync" : "Backup"
@@ -112,15 +150,28 @@ package final class SyncController {
                 }
                 if !report.conflicted.isEmpty { onConflicts?(report.conflicted) }
                 if !report.skippedLargeFiles.isEmpty { onLargeFiles?(report.skippedLargeFiles) }
-                status = .synced(Date())
+                let now = Date()
+                record.lastSuccess = now
+                if mode == .full { record.lastFullSuccess = now }
+                record.lastReport = report.quiet ? "Nothing to do" : report.description
+                record.lastTiming = report.timingSummary
+                stats.syncs += 1
+                stats.pulled += report.changed.count
+                stats.conflicts += report.conflicted.count
+                status = .synced(now)
             } catch is SyncStopped {
                 Log.shared.info("sync", "\(name) stopped at a safe point, to go on next time")
                 status = .idle
             } catch {
                 Log.shared.error("sync", "\(name) failed", detail: error.localizedDescription)
+                record.lastFailure = Date()
+                record.lastFailureMessage = error.localizedDescription
+                stats.syncs += 1
+                stats.failures += 1
                 status = .failed(error.localizedDescription)
             }
             running = false
+            runningMode = nil
             if let next = pending {
                 pending = nil
                 run(next)

@@ -24,6 +24,10 @@ public protocol GitBackend: AnyObject, Sendable {
     /// Whether a reference — `refs/remotes/origin/main` — names a commit.
     func resolves(_ reference: String) -> Bool
     func hasRemote(_ name: String) -> Bool
+    /// Where a remote is: the address it was added with.
+    func remoteURL(_ name: String) -> String?
+    /// The newest commits a reference leads to, newest first.
+    func recentCommits(_ reference: String, limit: Int) -> [GitCommitSummary]
     /// How many commits HEAD has.
     func commitCount() -> Int
     /// How many commits each side has that the other lacks.
@@ -102,6 +106,19 @@ public protocol GitBackend: AnyObject, Sendable {
     /// history stops — as a shallow clone notes it — when the note was lost.
     /// Says how many it noted.
     func markMissingHistory() throws -> Int
+}
+
+/// A commit as a history lists it.
+public struct GitCommitSummary: Sendable, Equatable {
+    public var id: String
+    public var date: Date
+    public var message: String
+
+    public init(id: String, date: Date, message: String) {
+        self.id = id
+        self.date = date
+        self.message = message
+    }
 }
 
 public enum GitPushOutcome: Sendable, Equatable { case pushed, behind, rejected(String) }

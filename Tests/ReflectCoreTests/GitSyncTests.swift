@@ -573,6 +573,40 @@ enum SyncBackend: String, CaseIterable, CustomStringConvertible {
         #expect(Git.conflictCopyPath("noext") == "noext (conflict)")
         #expect(Git.conflictCopyPath("assets/.hidden") == "assets/.hidden (conflict)")
     }
+
+    // MARK: Health
+
+    @Test(arguments: SyncBackend.allCases) func healthNamesEachDevicesLastPush(_ backend: SyncBackend) async throws {
+        let fixture = try Fixture()
+        let repo = fixture.deviceA
+        for (path, message) in [("notes/a.md", "Add A\n\nDevice: Alpha"), ("notes/b.md", "Add B"),
+                                ("notes/c.md", "Add C\n\nDevice: Beta"), ("notes/d.md", "Update D\n\nDevice: Alpha")] {
+            try write(repo, path, "# \(path)\n")
+            try fixture.shell(["add", "-A"], in: repo)
+            try fixture.shell(["commit", "--quiet", "-m", message], in: repo)
+        }
+        try fixture.shell(["push", "--quiet", "origin", "main"], in: repo)
+        try write(repo, "notes/e.md", "# E\n")
+        try fixture.shell(["add", "-A"], in: repo)
+        try fixture.shell(["commit", "--quiet", "-m", "Add E"], in: repo)
+
+        let health = await backend.git(repo).health()
+        #expect(health.branch == "main")
+        #expect(health.remote == fixture.remote.path)
+        #expect(health.hasRemoteBranch)
+        #expect(health.ahead == 1 && health.behind == 0)
+        #expect(health.devices.map(\.name) == ["Alpha", "Beta"])
+        #expect(health.devices.first?.message == "Update D")
+        #expect(health.unnamed.map { Git.subject(of: $0.message) } == "Add B")
+        #expect(health.newest.map { Git.subject(of: $0.message) } == "Update D")
+        #expect(health.operation == nil && health.lockAge == nil)
+    }
+
+    @Test func deviceIsReadFromTheTrailer() {
+        #expect(Git.device(in: "Add A\n\nDevice: Marius’s MacBook Pro") == "Marius’s MacBook Pro")
+        #expect(Git.device(in: "Add A") == nil)
+        #expect(Git.device(in: "Device: \n") == nil)
+    }
 }
 
 @Suite struct ConflictMarkerTests {

@@ -122,6 +122,32 @@ final class Session {
         if !Self.quitting { UserDefaults.standard.set(false, forKey: "Queue.open") }
     }
 
+    // MARK: Sync status
+
+    /// Graph ▸ Sync Status: how syncing goes, brought forward — opened, if it is not.
+    private(set) var syncWindow: SyncStatusWindow?
+
+    @discardableResult
+    func openSyncStatus() -> SyncStatusWindow {
+        let window = syncWindow ?? SyncStatusWindow(session: self)
+        syncWindow = window
+        return window
+    }
+
+    func syncStatusClosed(_ window: SyncStatusWindow) {
+        if window === syncWindow { syncWindow = nil }
+    }
+
+    /// Told of pushes elsewhere, when there is a relay: Prism's own clone's.
+    var relay: SyncRelayListener? {
+        didSet { relay?.onState = { [weak self] _ in self?.syncWindow?.refresh() } }
+    }
+    var syncRecord: SyncController.Record { sync.record }
+    var syncStats: SyncController.Stats { sync.stats }
+    var syncRunning: Git.Mode? { sync.runningMode }
+    /// How the repository stands, after any cycle under way.
+    func syncHealth() async -> SyncHealth? { await graph.git?.health() }
+
     /// Whether the reading queue was open when Prism was last left.
     var readingQueueWasOpen: Bool { UserDefaults.standard.bool(forKey: "Queue.open") }
 
@@ -585,6 +611,7 @@ final class Session {
         syncStatus = status
         if case .synced = status { applyHistory() }
         windows.forEach { $0.showSync(status) }
+        syncWindow?.syncChanged(status)
     }
 
     // MARK: Notes to review
