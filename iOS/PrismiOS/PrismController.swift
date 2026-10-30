@@ -57,6 +57,18 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         }
         observe()
         startNow()
+        // Dictation by ElevenLabs, through the relay, while signed in to GitHub.
+        if SyncRelay.host != nil {
+            let account = store.account
+            Dictation.scribeToken = { @MainActor in
+                guard account.isSignedIn else { throw GitHubError("Not signed in to GitHub") }
+                return try await SyncRelay.scribeToken(accessToken: try await account.validAccessToken())
+            }
+            Dictation.prepare()
+            NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { Dictation.prepare() }
+            }
+        }
         NotificationCenter.default.addObserver(forName: .prismReader, object: nil, queue: .main) { [weak self] note in
             let reading = note.object as? Bool ?? false
             MainActor.assumeIsolated {
@@ -1079,10 +1091,15 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
                 return
             }
             let dictation = Dictation()
+            self.dictation = dictation
+            dictation.onEngine = { engine in
+                guard self.dictation === dictation else { return }
+                self.bar.showEngine(engine)
+            }
             do {
-                try dictation.start { [weak self] text in self?.bar.showHeard(text) }
-                self.dictation = dictation
+                try dictation.start(keyterms: store.index.map(Dictation.terms) ?? []) { text in self.bar.showHeard(text) }
             } catch {
+                if self.dictation === dictation { self.dictation = nil }
                 bar.hideHeard()
                 say("Dictation isn’t available right now.")
             }

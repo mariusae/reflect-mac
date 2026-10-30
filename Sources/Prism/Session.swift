@@ -502,6 +502,29 @@ final class Session {
         }
     }
 
+    // MARK: Quick notes
+
+    /// A few words at the top of today — typed or said in the quick note's
+    /// panel — what is open written first, and shown as it is after.
+    func addToToday(_ text: String) throws {
+        save()
+        guard let path = try QuickNote.add(text, in: graph, index: index) else { return }
+        notesChanged([path])
+        if ownsSync { sync.noteChanged() }
+    }
+
+    /// ⌃⌥Space: the quick note's panel, and its hot key — while the graph is open.
+    private(set) var quickNote: QuickNoteController?
+
+    func startQuickNote() {
+        if quickNote == nil { quickNote = QuickNoteController(session: self) }
+    }
+
+    func endQuickNote() {
+        quickNote?.end()
+        quickNote = nil
+    }
+
     // MARK: Pages captured in a browser
 
     func capture(_ page: WebCapture.Page, screenshot: Data?) throws -> (path: String, title: String) {

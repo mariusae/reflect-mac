@@ -19,9 +19,12 @@ new_sqlite_classes = ["RepoHub"]
 # The apps an iPhone may register for: their bundle identifiers, the topics
 # APNs pushes to.
 APNS_TOPICS = "com.mariusae.Prism,com.mariusae.Reflect"
+# The GitHub logins that may dictate through the relay's ElevenLabs key.
+SCRIBE_USERS = "mariusae"
 
 # Secrets, set with `wrangler secret put <NAME>` (see README.md):
 #   GITHUB_WEBHOOK_SECRET  the GitHub App's webhook secret
 #   APNS_KEY               the .p8 key's contents, PEM and all
 #   APNS_KEY_ID            the key's ID
 #   APNS_TEAM_ID           the Apple Developer team's ID
+#   ELEVENLABS_API_KEY     ElevenLabs' API key, for dictation

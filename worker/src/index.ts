@@ -3,6 +3,7 @@
 
 import { isGitHubSigned, sha256 } from "./crypto.ts";
 import { RepoHub, type Device } from "./hub.ts";
+import { mayDictate, realtimeToken } from "./scribe.ts";
 
 export { RepoHub };
 
@@ -14,6 +15,10 @@ export interface Env {
   APNS_TEAM_ID: string;
   /// Comma-separated: the apps' bundle identifiers an iPhone may register for.
   APNS_TOPICS: string;
+  /// ElevenLabs' API key, for dictation's single-use tokens.
+  ELEVENLABS_API_KEY: string;
+  /// Comma-separated: the GitHub logins that may dictate.
+  SCRIBE_USERS: string;
 }
 
 export default {
@@ -23,6 +28,7 @@ export default {
       if (url.pathname === "/github" && request.method === "POST") return await webhook(request, env);
       if (url.pathname === "/devices" && (request.method === "POST" || request.method === "DELETE")) return await devices(request, env);
       if (url.pathname === "/events") return await events(request, env, url);
+      if (url.pathname === "/scribe-token" && request.method === "POST") return await scribeToken(request, env);
       if (url.pathname === "/" && request.method === "GET") return new Response("reflect-sync-relay\n");
       return new Response("Not found\n", { status: 404 });
     } catch (error) {
@@ -132,4 +138,36 @@ async function events(request: Request, env: Env, url: URL): Promise<Response> {
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return new Response("Expected a WebSocket\n", { status: 426 });
   const id = await repositoryID(bearer(request), url.searchParams.get("repository") ?? "");
   return hub(env, id).fetch(request);
+}
+
+// MARK: Dictation
+
+/// Who a GitHub token is: its user's login. Asked of GitHub, the answer
+/// kept a few minutes; the token itself is never kept.
+async function gitHubLogin(token: string): Promise<string> {
+  const cacheKey = new Request(`https://login.cache/${await sha256(token)}`);
+  const cache = (caches as unknown as { default: Cache }).default;
+  const cached = await cache.match(cacheKey);
+  if (cached) return await cached.text();
+  const answer = await fetch("https://api.github.com/user", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "reflect-sync-relay",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!answer.ok) throw new Response("GitHub did not know that token\n", { status: 401 });
+  const { login } = (await answer.json()) as { login: string };
+  await cache.put(cacheKey, new Response(login, { headers: { "Cache-Control": "max-age=600" } }));
+  return login;
+}
+
+/// A phone about to dictate: a single-use token for ElevenLabs' realtime
+/// transcription — for the GitHub users allowed to, while there is a key.
+async function scribeToken(request: Request, env: Env): Promise<Response> {
+  if (!env.ELEVENLABS_API_KEY) return new Response("Dictation is not set up on the relay\n", { status: 503 });
+  const login = await gitHubLogin(bearer(request));
+  if (!mayDictate(login, env.SCRIBE_USERS)) return new Response("Not allowed to dictate\n", { status: 403 });
+  return Response.json({ token: await realtimeToken(env.ELEVENLABS_API_KEY) }, { headers: { "Cache-Control": "no-store" } });
 }

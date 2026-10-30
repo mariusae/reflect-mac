@@ -13,6 +13,8 @@ So another device's writing comes in within seconds, not when the app is next op
   - `POST /github`: GitHub's webhook.
   - `POST` and `DELETE /devices`: an iPhone registering or unregistering.
   - `GET /events`: a Mac's WebSocket.
+  - `POST /scribe-token`: a single-use token for ElevenLabs' realtime transcription, for the phone's dictation. Only the GitHub logins in `SCRIBE_USERS` get one.
+- `src/scribe.ts`: who may dictate, and asking ElevenLabs for a token.
 - `src/hub.ts`: one Durable Object per repository. It holds the push tokens and the open sockets.
 - `src/crypto.ts`: checks webhook signatures and signs the APNs token.
 
@@ -66,7 +68,16 @@ So another device's writing comes in within seconds, not when the app is next op
    - **iPhone:** build from Xcode. Automatic signing adds the push capability to the App ID.
    - **Mac:** `scripts/build-prism.sh`.
 
-7. **Check.** Write on one device. In the GitHub App's settings, under **Advanced → Recent Deliveries**, the push should show a `200` with `{"listening": …, "pushed": …}`.
+7. **Dictation** (optional). Make an API key at elevenlabs.io → Developers → API Keys, with *Speech to Text* access. Then:
+
+   ```sh
+   npx wrangler secret put ELEVENLABS_API_KEY
+   npx wrangler deploy
+   ```
+
+   The key stays in the relay. The phone asks for a single-use token for each dictation, signed in with GitHub, and only the logins in `SCRIBE_USERS` (`wrangler.toml`) get one. Without a token — offline, signed out, no key — the phone uses Apple's recognition on the device.
+
+8. **Check.** Write on one device. In the GitHub App's settings, under **Advanced → Recent Deliveries**, the push should show a `200` with `{"listening": …, "pushed": …}`.
    - `listening` counts the Macs told.
    - `pushed` counts the iPhones told.
 

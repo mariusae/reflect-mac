@@ -60,6 +60,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<key>GitHubClientSecret</key><string>$GITHUB_CLIENT_SECRET</string>
 	<key>GitHubAppSlug</key><string>$GITHUB_APP_SLUG</string>
 	<key>SyncRelayHost</key><string>$SYNC_RELAY_HOST</string>
+	<key>NSMicrophoneUsageDescription</key><string>Prism listens while you hold the dictation key, to write down what you say.</string>
+	<key>NSSpeechRecognitionUsageDescription</key><string>Offline, Prism writes down what you say with the Mac’s own speech recognition.</string>
 </dict>
 </plist>
 PLIST

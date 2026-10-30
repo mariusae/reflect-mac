@@ -453,7 +453,3 @@ final class SyncStatusWindow: NSWindowController, NSWindowDelegate {
         return formatter.string(from: seconds) ?? "\(Int(seconds)) s"
     }
 }
-
-private final class FlippedView: NSView {
-    override var isFlipped: Bool { true }
-}

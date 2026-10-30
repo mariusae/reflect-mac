@@ -49,6 +49,22 @@ public enum SyncRelay {
         Log.shared.info("relay", "\(method == "DELETE" ? "Unregistered" : "Registered") for pushes to \(body["repository"] ?? "")")
     }
 
+    /// A single-use token for ElevenLabs' realtime transcription, from the
+    /// relay, which keeps the key: good for one dictation, for 15 minutes.
+    public static func scribeToken(accessToken: String) async throws -> String {
+        guard let host else { throw GitHubError("There is no sync relay to dictate through") }
+        var request = URLRequest(url: URL(string: "https://\(host)/scribe-token")!, timeoutInterval: 5)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status),
+              let token = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["token"] as? String else {
+            throw GitHubError("The sync relay answered \(status): \(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+        return token
+    }
+
     static func hex(_ data: Data) -> String { data.map { String(format: "%02x", $0) }.joined() }
 
     /// Whether the app was signed to be pushed to through APNs' sandbox: its

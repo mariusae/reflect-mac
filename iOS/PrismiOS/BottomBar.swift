@@ -61,6 +61,8 @@ final class BottomBar: UIView, UITextFieldDelegate {
         return view
     }()
     private let heard = UILabel()
+    /// In the bubble's corner: who is writing it down.
+    private let engineMark = UIImageView()
 
     private(set) var isSearching = false
     private(set) var isSmall = false
@@ -175,6 +177,9 @@ final class BottomBar: UIView, UITextFieldDelegate {
         heard.font = Typeface.current.body(17)
         heard.textColor = Ink.text
         bubble.contentView.addSubview(heard)
+        engineMark.contentMode = .center
+        engineMark.isHidden = true
+        bubble.contentView.addSubview(engineMark)
         bubble.alpha = 0
         addSubview(bubble)
     }
@@ -259,7 +264,20 @@ final class BottomBar: UIView, UITextFieldDelegate {
     }
 
     func hideHeard() {
-        UIView.animate(withDuration: 0.25) { self.bubble.alpha = 0 }
+        UIView.animate(withDuration: 0.25) { self.bubble.alpha = 0 } completion: { _ in
+            if self.bubble.alpha == 0 { self.showEngine(nil) }
+        }
+    }
+
+    /// Who is writing down what is heard: a faint waveform while ElevenLabs
+    /// is asked, its waveform once it listens, Apple's mark for Apple's own.
+    func showEngine(_ engine: Dictation.Engine?) {
+        engineMark.isHidden = engine == nil
+        guard let engine else { return }
+        engineMark.image = UIImage(systemName: engine.symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .medium))
+        engineMark.tintColor = engine == .connecting ? Ink.faint : engine == .scribe ? Ink.accent : Ink.secondary
+        engineMark.accessibilityLabel = engine.name
+        engineMark.isAccessibilityElement = true
     }
 
     // MARK: Searching
@@ -352,11 +370,13 @@ final class BottomBar: UIView, UITextFieldDelegate {
     }
 
     private func placeBubble(width: CGFloat) {
-        let heardWidth = width - 2 * Self.side - 36
+        // Room at the right for the engine's mark.
+        let heardWidth = width - 2 * Self.side - 36 - 22
         let textHeight = ceil(heard.sizeThatFits(CGSize(width: heardWidth, height: .greatestFiniteMagnitude)).height)
         let bubbleHeight = max(52, textHeight + 28)
         bubble.frame = CGRect(x: Self.side, y: bounds.height - Self.height - Self.gap - bubbleHeight, width: width - 2 * Self.side, height: bubbleHeight)
         heard.frame = CGRect(x: 18, y: 14, width: heardWidth, height: bubbleHeight - 28)
+        engineMark.frame = CGRect(x: bubble.bounds.width - 18 - 20, y: 16, width: 20, height: 20)
     }
 
     /// Only the panel is the bar's, to the touch — and the bubble over it,

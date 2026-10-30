@@ -270,24 +270,13 @@ public enum WebCapture {
     /// by its title, the passages highlighted on it under that. Under a
     /// title the note opens with, after it.
     public static func prepending(_ page: Page, toDay source: String) -> String {
-        var outline = OutlineMarkdown.parse(source)
-        var rows = outline.isBlank ? [] : outline.rows
         // As a note's title: brackets made parentheses, so it reads as a link.
         let words = title(page.title, url: page.url)
         // An address Markdown would end early, in angle brackets.
         let address = page.url.contains(" ") || page.url.contains(")") || page.url.contains("(") ? "<\(page.url)>" : page.url
         var added = [Row(kind: .bullet, text: "[\(words)](\(address))")]
         added += page.highlights.map(clean).filter { !$0.isEmpty }.map { Row(kind: .bullet, depth: 1, text: $0) }
-        var at = 0
-        if let first = rows.first, case .heading(1) = first.kind { at = 1 }
-        // The blank lines before what was first stay before what is now.
-        if at < rows.count {
-            added[0].gap = rows[at].gap
-            rows[at].gap = []
-        }
-        rows.insert(contentsOf: added, at: at)
-        outline.rows = rows
-        return OutlineMarkdown.serialize(outline)
+        return QuickNote.prepending(added, toDay: source)
     }
 
     /// Saves a page to a day: a bullet linking to it at the top of the

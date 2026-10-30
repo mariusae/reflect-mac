@@ -55,6 +55,11 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         session?.openSyncStatus().showWindow(nil)
     }
 
+    /// File ▸ Quick Note (⌃⌥Space, from anywhere): a line for today, typed or said.
+    @objc func showQuickNote(_ sender: Any?) {
+        session?.quickNote?.show()
+    }
+
     /// Prism ▸ Settings: the typography window.
     @objc func showSettings(_ sender: Any?) {
         guard let session else { return }
@@ -151,6 +156,19 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             relay = GitHubGraph.listen { [weak session] in session?.syncForPush() }
             session.relay = relay
         }
+        // Dictation by ElevenLabs, through the relay, while signed in to GitHub.
+        if graph.root == GitHubGraph.root, SyncRelay.host != nil {
+            Dictation.scribeToken = { @MainActor in
+                guard GitHubGraph.account.isSignedIn else { throw GitHubError("Not signed in to GitHub") }
+                return try await SyncRelay.scribeToken(accessToken: try await GitHubGraph.account.validAccessToken())
+            }
+        } else {
+            Dictation.scribeToken = nil
+        }
+        if !Session.scripted {
+            session.startQuickNote()
+            Dictation.prepare()
+        }
     }
 
     /// The graph open let go: written, and its windows closed.
@@ -160,6 +178,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         guard let session else { return }
         session.save()
         session.endSync()
+        session.endQuickNote()
         session.windows.forEach { $0.window?.close() }
         self.session = nil
         settings?.close()
@@ -302,6 +321,25 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             }
             return
         }
+        // `PRISM_QUICKNOTE=text`: the quick note's panel drawn instead, the text in it
+        // (`PRISM_LISTENING=1`: as it listens).
+        if let text = environment["PRISM_QUICKNOTE"] {
+            let quick = QuickNoteController(session: session)
+            let engine: Dictation.Engine? = switch environment["PRISM_ENGINE"] {
+            case "scribe": .scribe
+            case "apple": .apple
+            case "connecting": .connecting
+            default: nil
+            }
+            let view = quick.viewForScript(text: text, listening: environment["PRISM_LISTENING"] == "1", engine: engine)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(1) }
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: environment["PRISM_SNAP"]!))
+                exit(0)
+            }
+            return
+        }
         // `PRISM_SYNC=1`: the Sync Status window drawn instead.
         if environment["PRISM_SYNC"] == "1" {
             let status = session.openSyncStatus()
@@ -387,6 +425,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("New Note", #selector(PrismWindow.newNote(_:)), "n", [.command, .option]),
             item("New Window", #selector(PrismApp.newWindow(_:)), "n", [.command, .shift]),
             item("Open New Reader", #selector(PrismApp.openReadingQueue(_:)), "n", [.command, .option, .shift]),
+            item("Quick Note", #selector(PrismApp.showQuickNote(_:)), " ", [.control, .option]),
             .separator(),
             item("Close", #selector(PrismWindow.closePaneOrWindow(_:)), "w"),
         ])
