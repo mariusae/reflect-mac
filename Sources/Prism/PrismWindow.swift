@@ -625,12 +625,16 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             columns.append(pane)
             if let reader, readerOwner === pane { columns.append(reader) }
         }
-        let width = (bounds.width - left) / CGFloat(columns.count)
+        // Each its share of the width: even, till a divider is dragged.
+        if shares.count != columns.count { shares = Self.savedShares(columns.count) }
+        let available = bounds.width - left
+        var x = left
         for (i, column) in columns.enumerated() {
-            let x = (left + CGFloat(i) * width).rounded()
-            let end = i == columns.count - 1 ? bounds.width : (left + CGFloat(i + 1) * width).rounded()
-            column.frame = NSRect(x: x, y: 0, width: end - x, height: bounds.height)
+            let end = i == columns.count - 1 ? bounds.width : (x + shares[i] * available).rounded()
+            column.frame = NSRect(x: x.rounded(), y: 0, width: end - x.rounded(), height: bounds.height)
+            x = end
         }
+        placeDividers(between: columns)
         for (i, pane) in panes.enumerated() {
             pane.ruledLeft = i > 0
             // The first, with nothing at its left: clear of the window's buttons.
@@ -638,6 +642,69 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         }
         commandBar.frame = bounds
         placeWindowButtons()
+    }
+
+    // MARK: Column widths
+
+    /// The columns' shares of the width, left to right, summing to one.
+    private var shares: [CGFloat] = []
+    private var dividers: [ColumnDivider] = []
+    /// The shares as a drag began: the two either side moved from them.
+    private var dragStart: [CGFloat] = []
+    private static let columnLeast: CGFloat = 300
+
+    /// The widths last dragged to, for so many columns; else even.
+    private static func savedShares(_ count: Int) -> [CGFloat] {
+        let even = Array(repeating: 1 / CGFloat(count), count: count)
+        guard let saved = UserDefaults.standard.array(forKey: "Columns.\(count)") as? [Double], saved.count == count,
+              abs(saved.reduce(0, +) - 1) < 0.01 else { return even }
+        return saved.map { CGFloat($0) }
+    }
+
+    /// A divider on each boundary between columns, over them, to drag.
+    private func placeDividers(between columns: [NSView]) {
+        while dividers.count < columns.count - 1 {
+            let divider = ColumnDivider()
+            let index = dividers.count
+            divider.onBegin = { [weak self] in self?.dragStart = self?.shares ?? [] }
+            divider.onDrag = { [weak self] dx in self?.dragDivider(index, by: dx) }
+            divider.onEnd = { [weak self] in self?.saveShares() }
+            divider.onReset = { [weak self] in self?.evenColumns() }
+            dividers.append(divider)
+        }
+        while dividers.count > max(0, columns.count - 1) { dividers.removeLast().removeFromSuperview() }
+        for (i, divider) in dividers.enumerated() {
+            // Over the panes and the reader, under the list and the command bar.
+            if divider.superview == nil || root.subviews.firstIndex(of: divider)! < root.subviews.firstIndex(of: columns[i + 1])! {
+                root.addSubview(divider, positioned: .above, relativeTo: columns[i + 1])
+            }
+            divider.frame = NSRect(x: columns[i].frame.maxX - ColumnDivider.width / 2, y: 0, width: ColumnDivider.width, height: root.bounds.height)
+        }
+    }
+
+    /// The boundary after column `index` moved: that column and the next
+    /// share the width between them, each kept to its least.
+    private func dragDivider(_ index: Int, by dx: CGFloat) {
+        guard dragStart.count == shares.count, index + 1 < shares.count else { return }
+        let available = root.bounds.width - (listShown ? listGlass.frame.maxX + Self.inset / 2 : 0)
+        guard available > 0 else { return }
+        let pair = dragStart[index] + dragStart[index + 1]
+        let least = min(Self.columnLeast / available, pair / 2)
+        let left = min(max(dragStart[index] + dx / available, least), pair - least)
+        shares[index] = left
+        shares[index + 1] = pair - left
+        layoutWindow()
+    }
+
+    private func saveShares() {
+        UserDefaults.standard.set(shares.map(Double.init), forKey: "Columns.\(shares.count)")
+    }
+
+    /// A divider double-clicked: the columns even again.
+    private func evenColumns() {
+        shares = Array(repeating: 1 / CGFloat(shares.count), count: shares.count)
+        UserDefaults.standard.removeObject(forKey: "Columns.\(shares.count)")
+        layoutWindow()
     }
 
     /// Close, minimise and zoom in line with the bars' middles.
@@ -918,6 +985,37 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         lenses.showNowCardForScript()
     }
     func commandBarForScript(_ query: String) { openCommandBar(query) }
+}
+
+/// Between two columns, over the rule there: dragged, the widths either
+/// side; double-clicked, the columns even again.
+final class ColumnDivider: NSView {
+    static let width: CGFloat = 9
+    var onBegin: (() -> Void)?
+    var onDrag: ((CGFloat) -> Void)?
+    var onEnd: (() -> Void)?
+    var onReset: (() -> Void)?
+    private var startX: CGFloat = 0
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .columnResize)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 { return onReset?() ?? () }
+        startX = event.locationInWindow.x
+        onBegin?()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        onDrag?(event.locationInWindow.x - startX)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if event.clickCount < 2 { onEnd?() }
+    }
 }
 
 /// The window's own view.
