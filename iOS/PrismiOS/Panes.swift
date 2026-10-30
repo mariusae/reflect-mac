@@ -395,14 +395,18 @@ final class NoteController: UIViewController {
 
     /// The place shown, its page made afresh.
     private func show(row: Int? = nil) {
-        let place = history.current
         if let old = page {
             (old as? SheetController)?.saveAll()
-            (old as? SheetController)?.settle()
+            // Named after its title, or gone: so too in the way back, or
+            // going back finds its old file — nothing there.
+            if let moved = (old as? SheetController)?.settle() {
+                if let to = moved.to { history.rename(moved.from, to: to) } else { history.forget(moved.from) }
+            }
             old.willMove(toParent: nil)
             old.view.removeFromSuperview()
             old.removeFromParent()
         }
+        let place = history.current
         let made = makePage(place) { [weak self] place, row in self?.go(place, row: row) }
         addChild(made)
         made.additionalSafeAreaInsets.top = PaneBar.height

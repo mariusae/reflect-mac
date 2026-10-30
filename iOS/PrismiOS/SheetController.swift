@@ -228,8 +228,12 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     }
 
     /// A note let go: a new one named after its title, or gone when blank.
-    func settle() {
-        if case .note(let path) = kind { _ = store.settleNewNote(path) }
+    /// Says where it went, when it went: nil, gone.
+    @discardableResult
+    func settle() -> (from: String, to: String?)? {
+        guard case .note(let path) = kind else { return nil }
+        let now = store.settleNewNote(path)
+        return now == path ? nil : (path, now)
     }
 
     /// Something gone wrong, said for a moment over the foot of the page.

@@ -57,19 +57,12 @@ package struct OutlineMetrics {
         return typography.headingFont(size: round(fontSize * factor), weight: weight)
     }
 
-    package func font(for row: Row, heads: Bool = false) -> NSFont {
+    package func font(for row: Row) -> NSFont {
         switch row.kind {
         case .heading(let level): heading(level)
         case .code: code
-        default: heads ? groupHead : body
+        default: body
         }
-    }
-
-    /// A group's head: a step heavier than the text — its Medium; from a
-    /// Light, its Book — the family's text where it has neither.
-    package var groupHead: NSFont {
-        let style = typography.bodyFace?.contains("Light") == true ? "Book" : "Medium"
-        return typography.face(style: style, size: fontSize) ?? body
     }
 
     /// Where a row's text starts: one step in for each level, whether or
@@ -117,13 +110,9 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
         guard storage.length > 0 else { return }
         let text = storage.string as NSString
         var range = text.paragraphRange(for: NSRange(location: min(edited.location, text.length), length: edited.length))
-        // The row after is spaced by this one, so it is styled again too;
-        // and the row before, a group's head or not by whether this is its child.
+        // The row after is spaced by this one, so it is styled again too.
         if NSMaxRange(range) < text.length {
             range = NSUnionRange(range, text.paragraphRange(for: NSRange(location: NSMaxRange(range), length: 0)))
-        }
-        if range.location > 0 {
-            range = NSUnionRange(range, text.paragraphRange(for: NSRange(location: range.location - 1, length: 0)))
         }
         if mask.contains(.editedCharacters) { unify(storage, in: range, inserted: edited) }
         slots = timeSlots(storage)
@@ -240,11 +229,9 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
             // Its words, for how long it is: a style keeps only its kind.
             row.text = text.substring(with: paragraph).trimmingCharacters(in: .newlines)
             let previous = paragraph.location > 0 ? OutlineText.style(storage, at: paragraph.location - 1).row : nil
-            let next = NSMaxRange(paragraph) < text.length ? OutlineText.style(storage, at: NSMaxRange(paragraph)).row : nil
-            let heads = row.headsGroup(before: next)
             let style = storage.attribute(.outlineRow, at: paragraph.location, effectiveRange: nil) as Any
             let slot = slots[paragraph.location]
-            var attributes = attributes(for: row, after: previous, heads: heads)
+            var attributes = attributes(for: row, after: previous)
             if let slot, slot.mark.head != nil,
                let paragraphStyle = (attributes[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle {
                 // Room over a block's words for its time and length.
@@ -260,7 +247,7 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
                 // In a heading, links are only coloured: a pill would crowd its large type.
                 var inHeading = false
                 if case .heading = row.kind { inHeading = true }
-                InlineMarkdown.style(storage, in: paragraph, base: metrics.font(for: row, heads: heads), done: row.task?.isDone == true,
+                InlineMarkdown.style(storage, in: paragraph, base: metrics.font(for: row), done: row.task?.isDone == true,
                                      images: images, caret: caret, pills: !inHeading, typography: metrics.typography)
             }
             // `- > words`: a quote — its words grey, its `> ` written out only where the caret is.
@@ -296,8 +283,8 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
     /// them: in an outline they mean nothing, and a list written loose here
     /// and tight there would read unevenly. A heading has room above it, and
     /// prose keeps the blank line between one paragraph and the next.
-    package func attributes(for row: Row, after previous: Row?, heads: Bool = false) -> [NSAttributedString.Key: Any] {
-        let font = metrics.font(for: row, heads: heads)
+    package func attributes(for row: Row, after previous: Row?) -> [NSAttributedString.Key: Any] {
+        let font = metrics.font(for: row)
         let paragraph = NSMutableParagraphStyle()
         let indent = metrics.textIndent(for: row)
         paragraph.firstLineHeadIndent = indent
