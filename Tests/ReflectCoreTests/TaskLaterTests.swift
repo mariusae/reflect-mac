@@ -19,14 +19,16 @@ import Testing
     }
 
     @Test func openTasksFromTheWeekBeforeAreCarried() {
-        func task(_ day: Day, _ ordinal: Int, done: Bool = false, due: Day? = nil) -> NoteTask {
-            NoteTask(notePath: GraphPaths.dailyPath(for: day), ordinal: ordinal, text: "t", done: done, breadcrumbs: [],
-                     dueDate: due, day: day, noteTitle: "", pin: nil, modified: .distantPast)
+        func task(_ day: Day?, _ ordinal: Int, done: Bool = false, due: Day? = nil) -> NoteTask {
+            NoteTask(notePath: day.map(GraphPaths.dailyPath(for:)) ?? "notes/project.md", ordinal: ordinal, text: "t", done: done,
+                     breadcrumbs: [], dueDate: due, day: day, noteTitle: "", pin: nil, modified: .distantPast)
         }
         let carried = Tasks.carried([
             task(friday.adding(-1), 0), task(friday.adding(-1), 1, done: true), task(friday.adding(-3), 0),
             task(friday.adding(-9), 0), task(friday, 0), task(friday.adding(-2), 0, due: friday.adding(4)),
+            task(nil, 0, due: friday), task(nil, 1, due: friday.adding(1)), task(nil, 2),
         ], today: friday)
-        #expect(carried.map { $0.day! } == [friday.adding(-1), friday.adding(-3)])
+        #expect(carried.map(\.day) == [friday.adding(-1), friday.adding(-3), nil])
+        #expect(carried.last?.ordinal == 0)
     }
 }

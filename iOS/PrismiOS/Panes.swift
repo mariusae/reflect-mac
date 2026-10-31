@@ -142,11 +142,54 @@ final class PaneBar: UIView {
         addSubview(trailing)
         for view in [back, forward, more] as [UIView] { leading.contentView.addSubview(view) }
         for view in [faces, linked] as [UIView] { trailing.contentView.addSubview(view) }
+        // On the ⋯, a dot while syncing — or when it went wrong: what its menu says, seen without opening it.
+        syncDot.isUserInteractionEnabled = false
+        syncDot.layer.cornerRadius = 3.5
+        syncDot.isHidden = true
+        more.addSubview(syncDot)
+        showSync(Self.syncMark)
+        NotificationCenter.default.addObserver(forName: .prismSyncChanged, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let mark = note.object as? PrismStore.SyncMark else { return }
+                PaneBar.syncMark = mark
+                self?.showSync(mark)
+            }
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(chromeHidden(_:)), name: .prismChromeHidden, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(edgeRoomChanged), name: .prismEdgeRoom, object: nil)
     }
 
     @objc private func edgeRoomChanged() { setNeedsLayout() }
+
+    /// How syncing goes, as last told: for bars made after.
+    static var syncMark: PrismStore.SyncMark = .fine
+    private let syncDot = UIView()
+
+    private func showSync(_ mark: PrismStore.SyncMark) {
+        syncDot.layer.removeAllAnimations()
+        syncDot.alpha = 1
+        switch mark {
+        case .fine:
+            syncDot.isHidden = true
+        case .syncing:
+            syncDot.isHidden = false
+            syncDot.backgroundColor = Ink.accent
+            UIView.animate(withDuration: 0.8, delay: 0, options: [.autoreverse, .repeat, .allowUserInteraction]) { self.syncDot.alpha = 0.25 }
+        case .failed:
+            syncDot.isHidden = false
+            syncDot.backgroundColor = .systemRed
+        case .conflicted:
+            syncDot.isHidden = false
+            syncDot.backgroundColor = Ink.week
+        }
+        more.accessibilityValue = switch mark {
+        case .fine: nil
+        case .syncing: "Syncing"
+        case .failed: "Sync failed"
+        case .conflicted: "Notes to settle"
+        }
+        setNeedsLayout()
+    }
 
     /// Room at the left: the sidebar button's, along the window's edge.
     private var leftRoom: CGFloat {
@@ -217,6 +260,8 @@ final class PaneBar: UIView {
         }
         // Alone, round as a button; after back and forward, close to them.
         more.frame = CGRect(x: x == 0 ? 0 : x - 6, y: 0, width: side, height: side)
+        // At the dots' top right, as a badge sits.
+        syncDot.frame = CGRect(x: side / 2 + 9, y: side / 2 - 10, width: 7, height: 7)
         x = more.frame.maxX
         leading.isHidden = false
         leading.frame = CGRect(x: 16 + leftRoom, y: y, width: x, height: side)

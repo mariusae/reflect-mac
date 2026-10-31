@@ -304,8 +304,7 @@ final class NotePane: NSView, OutlineTextViewNavigator {
     /// Today's: the tasks still open from the days before, by their note.
     private func carriedTasks() -> [(path: String, tasks: [NoteTask])] {
         guard ref.day == .today else { return [] }
-        let carried = Tasks.carried(session.index.tasks(), today: .today)
-        return Dictionary(grouping: carried, by: \.notePath).sorted { $0.key > $1.key }.map { ($0.key, $0.value) }
+        return Tasks.byNote(Tasks.carried(session.index.tasks(), today: .today))
     }
 
     private func showLinked(_ sources: [BacklinkSource]?) {

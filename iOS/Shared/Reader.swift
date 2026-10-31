@@ -664,4 +664,6 @@ extension Notification.Name {
     /// A note changed while read, not typed in: its undo manager and the
     /// change's name, to offer Undo for.
     static let prismUndoable = Notification.Name("PrismUndoable")
+    /// How syncing goes changed: syncing, failed, conflicted, fine.
+    static let prismSyncChanged = Notification.Name("PrismSyncChanged")
 }

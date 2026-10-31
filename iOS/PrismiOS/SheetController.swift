@@ -553,7 +553,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         DispatchQueue.global(qos: .userInitiated).async {
             let tasks = Tasks.carried(index.tasks(), today: .today)
             var runs: [(path: String, slices: [NoteSlice], editable: Bool)] = []
-            for (note, list) in Dictionary(grouping: tasks, by: \.notePath).sorted(by: { $0.key > $1.key }) {
+            for (note, list) in Tasks.byNote(tasks) {
                 guard let source = graph.read(path: note) else { continue }
                 let slices = NoteSlice.slices(of: list, in: source).map { slice -> NoteSlice in
                     var slice = slice

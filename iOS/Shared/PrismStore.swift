@@ -26,13 +26,22 @@ final class PrismStore {
     private(set) var isLoading = false
 
     private(set) var git: Git?
-    private(set) var isSyncing = false
+    private(set) var isSyncing = false { didSet { if isSyncing != oldValue { syncStateChanged() } } }
     private(set) var lastSynced: Date?
     /// How long the last sync took, and where: "1.8 s, most of it fetching (1.2 s)".
     private(set) var lastSyncTook: String?
-    private(set) var syncError: String?
+    private(set) var syncError: String? { didSet { if syncError != oldValue { syncStateChanged() } } }
     /// The notes holding sync conflicts, to be settled.
-    private(set) var conflicted: [String] = []
+    private(set) var conflicted: [String] = [] { didSet { if conflicted != oldValue { syncStateChanged() } } }
+
+    /// How syncing goes, for the dot on the bars: told as it changes.
+    enum SyncMark { case fine, syncing, failed, conflicted }
+    var syncMark: SyncMark { isSyncing ? .syncing : !conflicted.isEmpty ? .conflicted : syncError != nil ? .failed : .fine }
+
+    private func syncStateChanged() {
+        let mark = syncMark
+        DispatchQueue.main.async { NotificationCenter.default.post(name: .prismSyncChanged, object: mark) }
+    }
 
     let root: URL
     let account: GitHubAccount

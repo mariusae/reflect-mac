@@ -41,14 +41,37 @@ public enum TaskLater: CaseIterable, Sendable {
 }
 
 extension Tasks {
-    /// Tasks still open from the days before `today` — the last `days` of
-    /// them — to carry into today: those due later left where they are.
+    /// Tasks for today from elsewhere: those still open from the days
+    /// before — the last `days` of them, those due later left where they
+    /// are — and any note's due today or before. The latest days first,
+    /// then the notes.
     public static func carried(_ tasks: [NoteTask], today: Day, days: Int = 7) -> [NoteTask] {
         let first = today.adding(-days)
         return tasks.filter { task in
-            guard !task.done, let day = task.day, day < today, day >= first else { return false }
-            if let due = task.dueDate, due > today { return false }
-            return true
-        }.sorted { a, b in a.day! != b.day! ? a.day! > b.day! : a.ordinal < b.ordinal }
+            guard !task.done, task.day != today else { return false }
+            if let due = task.dueDate { return due <= today && (task.day.map { $0 < today } ?? true) }
+            guard let day = task.day else { return false }
+            return day < today && day >= first
+        }.sorted { a, b in
+            switch (a.day, b.day) {
+            case let (x?, y?) where x != y: return x > y
+            case (.some, nil): return true
+            case (nil, .some): return false
+            default: return a.notePath != b.notePath ? a.notePath < b.notePath : a.ordinal < b.ordinal
+            }
+        }
+    }
+
+    /// Carried tasks by the note each is in: the latest days first, then
+    /// other notes, by name.
+    public static func byNote(_ carried: [NoteTask]) -> [(path: String, tasks: [NoteTask])] {
+        Dictionary(grouping: carried, by: \.notePath).sorted { a, b in
+            switch (GraphPaths.day(fromDailyPath: a.key), GraphPaths.day(fromDailyPath: b.key)) {
+            case let (x?, y?): return x > y
+            case (.some, nil): return true
+            case (nil, .some): return false
+            case (nil, nil): return a.key < b.key
+            }
+        }.map { ($0.key, $0.value) }
     }
 }
