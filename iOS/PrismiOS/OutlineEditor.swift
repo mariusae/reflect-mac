@@ -1916,6 +1916,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             }
         }
         onCaretMove?()
+        showFoldState()
         if completing != nil, typedOpener == nil { refreshCompletion() }
         // The span the caret is in shows its marks; the one it left, not.
         let old = styler.caret
@@ -1935,6 +1936,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     func textViewDidBeginEditing(_ textView: UITextView) {
         StallWatch.mark("editing begun")
         onFocusChange?(true)
+        showFoldState()
     }
     func textViewDidEndEditing(_ textView: UITextView) {
         endCompletion()
@@ -2105,6 +2107,22 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         var all = rows
         OutlineEditing.cycle(.task, &all, selectedRowRange)
         replace(all, caret: caret, undoName: "Task")
+    }
+
+    /// The keyboard bar's fold button, for the row typed in: Fold, Unfold,
+    /// or nothing to fold.
+    func showFoldState() {
+        guard let toolbar, isFirstResponder else { return }
+        let all = rows, index = caret.row
+        guard all.indices.contains(index) else { return }
+        toolbar.showFold(folded: all[index].isFolded, foldable: all[index].isFolded || OutlineEditing.hasChildren(all, index))
+    }
+
+    /// The row typed in, folded or opened: the keyboard bar's.
+    @objc func toggleFoldHere() {
+        toggleFold(at: caret.row)
+        showFoldState()
+        UISelectionFeedbackGenerator().selectionChanged()
     }
 
     func toggleFold(at index: Int) {
@@ -2336,15 +2354,70 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         return rows[(index + 1)..<end].contains { $0.task != nil }
     }
 
-    /// Where the list menu was asked for, in the editor.
-    private var listMenuPoint: CGPoint = .zero
+    /// Where the row menu was asked for, in the editor.
+    private var rowMenuPoint: CGPoint = .zero
 
-    func showListMenu(forRow index: Int, at point: CGPoint) {
-        listMenuPoint = point
+    /// A row held and let go in place: its menu, if it has anything in it.
+    func showRowMenu(forRow index: Int, at point: CGPoint) {
+        guard !rowActions(index).isEmpty else { return }
+        rowMenuPoint = point
         // After the finger is up: shown as it lifts, the menu goes with it.
         DispatchQueue.main.async { [self] in
-            pictureMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: "list:\(index)" as NSString, sourcePoint: point))
+            pictureMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: "row:\(index)" as NSString, sourcePoint: point))
         }
+    }
+
+    /// What can be done to a row held: folded or opened — a checkbox's,
+    /// a number's, as a bullet's — all the way down too; a checklist's
+    /// done items to the bottom.
+    func rowActions(_ index: Int) -> [UIAction] {
+        let all = rows
+        guard all.indices.contains(index) else { return [] }
+        let row = all[index]
+        let end = OutlineEditing.subtreeEnd(all, index)
+        let inside = all[(index + 1)..<end]
+        var actions: [UIAction] = []
+        if row.isFolded {
+            actions.append(UIAction(title: "Unfold", image: UIImage(systemName: "rectangle.expand.vertical")) { [weak self] _ in
+                self?.toggleFold(at: index)
+            })
+        } else if !inside.isEmpty {
+            actions.append(UIAction(title: "Fold", image: UIImage(systemName: "rectangle.compress.vertical")) { [weak self] _ in
+                self?.toggleFold(at: index)
+            })
+        }
+        // Folded within, deeper down: all of it at once.
+        if row.isFolded ? row.folded.contains(where: { $0.isFolded }) : inside.contains(where: { $0.isFolded }) {
+            actions.append(UIAction(title: "Unfold All", image: UIImage(systemName: "arrow.up.and.down")) { [weak self] _ in
+                self?.unfoldCompletely(at: index)
+            })
+        }
+        if !row.isFolded, zip(inside.indices, inside).contains(where: { i, child in OutlineEditing.hasChildren(all, i) && !child.isFolded }) {
+            actions.append(UIAction(title: "Fold All", image: UIImage(systemName: "arrow.down.and.line.horizontal.and.arrow.up")) { [weak self] _ in
+                self?.foldCompletely(at: index)
+            })
+        }
+        if hasChecklist(under: index) {
+            var moved = all
+            let movable = OutlineEditing.moveDoneToBottom(&moved, under: index)
+            actions.append(UIAction(title: "Move Done to Bottom", image: UIImage(systemName: "arrow.down.to.line"),
+                                    attributes: movable ? [] : .disabled) { [weak self] _ in self?.moveDoneToBottom(under: index) })
+        }
+        return actions
+    }
+
+    func unfoldCompletely(at index: Int) {
+        var all = rows
+        guard all.indices.contains(index), OutlineEditing.unfold(&all, at: index, completely: true) > 0 else { return }
+        replace(all, caret: isFirstResponder ? caret : nil, undoName: "Unfold")
+    }
+
+    func foldCompletely(at index: Int) {
+        var all = rows
+        guard all.indices.contains(index), OutlineEditing.foldCompletely(&all, at: index) > 0 else { return }
+        let caret = self.caret.row > index && self.caret.row < OutlineEditing.subtreeEnd(rows, index)
+            ? OutlineKeys.Caret(row: index, offset: 0) : self.caret
+        replace(all, caret: isFirstResponder ? caret : nil, undoName: "Fold")
     }
 
     /// The done items among a row's children below the rest.
@@ -2682,25 +2755,62 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 }
 
-/// Over the keyboard: what an outline wants that the keys do not have.
+/// Over the keyboard: what an outline wants that the keys do not have —
+/// floating glass, the note showing between: Aa and away at the ends of
+/// the main capsule, and over it two small ones, to move the row typed in,
+/// in and out, up and down. Aa turns the capsule to the words' tools.
 final class OutlineToolbar: UIInputView {
+    private static let small: CGFloat = 32
+    private static let main: CGFloat = 46
+    private static let gap: CGFloat = 8
+    private static let height: CGFloat = small + gap + main + 6
+
+    /// One glass, its pieces near enough to run together as they move.
+    private let container = UIVisualEffectView(effect: {
+        let effect = UIGlassContainerEffect()
+        effect.spacing = 12
+        return effect
+    }())
+    private let shift = OutlineToolbar.glass()
+    private let move = OutlineToolbar.glass()
+    private let words = OutlineToolbar.glass()
+    private let capsule = OutlineToolbar.glass()
+    private let away = OutlineToolbar.glass()
+    private let wordsButton = UIButton(type: .system)
+    private let tools = UIStackView()
+    private let formatting = UIStackView()
+    private weak var fold: UIButton?
+    private let chips = UIScrollView()
+    private let chipRow = UIStackView()
+
+    private static func glass() -> UIVisualEffectView {
+        let effect = UIGlassEffect()
+        effect.isInteractive = true
+        let view = UIVisualEffectView(effect: effect)
+        view.cornerConfiguration = .capsule()
+        return view
+    }
+
     init(editor: OutlineEditor) {
-        super.init(frame: CGRect(x: 0, y: 0, width: 400, height: 46), inputViewStyle: .keyboard)
-        // The outline's tools; behind Aa, the words'.
-        let outline: [(String, Selector?, String)] = [
-            ("textformat", nil, "Formatting"),
+        super.init(frame: CGRect(x: 0, y: 0, width: 400, height: Self.height), inputViewStyle: .default)
+        backgroundColor = .clear
+        let shifts = Self.stack([
             ("decrease.indent", #selector(OutlineEditor.outdent), "Outdent"),
             ("increase.indent", #selector(OutlineEditor.indent), "Indent"),
+        ], editor: editor, size: 14)
+        let moves = Self.stack([
             ("arrow.up", #selector(OutlineEditor.moveUp), "Move Up"),
             ("arrow.down", #selector(OutlineEditor.moveDown), "Move Down"),
+        ], editor: editor, size: 14)
+        shift.contentView.addSubview(shifts)
+        move.contentView.addSubview(moves)
+        for (stack, items) in [(tools, [
+            ("rectangle.compress.vertical", #selector(OutlineEditor.toggleFoldHere), "Fold"),
             ("checkmark.square", #selector(OutlineEditor.cycleChecklist), "Checklist"),
             ("checkmark.circle", #selector(OutlineEditor.cycleTask), "Task"),
             ("link", #selector(OutlineEditor.insertLink), "Link"),
             ("clock", #selector(OutlineEditor.newTimeBlock), "New Time Block"),
-            ("keyboard.chevron.compact.down", #selector(UIResponder.resignFirstResponder), "Done"),
-        ]
-        let words: [(String, Selector?, String)] = [
-            ("chevron.left", nil, "Back"),
+        ]), (formatting, [
             ("bold", #selector(OutlineEditor.makeBold), "Bold"),
             ("italic", #selector(OutlineEditor.makeItalic), "Italic"),
             ("strikethrough", #selector(OutlineEditor.makeStruck), "Strikethrough"),
@@ -2708,82 +2818,122 @@ final class OutlineToolbar: UIInputView {
             ("chevron.left.forwardslash.chevron.right", #selector(OutlineEditor.makeCode), "Code"),
             ("number", #selector(OutlineEditor.cycleHeading), "Heading"),
             ("text.quote", #selector(OutlineEditor.toggleQuote), "Quote"),
-            ("keyboard.chevron.compact.down", #selector(UIResponder.resignFirstResponder), "Done"),
-        ]
-        let stack = UIStackView()
-        let formatting = UIStackView()
-        for (row, items) in [(stack, outline), (formatting, words)] {
-            row.axis = .horizontal
-            row.distribution = .fillEqually
-            row.translatesAutoresizingMaskIntoConstraints = false
-            for (symbol, action, label) in items {
-                let button = UIButton(type: .system)
-                button.setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)), for: .normal)
-                button.tintColor = Ink.text
-                button.accessibilityLabel = label
-                if let action {
-                    button.addTarget(editor, action: action, for: .touchUpInside)
-                } else {
-                    // Aa, and back: one row of tools for the other.
-                    let toWords = row === stack
-                    button.addAction(UIAction { [weak stack, weak formatting] _ in
-                        stack?.isHidden = toWords
-                        formatting?.isHidden = !toWords
-                    }, for: .touchUpInside)
-                }
-                row.addArrangedSubview(button)
-            }
+        ])] as [(UIStackView, [(String, Selector, String)])] {
+            Self.fill(stack, items, editor: editor, size: 17)
+            capsule.contentView.addSubview(stack)
         }
+        fold = tools.arrangedSubviews.first as? UIButton
+        formatting.alpha = 0
         formatting.isHidden = true
-        backgroundColor = Ink.paper
-        let rule = UIView()
-        rule.backgroundColor = Ink.rule
-        rule.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(rule)
-        addSubview(stack)
-        addSubview(formatting)
-        NSLayoutConstraint.activate([
-            formatting.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            formatting.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            formatting.topAnchor.constraint(equalTo: topAnchor),
-            formatting.bottomAnchor.constraint(equalTo: bottomAnchor),
-            rule.leadingAnchor.constraint(equalTo: leadingAnchor),
-            rule.trailingAnchor.constraint(equalTo: trailingAnchor),
-            rule.topAnchor.constraint(equalTo: topAnchor),
-            rule.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-        autoresizingMask = .flexibleHeight
-        tools = stack
+
+        wordsButton.setImage(UIImage(systemName: "textformat", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)), for: .normal)
+        wordsButton.tintColor = Ink.text
+        wordsButton.accessibilityLabel = "Formatting"
+        wordsButton.addAction(UIAction { [weak self] _ in self?.toggleWords() }, for: .touchUpInside)
+        words.contentView.addSubview(wordsButton)
+        let down = Self.button("keyboard.chevron.compact.down", #selector(UIResponder.resignFirstResponder), "Done", editor: editor, size: 17)
+        away.contentView.addSubview(down)
+
         chips.showsHorizontalScrollIndicator = false
         chips.isHidden = true
-        chips.translatesAutoresizingMaskIntoConstraints = false
         chipRow.axis = .horizontal
-        chipRow.spacing = 8
-        chipRow.translatesAutoresizingMaskIntoConstraints = false
+        chipRow.spacing = 6
         chips.addSubview(chipRow)
-        addSubview(chips)
-        NSLayoutConstraint.activate([
-            chips.leadingAnchor.constraint(equalTo: leadingAnchor),
-            chips.trailingAnchor.constraint(equalTo: trailingAnchor),
-            chips.topAnchor.constraint(equalTo: topAnchor),
-            chips.bottomAnchor.constraint(equalTo: bottomAnchor),
-            chipRow.leadingAnchor.constraint(equalTo: chips.contentLayoutGuide.leadingAnchor, constant: 10),
-            chipRow.trailingAnchor.constraint(equalTo: chips.contentLayoutGuide.trailingAnchor, constant: -10),
-            chipRow.centerYAnchor.constraint(equalTo: chips.frameLayoutGuide.centerYAnchor),
-            chipRow.heightAnchor.constraint(equalToConstant: 34),
-        ])
+        capsule.contentView.addSubview(chips)
+
+        for piece in [shift, move, words, capsule, away] { container.contentView.addSubview(piece) }
+        addSubview(container)
+        autoresizingMask = .flexibleHeight
     }
 
-    private var tools: UIView?
-    private let chips = UIScrollView()
-    private let chipRow = UIStackView()
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
 
-    /// Links to choose from, in place of the tools — the first, which
-    /// Return puts in, marked — or, with none, the tools again.
+    override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: Self.height) }
+
+    private static func button(_ symbol: String, _ action: Selector, _ label: String, editor: OutlineEditor, size: CGFloat) -> UIButton {
+        let button = UIButton(type: .system)
+        button.setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: size, weight: .regular)), for: .normal)
+        button.tintColor = Ink.text
+        button.accessibilityLabel = label
+        button.addTarget(editor, action: action, for: .touchUpInside)
+        return button
+    }
+
+    private static func fill(_ stack: UIStackView, _ items: [(String, Selector, String)], editor: OutlineEditor, size: CGFloat) {
+        stack.axis = .horizontal
+        stack.distribution = .fillEqually
+        for (symbol, action, label) in items { stack.addArrangedSubview(button(symbol, action, label, editor: editor, size: size)) }
+    }
+
+    private static func stack(_ items: [(String, Selector, String)], editor: OutlineEditor, size: CGFloat) -> UIStackView {
+        let stack = UIStackView()
+        fill(stack, items, editor: editor, size: size)
+        return stack
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        container.frame = bounds
+        let left = max(12, safeAreaInsets.left + 8), right = bounds.width - max(12, safeAreaInsets.right + 8)
+        let y = Self.small + Self.gap
+        words.frame = CGRect(x: left, y: y, width: Self.main, height: Self.main)
+        away.frame = CGRect(x: right - Self.main, y: y, width: Self.main, height: Self.main)
+        capsule.frame = CGRect(x: words.frame.maxX + Self.gap, y: y, width: away.frame.minX - Self.gap - words.frame.maxX - Self.gap, height: Self.main)
+        wordsButton.frame = words.bounds
+        away.contentView.subviews.first?.frame = away.bounds
+        let inside = capsule.bounds.insetBy(dx: 8, dy: 0)
+        tools.frame = inside
+        formatting.frame = inside
+        chips.frame = capsule.bounds
+        let chipsWidth = chipRow.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
+        chipRow.frame = CGRect(x: 6, y: 6, width: chipsWidth, height: Self.main - 12)
+        chips.contentSize = CGSize(width: chipsWidth + 12, height: Self.main)
+        // The small ones over the middle of the main, side by side.
+        let width: CGFloat = 88
+        let middle = capsule.frame.midX
+        shift.frame = CGRect(x: middle - Self.gap / 2 - width, y: 0, width: width, height: Self.small)
+        move.frame = CGRect(x: middle + Self.gap / 2, y: 0, width: width, height: Self.small)
+        shift.contentView.subviews.first?.frame = shift.bounds.insetBy(dx: 4, dy: 0)
+        move.contentView.subviews.first?.frame = move.bounds.insetBy(dx: 4, dy: 0)
+    }
+
+    /// Touches between the pieces: the note's, under them, not the bar's.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        return hit === self || hit === container || hit === container.contentView ? nil : hit
+    }
+
+    /// Aa: the capsule to the words' tools, Aa lit while it is; again, back.
+    private func toggleWords() {
+        let toWords = formatting.isHidden
+        let effect = UIGlassEffect()
+        effect.isInteractive = true
+        if toWords { effect.tintColor = Ink.accent }
+        let (shown, hidden) = toWords ? (formatting, tools) : (tools, formatting)
+        // Links being chosen: the tools turned to, under them, for after.
+        shown.isHidden = !chips.isHidden
+        UIView.animate(withDuration: 0.25, delay: 0, usingSpringWithDamping: 0.85, initialSpringVelocity: 0) {
+            self.words.effect = effect
+            self.wordsButton.tintColor = toWords ? .white : Ink.text
+            shown.alpha = 1
+            hidden.alpha = 0
+        } completion: { _ in
+            hidden.isHidden = true
+        }
+    }
+
+    /// Fold, for a row with children; Unfold, for one folded; dimmed, neither.
+    func showFold(folded: Bool, foldable: Bool) {
+        guard let fold else { return }
+        fold.setImage(UIImage(systemName: folded ? "rectangle.expand.vertical" : "rectangle.compress.vertical",
+                              withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)), for: .normal)
+        fold.accessibilityLabel = folded ? "Unfold" : "Fold"
+        fold.isEnabled = foldable
+    }
+
+    /// Links to choose from, in the capsule in place of its tools — the
+    /// first, which Return puts in, marked — or, with none, the tools again.
     func show(_ candidates: [LinkSuggestions.Candidate], choose: @escaping (LinkSuggestions.Candidate) -> Void) {
         chipRow.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (i, candidate) in candidates.enumerated() {
@@ -2808,30 +2958,25 @@ final class OutlineToolbar: UIInputView {
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
             chipRow.addArrangedSubview(button)
         }
-        chips.isHidden = candidates.isEmpty
-        tools?.isHidden = !candidates.isEmpty
+        let choosing = !candidates.isEmpty
+        chips.isHidden = !choosing
+        let current = formatting.isHidden ? tools : formatting
+        current.isHidden = choosing
         chips.contentOffset = .zero
+        setNeedsLayout()
     }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
 }
 
 extension OutlineEditor: UIEditMenuInteractionDelegate {
-    /// Copy and Share, for the picture held; for a checklist's ring, its
-    /// done items to the bottom.
+    /// Copy and Share, for the picture held; for a row held, what can be
+    /// done to it.
     func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration,
                              suggestedActions: [UIMenuElement]) -> UIMenu? {
         guard let id = configuration.identifier as? NSString else { return nil }
         if id == "link" { return linkMenu() }
-        // A checklist's ring: its done items to the bottom.
-        if id.hasPrefix("list:"), let index = Int(id.substring(from: 5)) {
-            var all = rows
-            let movable = OutlineEditing.moveDoneToBottom(&all, under: index)
-            return UIMenu(children: [
-                UIAction(title: "Move Done to Bottom", image: UIImage(systemName: "arrow.down.to.line"),
-                         attributes: movable ? [] : .disabled) { [weak self] _ in self?.moveDoneToBottom(under: index) },
-            ])
+        if id.hasPrefix("row:"), let index = Int(id.substring(from: 4)) {
+            let actions = rowActions(index)
+            return actions.isEmpty ? nil : UIMenu(children: actions)
         }
         let span = NSRangeFromString(id as String)
         guard let file = pictureFile(span) else { return nil }
@@ -2849,7 +2994,7 @@ extension OutlineEditor: UIEditMenuInteractionDelegate {
     func editMenuInteraction(_ interaction: UIEditMenuInteraction, targetRectFor configuration: UIEditMenuConfiguration) -> CGRect {
         guard let id = configuration.identifier as? NSString else { return .null }
         if id == "link" { return heldLinkFrame ?? .null }
-        if id.hasPrefix("list:") { return CGRect(x: listMenuPoint.x - 12, y: listMenuPoint.y - 12, width: 24, height: 24) }
+        if id.hasPrefix("row:") { return CGRect(x: rowMenuPoint.x - 12, y: rowMenuPoint.y - 12, width: 24, height: 24) }
         return pictureFrame(NSRangeFromString(id as String)) ?? .null
     }
 }

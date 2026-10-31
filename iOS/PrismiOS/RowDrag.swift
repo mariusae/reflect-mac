@@ -111,11 +111,11 @@ extension OutlineEditor {
         case .changed:
             followDrag(to: point)
         case .ended:
-            // Let go where it was picked up, by a checklist's ring: what can
-            // be done to the list, not a move.
-            if let state = rowDrag, hypot(point.x - state.start.x, point.y - state.start.y) < 10, hasChecklist(under: state.block.lowerBound) {
+            // Let go where it was picked up: what can be done to the row —
+            // folded, whatever its marker — not a move.
+            if let state = rowDrag, hypot(point.x - state.start.x, point.y - state.start.y) < 10 {
                 finishDrag(dropping: false)
-                showListMenu(forRow: state.block.lowerBound, at: point)
+                showRowMenu(forRow: state.block.lowerBound, at: point)
                 return
             }
             finishDrag(dropping: true)
