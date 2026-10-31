@@ -1270,6 +1270,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// A row and those under it moved straight to a note — a day's, for a
     /// task brought into today or put off: the app's to do.
     static var moveTo: ((OutlineEditor, Int, String) -> Void)?
+    /// The words dictation should favour — the notes' names: the app's to say.
+    static var dictationTerms: (() -> [String])?
     /// A link being finished: what started it, and where its name starts.
     private var completing: (trigger: LinkSuggestions.Trigger, start: Int)?
     /// Where an `@` or `[` was just typed, to see once it is in whether it starts a link.
@@ -1713,6 +1715,40 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     func beginRowUndoGroup() { rowUndo.beginUndoGrouping() }
     func endRowUndoGroup() { rowUndo.endUndoGrouping() }
 
+    // MARK: Dictating at the caret
+
+    /// The keyboard bar's microphone: listening — what is heard written at
+    /// the caret as it comes — or, listening, stopped.
+    @objc func toggleDictation() {
+        if let dictating = cursorDictation {
+            cursorDictation = nil
+            toolbar?.showDictating(nil)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Task { @MainActor in await dictating.finish() }
+            return
+        }
+        let dictating = CursorDictation(view: self)
+        cursorDictation = dictating
+        toolbar?.showDictating(.connecting)
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Task { @MainActor in
+            guard await Dictation.allowed(), cursorDictation === dictating else {
+                if cursorDictation === dictating { cursorDictation = nil }
+                toolbar?.showDictating(nil)
+                return
+            }
+            do {
+                try dictating.start(keyterms: Self.dictationTerms?() ?? []) { [weak self] engine in
+                    guard self?.cursorDictation === dictating else { return }
+                    self?.toolbar?.showDictating(engine)
+                }
+            } catch {
+                cursorDictation = nil
+                toolbar?.showDictating(nil)
+            }
+        }
+    }
+
     /// The keyboard bar's ↶ and ↷.
     @objc func undoChange() { rowUndo.undo(); showUndoState() }
     @objc func redoChange() { rowUndo.redo(); showUndoState() }
@@ -1972,6 +2008,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         showFoldState()
     }
     func textViewDidEndEditing(_ textView: UITextView) {
+        // Typing over: listening too — what was heard kept.
+        if cursorDictation != nil { toggleDictation() }
         endCompletion()
         onFocusChange?(false)
     }
@@ -2416,6 +2454,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         didSet { outlineLayout.today = day == .today }
     }
     var rowDrag: RowDragState?
+    /// Listening, what is heard written at the caret: the keyboard bar's microphone.
+    var cursorDictation: CursorDictation?
     /// Rows chosen together, while they are: no typing meanwhile.
     var rowChoice: RowChoice?
     override var canBecomeFirstResponder: Bool { rowChoice == nil && super.canBecomeFirstResponder }
@@ -3079,6 +3119,7 @@ final class OutlineToolbar: UIInputView {
     private let tools = UIStackView()
     private let formatting = UIStackView()
     private weak var fold: UIButton?
+    private weak var mic: UIButton?
     private weak var undo: UIButton?
     private weak var redo: UIButton?
     private let chips = UIScrollView()
@@ -3118,6 +3159,7 @@ final class OutlineToolbar: UIInputView {
             ("checkmark.circle", #selector(OutlineEditor.cycleTask), "Task"),
             ("link", #selector(OutlineEditor.insertLink), "Link"),
             ("clock", #selector(OutlineEditor.newTimeBlock), "New Time Block"),
+            ("mic", #selector(OutlineEditor.toggleDictation), "Dictate"),
         ]), (formatting, [
             ("bold", #selector(OutlineEditor.makeBold), "Bold"),
             ("italic", #selector(OutlineEditor.makeItalic), "Italic"),
@@ -3131,6 +3173,7 @@ final class OutlineToolbar: UIInputView {
             capsule.contentView.addSubview(stack)
         }
         fold = tools.arrangedSubviews.first as? UIButton
+        mic = tools.arrangedSubviews.last as? UIButton
         formatting.alpha = 0
         formatting.isHidden = true
 
@@ -3229,6 +3272,16 @@ final class OutlineToolbar: UIInputView {
         } completion: { _ in
             hidden.isHidden = true
         }
+    }
+
+    /// The microphone: lit red while listening — faint while ElevenLabs is
+    /// asked — and plain again when it stops.
+    func showDictating(_ engine: Dictation.Engine?) {
+        guard let mic else { return }
+        mic.setImage(UIImage(systemName: engine == nil ? "mic" : "mic.fill",
+                             withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)), for: .normal)
+        mic.tintColor = engine == nil ? Ink.text : engine == .connecting ? UIColor.systemRed.withAlphaComponent(0.45) : .systemRed
+        mic.accessibilityLabel = engine == nil ? "Dictate" : "Stop Dictating"
     }
 
     /// ↶ and ↷, dimmed when there is nothing to undo, or redo.

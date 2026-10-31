@@ -9,6 +9,7 @@ import ReflectUI
 /// listens — ElevenLabs online, Apple's own offline — and let go, what was
 /// said goes to today, as the phone's dictation does. Said with something
 /// typed already, it is added to what was typed, to be put in with ↩.
+/// Held while typing in one of Prism's notes, it writes where the caret is.
 @MainActor
 final class QuickNoteController: NSObject, NSTextViewDelegate {
     private let session: Session
@@ -24,6 +25,8 @@ final class QuickNoteController: NSObject, NSTextViewDelegate {
     private var hotKey: GlobalHotKey?
 
     private var dictation: Dictation?
+    /// Held while typing in a note of Prism's: what is said, written at the caret.
+    private var atCursor: CursorDictation?
     /// What was typed before listening began: what is heard goes after it.
     private var typed = ""
     /// The hot key held down, since then.
@@ -208,7 +211,18 @@ final class QuickNoteController: NSObject, NSTextViewDelegate {
 
     // MARK: Dictating
 
+    /// The note being typed in, in Prism, in front: where a hold writes.
+    private var editorTypedIn: NSTextView? {
+        guard NSApp.isActive, !panel.isVisible, let view = NSApp.keyWindow?.firstResponder as? OutlineTextView, view.isEditable else { return nil }
+        return view
+    }
+
     private func hotKeyDown() {
+        if let view = editorTypedIn {
+            pressed = Date()
+            beginAtCursor(view)
+            return
+        }
         pressed = Date()
         wasShown = panel.isVisible && panel.alphaValue > 0
         show()
@@ -218,6 +232,18 @@ final class QuickNoteController: NSObject, NSTextViewDelegate {
     private func hotKeyUp() {
         guard let pressed else { return }
         self.pressed = nil
+        if let atCursor {
+            self.atCursor = nil
+            // A tap: nothing said — the panel, as from anywhere else.
+            if Date().timeIntervalSince(pressed) < Self.holdTime {
+                atCursor.cancel()
+                wasShown = false
+                show()
+                return
+            }
+            Task { @MainActor in await atCursor.finish() }
+            return
+        }
         if Date().timeIntervalSince(pressed) < Self.holdTime {
             // A tap: no dictation — the panel, to type in; or, up already and empty, away.
             dictation?.cancel()
@@ -230,6 +256,25 @@ final class QuickNoteController: NSObject, NSTextViewDelegate {
         }
         // Held: what was said, into today — or after what was typed.
         finishListening(addToToday: typed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    /// Held in a note: listening, what is heard written at its caret.
+    private func beginAtCursor(_ view: NSTextView) {
+        guard Bundle.main.object(forInfoDictionaryKey: "NSMicrophoneUsageDescription") != nil else { return NSSound.beep() }
+        let dictating = CursorDictation(view: view)
+        atCursor = dictating
+        Task { @MainActor in
+            guard await Dictation.allowed(), self.atCursor === dictating else {
+                if self.atCursor === dictating { self.atCursor = nil }
+                return
+            }
+            do {
+                try dictating.start(keyterms: Dictation.terms(session.index))
+            } catch {
+                self.atCursor = nil
+                NSSound.beep()
+            }
+        }
     }
 
     @objc private func micClicked(_ sender: Any?) {

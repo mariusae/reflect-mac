@@ -43,6 +43,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             return LinkSuggestions.candidates(query, index: index)
         }
         OutlineEditor.moveTo = { [weak self] editor, index, path in self?.move(editor, index, to: path) }
+        OutlineEditor.dictationTerms = { [weak store] in store?.index.map(Dictation.terms) ?? [] }
         finder.onChoose = { [weak self] place in self?.chose(place) }
         additionalSafeAreaInsets.bottom = BottomBar.height + BottomBar.margin - 34 + BottomBar.gap
         setUpBar()
