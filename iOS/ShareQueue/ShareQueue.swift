@@ -20,6 +20,19 @@ enum ShareQueue {
         var destination: String? = nil
         /// The page's own picture for previews, its note's cover's makings.
         var image: String? = nil
+        /// Words shared, not a page: put into today, or a note of their own in the inbox.
+        var text: String? = nil
+        /// A picture shared: its file, beside the item's in the queue.
+        var picture: String? = nil
+    }
+
+    /// A picture shared, kept beside the items till the app takes it: its file's name.
+    static func keep(picture data: Data, extension ext: String) throws -> String {
+        guard let folder else { throw CocoaError(.fileNoSuchFile) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let name = UUID().uuidString + "." + ext
+        try data.write(to: folder.appendingPathComponent(name), options: .atomic)
+        return name
     }
 
     /// The last choice of where pages go, for the next share.

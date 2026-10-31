@@ -1,7 +1,8 @@
 import UIKit
 import UniformTypeIdentifiers
 
-/// Share ▸ Prism: a web page kept as a link note, as the Mac's capture
+/// Share ▸ Prism: words, into today or a note of their own in the inbox;
+/// a picture, into today; a web page kept as a link note, as the Mac's capture
 /// keeps one — its title, address and description, and what was selected
 /// on it as a highlight — linked from today; or, chosen, a bullet linking
 /// to it at the top of today. A card shows what will be
@@ -130,16 +131,40 @@ final class ShareViewController: UIViewController {
                 }
                 // Text with an address in it.
                 if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier),
-                   let text = try? await provider.loadItem(forTypeIdentifier: UTType.plainText.identifier) as? String,
-                   let url = Self.firstLink(in: text) {
-                    let rest = text.replacingOccurrences(of: url, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
-                    found = .init(url: url, title: rest.count < 200 ? rest : "", description: "", highlights: [], shared: Date())
+                   let text = try? await provider.loadItem(forTypeIdentifier: UTType.plainText.identifier) as? String {
+                    if let url = Self.firstLink(in: text) {
+                        let rest = text.replacingOccurrences(of: url, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        found = .init(url: url, title: rest.count < 200 ? rest : "", description: "", highlights: [], shared: Date())
+                    } else if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        // Words alone: themselves, kept.
+                        found = .init(url: "", title: "", description: "", highlights: [], shared: Date())
+                        found?.text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    if found != nil { break }
+                }
+                // A picture: kept beside the queue till Prism puts it into today.
+                if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier),
+                   let data = await Self.pictureData(provider), let name = try? ShareQueue.keep(picture: data, extension: "jpg") {
+                    found = .init(url: "", title: "", description: "", highlights: [], shared: Date())
+                    found?.picture = name
                     break
                 }
             }
             if found != nil { break }
         }
         show(found)
+    }
+
+    /// A picture shared, as a JPEG — from a file, an image, or its data.
+    private static func pictureData(_ provider: NSItemProvider) async -> Data? {
+        guard let loaded = try? await provider.loadItem(forTypeIdentifier: UTType.image.identifier) else { return nil }
+        let image: UIImage? = switch loaded {
+        case let url as URL: (try? Data(contentsOf: url)).flatMap(UIImage.init(data:))
+        case let data as Data: UIImage(data: data)
+        case let picture as UIImage: picture
+        default: nil
+        }
+        return image?.jpegData(compressionQuality: 0.85)
     }
 
     private static func firstLink(in text: String) -> String? {
@@ -159,6 +184,19 @@ final class ShareViewController: UIViewController {
             quote.isHidden = true
             return
         }
+        // Words, or a picture: no page, no title to give it.
+        if found.text != nil || found.picture != nil {
+            titleField.isHidden = true
+            address.isHidden = true
+            quote.text = found.text
+            quote.isHidden = found.text == nil
+            destination.setTitle(found.picture != nil ? "Today" : "Inbox", forSegmentAt: 0)
+            destination.isEnabled = found.picture == nil
+            if found.picture != nil { destination.selectedSegmentIndex = 1 }
+            describe()
+            save.isEnabled = true
+            return
+        }
         titleField.text = found.title.trimmingCharacters(in: .whitespacesAndNewlines)
         address.text = found.url
         quote.text = found.highlights.first.map { "“\($0)”" }
@@ -172,6 +210,14 @@ final class ShareViewController: UIViewController {
     /// What saving will do, as chosen.
     private func describe() {
         guard let item else { return }
+        if item.picture != nil {
+            status.text = "Put at the top of today."
+            return
+        }
+        if item.text != nil {
+            status.text = isToday ? "Added to the top of today." : "Kept as a note in the inbox, its first line its title."
+            return
+        }
         if isToday {
             status.text = item.highlights.isEmpty
                 ? "Added to the top of today, as a link."

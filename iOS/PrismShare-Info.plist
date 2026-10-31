@@ -7,7 +7,7 @@
 		<key>NSExtensionAttributes</key>
 		<dict>
 			<key>NSExtensionActivationRule</key>
-			<string>SUBQUERY(extensionItems, $item, SUBQUERY($item.attachments, $attachment, ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.url" || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.plain-text" || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.apple.property-list").@count &gt;= 1).@count &gt;= 1</string>
+			<string>SUBQUERY(extensionItems, $item, SUBQUERY($item.attachments, $attachment, ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.url" || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.plain-text" || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.apple.property-list" || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.image").@count &gt;= 1).@count &gt;= 1</string>
 			<key>NSExtensionJavaScriptPreprocessingFile</key>
 			<string>GetPageInfo</string>
 		</dict>

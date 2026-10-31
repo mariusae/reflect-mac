@@ -351,6 +351,16 @@ final class PrismStore {
         defer { takingShared = false }
         var paths: [String] = []
         for (item, file) in pending {
+            let day = Day(item.shared)
+            // Words, or a picture: into the day, or a note of their own in the inbox.
+            if item.text != nil || item.picture != nil {
+                if let saved = takeShared(item, on: day, in: graph, index: index) {
+                    paths += saved
+                    ShareQueue.remove(file)
+                    if let picture = item.picture, let folder = ShareQueue.folder { ShareQueue.remove(folder.appendingPathComponent(picture)) }
+                }
+                continue
+            }
             var page = WebCapture.Page(url: item.url, title: item.title, description: item.description, highlights: item.highlights)
             page.image = item.image
             let toDay = item.destination == "today"
@@ -359,7 +369,6 @@ final class PrismStore {
                 if page.description.isEmpty { page.description = read.description }
                 if page.image == nil { page.image = read.image }
             }
-            let day = Day(item.shared)
             let isNew = !toDay && WebCapture.existingNote(for: page.url, in: graph, index: index) == nil
             let saved = await Task.detached(priority: .userInitiated) {
                 toDay ? try? WebCapture.saveToDay(page, in: graph, index: index, on: day)
@@ -377,6 +386,35 @@ final class PrismStore {
         guard !paths.isEmpty else { return }
         noteChanged(paths)
         written()
+    }
+
+    /// Shared words, or a picture, put in: the paths written.
+    private func takeShared(_ item: ShareQueue.Item, on day: Day, in graph: Graph, index: NoteIndex) -> [String]? {
+        do {
+            if let name = item.picture, let folder = ShareQueue.folder {
+                let data = try Data(contentsOf: folder.appendingPathComponent(name))
+                let path = try Assets.add(data, named: "shared-" + name, to: graph.root)
+                let dayPath = GraphPaths.dailyPath(for: day)
+                try graph.write(QuickNote.prepending([Row(kind: .bullet, text: "![](\(path))")], toDay: graph.read(path: dayPath) ?? ""), path: dayPath)
+                return [dayPath]
+            }
+            guard let text = item.text else { return nil }
+            if item.destination == "today" {
+                return try QuickNote.add(text, in: graph, index: index, on: day).map { [$0] }
+            }
+            // A note of its own, in the inbox: its first line its title, the rest its rows.
+            let lines = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            guard let first = lines.first else { return nil }
+            let path = try NoteCreation.create(title: String(first.prefix(80)), in: graph.root)
+            var source = Frontmatter.setting("inbox", to: "true", in: graph.read(path: path) ?? "")
+            let rows = QuickNote.rows(lines.dropFirst().joined(separator: "\n"))
+            if !rows.isEmpty { source = RowMove.adding(rows, to: source, path: path) }
+            try graph.write(source, path: path)
+            index.refresh(path)
+            return [path]
+        } catch {
+            return nil
+        }
     }
 
     /// A page's title, description and picture, as its HTML gives them.
