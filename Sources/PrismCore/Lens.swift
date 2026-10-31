@@ -30,6 +30,10 @@ public enum Lens: String, CaseIterable, Codable, Sendable {
         }
     }
 
+    /// The lenses the Mac's rail and View menu list: search is ⌘K's, which
+    /// finds notes by name and by what they say.
+    public static let listed: [Lens] = [.daily, .inbox, .tasks, .pinned]
+
     /// Its key, with ⌘, on the Mac: in the rail's order.
     public var key: String {
         switch self {

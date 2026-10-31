@@ -74,7 +74,8 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         sidebarButton.action = #selector(toggleList(_:))
 
         let state = state ?? State()
-        lens = state.lens
+        // Search, once a lens of its own: ⌘K's now.
+        lens = state.lens == .search ? .daily : state.lens
         listShown = state.listShown
         searchQuery = state.query ?? ""
         list.query = searchQuery
@@ -108,7 +109,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         list.onEnter = { [weak self] in self?.activePane.focusNote() }
         list.onDay = { [weak self] day in self?.showDay(day) }
         list.onWeek = { [weak self] week in self?.open(GraphPaths.weeklyPath(for: week)) }
-        commandBar.placeholder = "Go to a note, a day, or # a heading"
+        commandBar.placeholder = "Go to a note or a day, find words, or # a heading"
         commandBar.hintText = "↩ Open   ⌘↩ Beside"
         commandBar.search = { [weak self] query in self?.commandResults(query) ?? [] }
         commandBar.onChoose = { [weak self] place, beside in
@@ -171,6 +172,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             guard let self, let index = panes.firstIndex(where: { $0 === pane }) else { return }
             activate(index)
         }
+        pane.onShowMonth = { [weak self] in self?.choose(.daily, keepShown: true) }
         pane.onMoved = { [weak self] pane in
             self?.followReader(pane)
             self?.updatePanes()
@@ -546,6 +548,14 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             return
         }
         open(place.path, beside: beside)
+        // Found by what it says: shown there.
+        if let words = place.words {
+            let ref = NoteRef(path: place.path)
+            DispatchQueue.main.async { [weak self] in
+                self?.panes.first(where: { $0.shows(ref) })?.note?.editor.reveal(.words(words))
+            }
+            return
+        }
         guard let edit = place.edit else { return }
         let ref = NoteRef(path: edit.path)
         DispatchQueue.main.async { [weak self] in
@@ -761,8 +771,8 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     // MARK: Commands
 
     @objc func showLens(_ sender: NSMenuItem) {
-        guard Lens.allCases.indices.contains(sender.tag) else { return }
-        choose(Lens.allCases[sender.tag], keepShown: true)
+        guard Lens.listed.indices.contains(sender.tag) else { return }
+        choose(Lens.listed[sender.tag], keepShown: true)
     }
 
     /// The list out, or put away: ⌥⌘L, or the sidebar's button by the window's.
@@ -810,11 +820,8 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         activePane.setFace(.schedule)
     }
 
-    /// ⌘F: the Search lens, its field.
-    @objc func find(_ sender: Any?) {
-        choose(.search, keepShown: true)
-        list.focusSearch()
-    }
+    /// ⌘F: Go to…, which finds notes by name, then by what they say.
+    @objc func find(_ sender: Any?) { openCommandBar("") }
 
     @objc func findInNote(_ sender: Any?) {
         let item = NSMenuItem()
@@ -901,19 +908,6 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         session.setFrontmatter(note.path, "private", note.isPrivate ? nil : "true", undoName: "Private")
     }
 
-    @objc func addCover(_ sender: Any?) {
-        guard let note = menuNote, note.day == nil, let window else { return NSSound.beep() }
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image]
-        panel.allowsMultipleSelection = false
-        panel.message = "Choose a picture for the cover of “\(note.title)”."
-        panel.prompt = "Use as Cover"
-        panel.beginSheetModal(for: window) { [weak self] response in
-            guard let self, response == .OK, let url = panel.url else { return }
-            session.setCover(of: note.path, from: url)
-        }
-    }
-
     @objc func removeCover(_ sender: Any?) {
         guard let note = menuNote, note.cover != nil else { return NSSound.beep() }
         session.setFrontmatter(note.path, NoteCover.key, nil, undoName: "Remove Cover")
@@ -950,7 +944,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         let note = menuNote
         switch item.action {
         case #selector(showLens(_:)):
-            item.state = Lens.allCases.indices.contains(item.tag) && Lens.allCases[item.tag] == lens && listShown ? .on : .off
+            item.state = Lens.listed.indices.contains(item.tag) && Lens.listed[item.tag] == lens && listShown ? .on : .off
         case #selector(toggleList(_:)):
             item.title = listShown ? "Hide List" : "Show List"
         case #selector(goBack(_:)): return activePane.history.canGoBack
@@ -971,7 +965,6 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         case #selector(togglePrivate(_:)):
             item.state = note?.isPrivate == true ? .on : .off
             return note != nil
-        case #selector(addCover(_:)): return note?.day == nil && note != nil
         case #selector(removeCover(_:)): return note?.cover != nil
         case #selector(trashNote(_:)): return note?.day == nil && note != nil
         case #selector(readPage(_:)):

@@ -58,8 +58,6 @@ final class PaneBar: UIView {
     var onBack: (() -> Void)?
     var onForward: (() -> Void)?
     var onLinked: (() -> Void)?
-    /// The count held: what links here, dealt out of it — the thumb's state, and where it is, in the window.
-    var onLinkedHeld: ((UIGestureRecognizer.State, CGPoint) -> Void)?
     var onFace: ((DayFace) -> Void)?
     /// The ⋯, asked for each time it opens.
     var menu: (() -> UIMenu)?
@@ -131,9 +129,6 @@ final class PaneBar: UIView {
         linked.configuration = linksStyle
         linked.accessibilityLabel = "Linked From"
         linked.addAction(UIAction { [weak self] _ in self?.onLinked?() }, for: .touchUpInside)
-        let hold = UILongPressGestureRecognizer(target: self, action: #selector(heldLinked(_:)))
-        hold.minimumPressDuration = 0.3
-        linked.addGestureRecognizer(hold)
         more.setImage(Self.mark("ellipsis"), for: .normal)
         more.accessibilityLabel = "More"
         more.showsMenuAsPrimaryAction = true
@@ -172,10 +167,6 @@ final class PaneBar: UIView {
     /// Where a page starts: under the clock — the controls float over its top.
     var contentTop: CGFloat { top }
 
-    @objc private func heldLinked(_ gesture: UILongPressGestureRecognizer) {
-        if gesture.state == .began { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
-        onLinkedHeld?(gesture.state, gesture.location(in: nil))
-    }
 
     /// The count, where it is: to deal what links here out of.
     var linkedView: UIView { linked }
@@ -270,7 +261,6 @@ final class NoteController: UIViewController {
     let store: PrismStore
     private(set) var history: PaneHistory
     let bar = PaneBar()
-    private let linkedFan = LinkedFan()
     /// What shows the place: a note's sheet, or a day's hours.
     private(set) var page: UIViewController?
     /// Makes what shows a place, links followed from it brought back here.
@@ -302,12 +292,6 @@ final class NoteController: UIViewController {
         bar.onBack = { [weak self] in self?.back() }
         bar.onForward = { [weak self] in self?.goForward() }
         bar.onLinked = { [weak self] in self?.sheet?.scrollToLinked() }
-        bar.onLinkedHeld = { [weak self] state, point in
-            guard let self else { return }
-            linkedFan.held(state, at: point, bar: bar, in: view, store: store, paths: sheet?.linkedPaths ?? [],
-                           open: { [weak self] path in self?.go(PanePlace(path: path)) },
-                           showAll: { [weak self] in self?.sheet?.scrollToLinked() })
-        }
         bar.onFace = { [weak self] face in
             guard let self else { return }
             var place = history.current

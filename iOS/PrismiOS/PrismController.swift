@@ -1,7 +1,6 @@
 import SwiftUI
 import AuthenticationServices
 import UIKit
-import PhotosUI
 import SafariServices
 import ReflectCore
 import PrismCore
@@ -961,10 +960,6 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             }
             secret.subtitle = "Its words kept out of lists, its links not looked up"
             items.append(secret)
-            items.append(UIAction(title: entry?.cover == nil ? "Add Cover…" : "Change Cover…", image: UIImage(systemName: "photo.artframe")) { [weak self, weak sheet] _ in
-                sheet?.saveAll()
-                self?.chooseCover(for: path)
-            })
             if entry?.cover != nil {
                 items.append(UIAction(title: "Remove Cover", image: UIImage(systemName: "rectangle.slash")) { [weak self, weak sheet] _ in
                     sheet?.saveAll()
@@ -1081,20 +1076,6 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         store.delete(path)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         layoutChanged()
-    }
-
-    // MARK: Covers
-
-    private var coverFor: String?
-
-    private func chooseCover(for path: String) {
-        var configuration = PHPickerConfiguration()
-        configuration.filter = .images
-        configuration.selectionLimit = 1
-        let picker = PHPickerViewController(configuration: configuration)
-        picker.delegate = self
-        coverFor = path
-        present(picker, animated: true)
     }
 
     // MARK: Settings, signing in
@@ -1376,34 +1357,3 @@ private struct SignInRunner: View {
     }
 }
 
-extension PrismController: PHPickerViewControllerDelegate {
-    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-        picker.dismiss(animated: true)
-        guard let path = coverFor, let provider = results.first?.itemProvider, provider.canLoadObject(ofClass: UIImage.self) else { return }
-        coverFor = nil
-        provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
-            guard let image = object as? UIImage, let data = Self.coverData(image) else { return }
-            DispatchQueue.main.async {
-                guard let self else { return }
-                do {
-                    try self.store.setCover(path, picture: data, extension: "jpg")
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                } catch {
-                    self.say("The cover could not be kept: \(error.localizedDescription)")
-                }
-            }
-        }
-    }
-
-    /// A picture at most 2400 points on its longer side, as a JPEG.
-    nonisolated static func coverData(_ image: UIImage) -> Data? {
-        let longest: CGFloat = 2400
-        let scale = min(1, longest / max(image.size.width, image.size.height, 1))
-        guard scale < 1 else { return image.jpegData(compressionQuality: 0.85) }
-        let size = CGSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
-        return resized.jpegData(compressionQuality: 0.85)
-    }
-}

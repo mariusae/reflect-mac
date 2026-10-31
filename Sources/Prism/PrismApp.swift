@@ -434,7 +434,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             .separator(),
             item("Close", #selector(PrismWindow.closePaneOrWindow(_:)), "w"),
         ])
-        let find = item("Search…", #selector(PrismWindow.find(_:)), "f")
+        let find = item("Search Notes…", #selector(PrismWindow.find(_:)), "f")
         let findInNote = item("Find in Note…", #selector(PrismWindow.findInNote(_:)), "f", [.command, .shift])
         findInNote.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
         submenu("Edit", [
@@ -467,7 +467,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             choice.representedObject = face.rawValue
             faces.submenu?.addItem(choice)
         }
-        var lenses: [NSMenuItem] = Lens.allCases.enumerated().map { i, lens in
+        var lenses: [NSMenuItem] = Lens.listed.enumerated().map { i, lens in
             let choice = item(lens.title, #selector(PrismWindow.showLens(_:)), lens.key)
             choice.tag = i
             choice.image = NSImage(systemSymbolName: lens.symbol, accessibilityDescription: nil)
@@ -523,7 +523,6 @@ final class PrismApp: NSObject, NSApplicationDelegate {
                 return secret
             }(),
             .separator(),
-            item("Add Cover…", #selector(PrismWindow.addCover(_:))),
             item("Remove Cover", #selector(PrismWindow.removeCover(_:))),
             .separator(),
             item("Read Note", #selector(PrismWindow.readPage(_:)), "r", [.command, .shift]),

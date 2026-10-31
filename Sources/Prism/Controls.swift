@@ -28,6 +28,8 @@ struct Place: Equatable {
     var row: Int? = nil
     /// Its cover, shown small before its name.
     var cover: String? = nil
+    /// Found by what it says: the words, to show where once it is open.
+    var words: [String]? = nil
 
     /// A cover's picture, for the lists' thumbnails: the window's store's.
     @MainActor static var coverImage: ((String) -> NSImage?)?

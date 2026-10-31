@@ -21,7 +21,7 @@ final class LensSwitcher: NSView {
 
     static let side: CGFloat = 34
     static let gap: CGFloat = 2
-    static var width: CGFloat { CGFloat(Lens.allCases.count) * (side + gap) - gap }
+    static var width: CGFloat { CGFloat(Lens.listed.count) * (side + gap) - gap }
 
     override var isFlipped: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
@@ -31,7 +31,7 @@ final class LensSwitcher: NSView {
         glass.isHidden = true
         addSubview(glass)
         addSubview(row)
-        for lens in Lens.allCases {
+        for lens in Lens.listed {
             let button = LensButton(lens: lens)
             button.onClick = { [weak self] in self?.onLens?(lens) }
             row.addSubview(button)

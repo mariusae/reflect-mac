@@ -472,18 +472,6 @@ final class Session {
         windows.first?.open(path, beside: false)
     }
 
-    /// A picture file made a note's cover: copied into the graph first.
-    func setCover(of path: String, from url: URL) {
-        do {
-            let data = try Data(contentsOf: url)
-            let added = try Assets.add(data, named: Assets.fileName(for: url.lastPathComponent), to: graph.root)
-            Log.shared.info("files", "Added \(added)", detail: "the cover of \(path)")
-            setFrontmatter(path, NoteCover.key, NoteCover.quoted(added))
-        } catch {
-            NSAlert(error: error).runModal()
-        }
-    }
-
     // MARK: Recent edits
 
     private func noteEdits(_ path: String) {
@@ -549,6 +537,15 @@ final class Session {
             Place(title: $0.entry.title, path: $0.entry.path,
                   detail: $0.alias.map { "as \($0)" } ?? Self.ago.localizedString(for: $0.entry.modified, relativeTo: Date()),
                   flags: NoteFlags($0.entry), cover: $0.entry.cover)
+        }
+        // Then those that say it: what the Search lens found, here — the words shown once open.
+        let named = Set(places.map(\.path))
+        let words = trimmed.split(separator: " ").map(String.init)
+        places += (trimmed.count < 2 ? [] : index.containing(trimmed, limit: 30)).filter { !named.contains($0.path) }.map { found in
+            let entry = index.entry(found.path)
+            return Place(title: name(of: found.path).title, path: found.path,
+                         detail: entry?.isPrivate == true ? "Private" : found.snippet,
+                         flags: NoteFlags(entry), cover: entry?.cover, words: words)
         }
         return places
     }

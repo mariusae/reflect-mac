@@ -16,6 +16,8 @@ final class NotePane: NSView, OutlineTextViewNavigator {
 
     /// Clicked or typed in: the pane worked in.
     var onActivate: ((NotePane) -> Void)?
+    /// A day's ⌄: the month, in the Daily list — the one calendar there is.
+    var onShowMonth: (() -> Void)?
     /// Somewhere else, or another face: the window's list and state caught up.
     var onMoved: ((NotePane) -> Void)?
     /// A link followed, or a note named: `beside`, in the other pane.
@@ -94,7 +96,11 @@ final class NotePane: NSView, OutlineTextViewNavigator {
             onGoTo?(self, view)
         }
         chrome.onStep = { [weak self] by in self?.stepDay(by) }
-        chrome.onMonth = { [weak self] view in self?.showMonth(from: view) }
+        chrome.onMonth = { [weak self] _ in
+            guard let self else { return }
+            onActivate?(self)
+            onShowMonth?()
+        }
         chrome.onStatus = { [weak self] view in self?.onStatus?(view) }
         chrome.onRead = { [weak self] in
             guard let self else { return }
@@ -453,34 +459,6 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Sync Now", action: #selector(PrismWindow.syncNow(_:)), keyEquivalent: ""))
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
-    }
-
-    private var monthPopover: NSPopover?
-
-    /// A day's ⌄: its month, a day chosen gone to — in place, its face kept.
-    private func showMonth(from view: NSView) {
-        onActivate?(self)
-        monthPopover?.close()
-        let shown = ref.day ?? GraphPaths.week(fromWeeklyPath: place.path)?.monday ?? .today
-        let calendar = CalendarView(month: NoteCalendar.Month(shown), marks: NoteCalendar.marks(graph: session.graph, index: session.index),
-                                    weeks: NoteCalendar.weeksWithNotes(index: session.index), face: session.face)
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.contentSize = CalendarView.size
-        let controller = NSViewController()
-        controller.view = calendar
-        popover.contentViewController = controller
-        calendar.onChoose = { [weak self, weak popover] day in
-            popover?.close()
-            guard let self else { return }
-            replace(PanePlace(.day(day), face: place.face))
-        }
-        calendar.onChooseWeek = { [weak self, weak popover] week in
-            popover?.close()
-            self?.go(PanePlace(path: GraphPaths.weeklyPath(for: week)))
-        }
-        popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
-        monthPopover = popover
     }
 
     /// Where ⌘K drops from: the name's capsule.
