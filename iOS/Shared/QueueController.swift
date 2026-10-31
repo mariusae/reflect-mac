@@ -4,8 +4,13 @@ import PrismCore
 
 /// The oldest link in the inbox, in the reader, and nothing else: done with,
 /// the next; or snoozed, put off till later. Read to the end of the
-/// queue, a rest — and when the first snoozed one comes back.
+/// queue, a rest — and when the first snoozed one comes back. Prism
+/// Reader's whole; in Prism, the Inbox's Read Next, closed with ×.
 final class QueueController: UIViewController {
+    /// In Prism: its × — the reader's, or under All Read — back to the Inbox.
+    var onClose: (() -> Void)?
+    private let closeRest = UIButton(type: .system)
+
     private let store: PrismStore
     private var reader: ReaderController?
     /// The note shown.
@@ -54,6 +59,14 @@ final class QueueController: UIViewController {
         restDetail.numberOfLines = 0
         restDetail.textAlignment = .center
         for view in [mark, restTitle, restDetail] { rest.addArrangedSubview(view) }
+        if let onClose {
+            var style = UIButton.Configuration.glass()
+            style.title = "Back to the Inbox"
+            closeRest.configuration = style
+            closeRest.addAction(UIAction { _ in onClose() }, for: .touchUpInside)
+            rest.addArrangedSubview(closeRest)
+            rest.setCustomSpacing(24, after: restDetail)
+        }
         rest.axis = .vertical
         rest.alignment = .center
         rest.spacing = 10
@@ -130,7 +143,8 @@ final class QueueController: UIViewController {
         wake = nil
         if let path {
             let reader = ReaderController(store: store, notePath: path, sources: ReaderController.sources(of: path, store: store))
-            reader.standalone = true
+            // In Prism, its × closes the queue; in Prism Reader, there is nothing to close to.
+            if let onClose { reader.onClose = onClose } else { reader.standalone = true }
             reader.footRoom = Self.barHeight + 12
             reader.carouselAtLeft = true
             reader.onChromeHidden = { [weak self] hidden in self?.setBarHidden(hidden) }

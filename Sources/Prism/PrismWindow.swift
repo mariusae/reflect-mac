@@ -107,6 +107,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             self?.session.writeWindows()
         }
         list.onEnter = { [weak self] in self?.activePane.focusNote() }
+        list.onReadNext = { [weak self] in self?.session.openReadingQueue().showWindow(nil) }
         list.onDay = { [weak self] day in self?.showDay(day) }
         list.onWeek = { [weak self] week in self?.open(GraphPaths.weeklyPath(for: week)) }
         commandBar.placeholder = "Go to a note or a day, find words, or # a heading"
@@ -365,6 +366,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
                 list.show(.daily, sections: [ListSection(title: "Days", items: recentDays())], month: month)
             }
         case .inbox:
+            list.readNextCount = ReadingQueue.items(index: session.index, root: session.graph.root).items.count
             list.show(.inbox, sections: [ListSection(title: nil, items: session.index.inbox.map { noteItem($0, checkable: true) })])
         case .pinned:
             list.show(.pinned, sections: [ListSection(title: nil, items: session.index.pinned.map { noteItem($0) })])

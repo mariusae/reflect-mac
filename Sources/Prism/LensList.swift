@@ -31,6 +31,17 @@ final class LensList: NSView {
     var onCheck: ((ListItem) -> Void)?
     var onSearch: ((String) -> Void)?
     var onEnter: (() -> Void)?
+    /// The Inbox's Read Next: its links, one at a time, the oldest first.
+    var onReadNext: (() -> Void)?
+    /// How many of the inbox's notes have something to read: Read Next shown while any do.
+    var readNextCount = 0 {
+        didSet {
+            guard readNextCount != oldValue else { return }
+            readNext.title = "Read Next · \(readNextCount) \(readNextCount == 1 ? "link" : "links")"
+            needsLayout = true
+        }
+    }
+    private let readNext = NSButton(title: "Read Next", target: nil, action: nil)
     var onDay: ((Day) -> Void)?
     var onWeek: ((Week) -> Void)?
 
@@ -73,6 +84,15 @@ final class LensList: NSView {
         field.delegate = self
         field.isHidden = true
         addSubview(field)
+        readNext.bezelStyle = .glass
+        readNext.controlSize = .large
+        readNext.image = NSImage(systemSymbolName: "book", accessibilityDescription: nil)
+        readNext.imagePosition = .imageLeading
+        readNext.toolTip = "The inbox's links, one at a time, the oldest first (⌥⇧⌘N)"
+        readNext.target = self
+        readNext.action = #selector(readNextClicked)
+        readNext.isHidden = true
+        addSubview(readNext)
         // Nothing of it past its glass.
         clipsToBounds = true
     }
@@ -116,6 +136,7 @@ final class LensList: NSView {
     }
 
     @objc private func searched() { onSearch?(field.stringValue) }
+    @objc private func readNextClicked() { onReadNext?() }
 
     private func rebuild() {
         rows.forEach { $0.removeFromSuperview() }
@@ -156,6 +177,11 @@ final class LensList: NSView {
         if !field.isHidden {
             field.frame = NSRect(x: 14, y: top + 10, width: bounds.width - 28, height: 28)
             top = field.frame.maxY + 6
+        }
+        readNext.isHidden = lens != .inbox || readNextCount == 0
+        if !readNext.isHidden {
+            readNext.frame = NSRect(x: 14, y: top + 8, width: bounds.width - 28, height: 32)
+            top = readNext.frame.maxY + 6
         }
         if let calendar {
             // The month as wide as the list has room for: drawn smaller, not cut off.

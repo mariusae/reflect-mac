@@ -122,6 +122,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         case .inbox, .pinned:
             let list = NoteListController(lens: lens, store: store)
             list.onOpen = { [weak self] place in self?.open(place) }
+            list.onReadNext = { [weak self] in self?.readNext() }
             list.menu = { [weak self] in self?.appMenu() ?? UIMenu() }
             return list
         case .tasks:
@@ -1076,6 +1077,18 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         store.delete(path)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         layoutChanged()
+    }
+
+    // MARK: Read Next
+
+    /// The Inbox's links, one at a time, the oldest first, in the whole
+    /// screen — as Prism Reader has them — till closed.
+    func readNext() {
+        saveAll()
+        let queue = QueueController(store: store)
+        queue.onClose = { [weak self] in self?.dismiss(animated: true) }
+        queue.modalPresentationStyle = .fullScreen
+        topPresenter.present(queue, animated: true)
     }
 
     // MARK: Settings, signing in

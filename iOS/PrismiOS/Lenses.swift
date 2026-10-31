@@ -34,8 +34,12 @@ final class NoteListController: UIViewController, LensPage {
     private let store: PrismStore
     var onOpen: ((PanePlace) -> Void)?
     var menu: (() -> UIMenu)?
+    /// The Inbox's Read Next: its links, one at a time, the oldest first.
+    var onReadNext: (() -> Void)?
 
     private let list = UIScrollView()
+    /// Over the inbox's notes, while any has something to read: Read Next, and how many.
+    private let readNext = UIButton(type: .system)
     private var rows: [NoteSummaryRow] = []
     private let empty = UILabel()
     private var paths: [String] = []
@@ -64,7 +68,28 @@ final class NoteListController: UIViewController, LensPage {
         empty.textColor = Ink.secondary
         empty.textAlignment = .center
         view.addSubview(empty)
+        if lens == .inbox {
+            readNext.addAction(UIAction { [weak self] _ in self?.onReadNext?() }, for: .touchUpInside)
+            readNext.isHidden = true
+            list.addSubview(readNext)
+        }
         reload()
+    }
+
+    /// Read Next, saying how many links wait — hidden, with none.
+    private func showReadNext() {
+        guard lens == .inbox, let index = store.index, let root = store.graph?.root else { return }
+        let count = ReadingQueue.items(index: index, root: root).items.count
+        var style = UIButton.Configuration.glass()
+        style.image = UIImage(systemName: "book", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .medium))
+        style.imagePadding = 8
+        style.title = "Read Next"
+        style.subtitle = "\(count) \(count == 1 ? "link" : "links") to read"
+        style.titleAlignment = .leading
+        style.baseForegroundColor = Ink.text
+        readNext.configuration = style
+        readNext.isHidden = count == 0
+        view.setNeedsLayout()
     }
 
     func notesChanged(_ paths: Set<String>) { reload() }
@@ -93,6 +118,7 @@ final class NoteListController: UIViewController, LensPage {
         empty.isHidden = !paths.isEmpty
         markChosen()
         view.setNeedsLayout()
+        showReadNext()
     }
 
     /// Done with a note in the inbox: its ring filled, the row swept off,
@@ -116,6 +142,10 @@ final class NoteListController: UIViewController, LensPage {
         let top = layOutBar()
         let width = view.bounds.width
         var y: CGFloat = 8
+        if lens == .inbox, !readNext.isHidden {
+            readNext.frame = CGRect(x: NoteBlock.side - 8, y: y + 4, width: width - 2 * (NoteBlock.side - 8), height: 54)
+            y += 66
+        }
         for row in rows {
             row.transform = .identity
             row.frame = CGRect(x: 0, y: y, width: width, height: NoteSummaryRow.height)
