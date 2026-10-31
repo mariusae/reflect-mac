@@ -49,6 +49,8 @@ final class NotePane: NSView, OutlineTextViewNavigator {
     private var shownCarried: [String] = []
     private var shownMentions: [String] = []
     private var mentionsHeading: ColumnHeading?
+    /// Over today's note: its meetings.
+    private var meetings: MeetingsBlock?
     private var carriedHeading: ColumnHeading?
     /// What links here changed while typed in there: shown once the keyboard leaves.
     private var linkedStale = false
@@ -303,6 +305,19 @@ final class NotePane: NSView, OutlineTextViewNavigator {
 
     // MARK: What links here
 
+    /// A meeting's note — made the first time, linked from its day — opened here.
+    private func openMeeting(_ event: CalendarEvents.Event) {
+        do {
+            let day = Day(event.start)
+            let path = try MeetingNote.make(event.title, day: day, start: event.start, end: event.end, people: event.people,
+                                            in: session.graph, index: session.index)
+            session.notesChanged([path, GraphPaths.dailyPath(for: day)])
+            onOpenPath?(path, self, false)
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
     /// Today's: the tasks still open from the days before, by their note.
     private func carriedTasks() -> [(path: String, tasks: [NoteTask])] {
         guard ref.day == .today else { return [] }
@@ -314,7 +329,8 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         let carried = carriedTasks()
         let carriedNow = carried.flatMap { group in group.tasks.map { "\(group.path)#\($0.ordinal)#\($0.text)" } }
         let mentions = ref.day == nil ? session.index.mentions(of: ref.path) : []
-        if sources == shownSources, carriedNow == shownCarried, mentions == shownMentions,
+        let meetingsWanted = ref.day == .today && MeetingsBlock.wanted
+        if sources == shownSources, carriedNow == shownCarried, mentions == shownMentions, meetingsWanted == (meetings != nil),
            !linked.isEmpty || (sources?.isEmpty != false && carried.isEmpty && mentions.isEmpty) { return }
         // Not while typed in there: once the keyboard leaves.
         if isTypingInLinked {
@@ -333,6 +349,16 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         shownCarried = carriedNow
         shownMentions = mentions
         var blocks: [ColumnBlock] = [note]
+        meetings?.removeFromSuperview()
+        meetings = nil
+        if meetingsWanted {
+            let block = MeetingsBlock(metrics: session.metrics)
+            block.onMeeting = { [weak self] event in self?.openMeeting(event) }
+            block.onHeightChange = { [weak self] in self?.relayout() }
+            document.addSubview(block)
+            meetings = block
+            blocks.insert(block, at: 0)
+        }
         // Still open from the days before: a heading over them, on cards as what links here is.
         if !carried.isEmpty {
             let heading = ColumnHeading("Still open", metrics: session.metrics)

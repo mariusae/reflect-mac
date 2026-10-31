@@ -180,6 +180,10 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             self?.follow(link, from: from, by: sheet, open: open)
         }
         sheet.onFlag = { [weak self] path, key, value in self?.store.setFrontmatter(path, key, value) }
+        sheet.onMeeting = { [weak self, weak sheet] event in
+            sheet?.saveAll()
+            self?.openMeeting(event, open: open)
+        }
         sheet.onMoveRows = { [weak self, weak sheet] editor, index, from in
             sheet?.saveAll()
             self?.chooseWhereToMove(editor, index, from: from)
@@ -1110,6 +1114,21 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         store.delete(path)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         layoutChanged()
+    }
+
+    // MARK: Meetings
+
+    /// A meeting's note — made the first time, linked from its day — opened.
+    private func openMeeting(_ event: CalendarEvents.Event, open: (PanePlace, Int?) -> Void) {
+        guard let graph = store.graph, let index = store.index else { return }
+        do {
+            let path = try MeetingNote.make(event.title, day: Day(event.start), start: event.start, end: event.end,
+                                            people: event.people, in: graph, index: index)
+            store.noteChanged([path, GraphPaths.dailyPath(for: Day(event.start))])
+            open(PanePlace(path: path), nil)
+        } catch {
+            say("The meeting’s note could not be made: \(error.localizedDescription)")
+        }
     }
 
     // MARK: Move to…

@@ -28,6 +28,8 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     var onLink: ((String, String) -> Void)?
     /// A row's Move to…: its editor, the row, and the note it is in.
     var onMoveRows: ((OutlineEditor, Int, String) -> Void)?
+    /// One of today's meetings chosen, over its note: its note, to open.
+    var onMeeting: ((CalendarEvents.Event) -> Void)?
     /// Asked to set a note's frontmatter key — `inbox` — or take it away.
     var onFlag: ((String, String, String?) -> Void)?
     /// How many notes link to the note shown, once found: its bar's count.
@@ -633,7 +635,14 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
                 named.append(card)
             }
         }
-        self.setBlocks(note: path, after: still + after + named)
+        // Today's meetings over its note.
+        var before: [SheetBlock] = []
+        if path == GraphPaths.dailyPath(for: .today), MeetingsBlock.wanted {
+            let meetings = blocks.first(where: { $0 is MeetingsBlock }) as? MeetingsBlock ?? MeetingsBlock(metrics: self.metrics)
+            meetings.onMeeting = { [weak self] event in self?.onMeeting?(event) }
+            before.append(meetings)
+        }
+        self.setBlocks(note: path, before: before, after: still + after + named)
     }
 
     /// To what links here, at the note's end.

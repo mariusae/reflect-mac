@@ -14,6 +14,8 @@
 	<array>
 		<string>remote-notification</string>
 	</array>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>To show today’s meetings over today’s note, and make each a note with when it is and who is in it.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>To hear what you say while you hold the + button, and write it into today.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
