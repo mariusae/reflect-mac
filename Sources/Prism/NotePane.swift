@@ -917,6 +917,16 @@ final class TitleLabel: NSView {
     }
 
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    // To VoiceOver: the note's name, a button that goes anywhere.
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityLabel() -> String? { (name.string + detail.string).trimmingCharacters(in: .whitespaces) }
+    override func accessibilityHelp() -> String? { "Go to… (⌘K)" }
+    override func accessibilityPerformPress() -> Bool {
+        onClick?()
+        return true
+    }
+
     override func mouseDown(with event: NSEvent) {}
     override func mouseUp(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)

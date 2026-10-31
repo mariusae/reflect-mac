@@ -133,26 +133,31 @@ final class SliceBlock: UIView, SheetBlock {
     private let editable: Bool
     private(set) var isLive = false
 
-    init(path: String, slices: [NoteSlice], editable: Bool, store: PrismStore, metrics: PhoneMetrics) {
+    /// On a card whatever the page: what links to a note, as the Mac shows it.
+    private let flat: Bool
+
+    init(path: String, slices: [NoteSlice], editable: Bool, store: PrismStore, metrics: PhoneMetrics, asCard: Bool = false) {
         self.editable = editable
+        flat = Card.flat && !asCard
         self.path = path
         self.slices = slices
         self.store = store
         self.metrics = metrics
         savedText = store.text(path)
         super.init(frame: .zero)
+        card.alwaysCard = asCard
         addSubview(card)
         Card.styleMeta(metaLabel, size: metrics.size)
         metaLabel.text = Card.meta(for: path, store: store)
         metaLabel.sizeToFit()
         addSubview(metaLabel)
         title.contentHorizontalAlignment = .leading
-        title.setAttributedTitle(Card.flat ? Card.flatHeader(path: path, name: Self.name(path, store: store), store: store, size: metrics.size)
+        title.setAttributedTitle(flat ? Card.flatHeader(path: path, name: Self.name(path, store: store), store: store, size: metrics.size)
                                      : Card.header(name: Self.name(path, store: store), meta: nil, size: metrics.size), for: .normal)
         // Flat: its when over its name, two lines; the when not said again at the right.
-        title.titleLabel?.numberOfLines = Card.flat ? 2 : 1
-        title.titleLabel?.lineBreakMode = Card.flat ? .byTruncatingTail : .byTruncatingMiddle
-        metaLabel.isHidden = Card.flat
+        title.titleLabel?.numberOfLines = flat ? 2 : 1
+        title.titleLabel?.lineBreakMode = flat ? .byTruncatingTail : .byTruncatingMiddle
+        metaLabel.isHidden = flat
         title.addAction(UIAction { [weak self] _ in self?.onOpen?() }, for: .touchUpInside)
         addSubview(title)
     }

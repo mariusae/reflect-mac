@@ -1092,6 +1092,50 @@ package final class OutlineTextView: NSTextView {
         return menu
     }
 
+    // MARK: To VoiceOver
+
+    /// The row the caret is in, as VoiceOver's actions: what clicking its
+    /// mark does — ticked, folded — and the rest of its menu.
+    package override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        guard isEditable else { return super.accessibilityCustomActions() }
+        let index = targetRows.lowerBound
+        let all = rows
+        guard all.indices.contains(index) else { return nil }
+        let row = all[index]
+        var actions: [NSAccessibilityCustomAction] = []
+        func add(_ name: String, _ action: Selector) {
+            actions.append(NSAccessibilityCustomAction(name: name) { [weak self] in
+                guard let self else { return false }
+                return NSApp.sendAction(action, to: self, from: nil)
+            })
+        }
+        if let task = row.task { add(task == .open ? "Mark Done" : "Mark Not Done", #selector(toggleDone(_:))) }
+        if row.isFolded { add("Unfold", #selector(expand(_:))) } else if OutlineEditing.hasChildren(all, index) { add("Fold", #selector(collapse(_:))) }
+        if row.task == nil, all[(index + 1)..<OutlineEditing.subtreeEnd(all, index)].contains(where: { $0.task != nil }) {
+            add("Move Done to Bottom", #selector(moveDoneToBottom(_:)))
+        }
+        add("Indent", #selector(indentRows(_:)))
+        add("Outdent", #selector(outdentRows(_:)))
+        add("Move Up", #selector(moveRowsUp(_:)))
+        add("Move Down", #selector(moveRowsDown(_:)))
+        add("Delete Row", #selector(deleteRows(_:)))
+        return actions
+    }
+
+    /// What the row the caret is in is, which its words alone do not say.
+    package override func accessibilityHelp() -> String? {
+        let index = targetRows.lowerBound
+        let all = rows
+        guard all.indices.contains(index) else { return nil }
+        let row = all[index]
+        var said: [String] = []
+        if let task = row.task { said.append(task == .open ? "Not done" : "Done") }
+        if row.isFolded { said.append("Folded, \(Row.unfold(row.folded).count) rows inside") }
+        let progress = Checkboxes.underEach(all)[index]
+        if row.task == nil, !progress.isEmpty { said.append("\(progress.done) of \(progress.total) done") }
+        return said.isEmpty ? super.accessibilityHelp() : said.joined(separator: ". ")
+    }
+
     /// A link to a note: opened here or beside, or its link copied.
     private func noteLinkMenu(_ url: URL, title: String) -> NSMenu {
         let menu = NSMenu(title: "Link")

@@ -181,7 +181,15 @@ final class NoteSummaryRow: UIControl {
             addSubview(doneButton)
         }
         refresh()
-        isAccessibilityElement = false
+        // One thing to VoiceOver: the note, to open — taken out of the inbox by its action.
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        if done {
+            accessibilityCustomActions = [UIAccessibilityCustomAction(name: "Take Out of Inbox") { [weak self] _ in
+                self?.doneButton.sendActions(for: .touchUpInside)
+                return true
+            }]
+        }
     }
 
     @available(*, unavailable)
@@ -191,6 +199,8 @@ final class NoteSummaryRow: UIControl {
         let text = store.text(path)
         name.text = SliceBlock.name(path, store: store)
         words.text = Self.firstWords(of: text)
+        accessibilityLabel = name.text
+        accessibilityValue = [Card.meta(for: path, store: store), words.text].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
         age.attributedText = NSAttributedString(string: (Card.meta(for: path, store: store) ?? "").uppercased(),
                                                 attributes: Card.label(size: 15))
         if let cover = NoteCover.source(in: text).flatMap({ PhoneImages.thumbnail($0, side: 44) }) {

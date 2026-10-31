@@ -9,6 +9,9 @@ final class CardBackground: UIView {
     private let rule = UIView()
     /// Whether the hairline is drawn: among other notes, not under one alone.
     var ruled = true { didSet { setNeedsLayout() } }
+    /// A card on a flat page too — what links to a note, as the Mac shows it.
+    var alwaysCard = false { didSet { setNeedsLayout() } }
+    private var flat: Bool { Card.flat && !alwaysCard }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -22,7 +25,6 @@ final class CardBackground: UIView {
     required init?(coder: NSCoder) { fatalError() }
 
     private func style() {
-        let flat = Card.flat
         backgroundColor = flat ? .clear : Ink.card
         layer.cornerRadius = flat ? 0 : Card.radius
         layer.cornerCurve = .continuous
@@ -36,7 +38,7 @@ final class CardBackground: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         style()
-        layer.shadowPath = Card.flat ? nil : UIBezierPath(roundedRect: bounds, cornerRadius: Card.radius).cgPath
+        layer.shadowPath = flat ? nil : UIBezierPath(roundedRect: bounds, cornerRadius: Card.radius).cgPath
         let inset = NoteBlock.side - Card.inset
         rule.frame = CGRect(x: inset, y: bounds.height + Card.spacing - 0.5, width: max(0, bounds.width - 2 * inset),
                             height: 1 / max(traitCollection.displayScale, 1))

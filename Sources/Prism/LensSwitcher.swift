@@ -139,6 +139,17 @@ private final class LensButton: NSView {
         card?.removeFromSuperview()
         card = nil
     }
+    // To VoiceOver: a button, named for its lens, chosen or not; how many in it.
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .radioButton }
+    override func accessibilityLabel() -> String? { lens.title }
+    override func accessibilityValue() -> Any? { isChosen ? 1 : 0 }
+    override func accessibilityHelp() -> String? { badge > 0 ? "\(badge)" : nil }
+    override func accessibilityPerformPress() -> Bool {
+        onClick?()
+        return true
+    }
+
     override func mouseDown(with event: NSEvent) {}
     override func mouseUp(with event: NSEvent) {
         if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }

@@ -346,6 +346,22 @@ final class WeekGrid: NSView, TypographyTaking {
         return NSRect(x: column.minX + CGFloat(lane) * width, y: top + 1, width: width - (lane < lanes - 1 ? 2 : 0), height: bottom - top - 2)
     }
 
+    /// Each block, to VoiceOver: what it says and when, opened as a click opens it.
+    override func accessibilityChildren() -> [Any]? {
+        blocks.compactMap { placed -> Any? in
+            guard let frame = frame(of: placed) else { return nil }
+            let block = placed.block
+            func time(_ minutes: Int) -> String { String(format: "%d:%02d", minutes / 60, minutes % 60) }
+            let element = ScheduleBlockElement { [weak self] in self?.onOpen?(placed, frame) }
+            element.setAccessibilityParent(self)
+            element.setAccessibilityRole(.button)
+            element.setAccessibilityLabel(block.title.isEmpty ? "Block" : block.title)
+            element.setAccessibilityValue("\(time(block.start)) to \(time(block.end))")
+            element.setAccessibilityFrameInParentSpace(frame)
+            return element
+        }
+    }
+
     func frame(of placed: PlacedBlock) -> NSRect? {
         guard let day = days.firstIndex(of: placed.day) else { return nil }
         let lane = lanes[placed] ?? (0, 1)
@@ -926,4 +942,19 @@ final class BlockEditor: NSViewController, NSTextFieldDelegate {
     @objc private func dayEarlier() { placed.map { onMoveDay?($0, -1) } }
     @objc private func dayLater() { placed.map { onMoveDay?($0, 1) } }
     @objc private func deleteBlock() { placed.map { onDelete?($0) } }
+}
+
+/// A time block, to VoiceOver: pressed, its editor.
+private final class ScheduleBlockElement: NSAccessibilityElement {
+    private let open: () -> Void
+
+    init(open: @escaping () -> Void) {
+        self.open = open
+        super.init()
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        open()
+        return true
+    }
 }

@@ -273,6 +273,12 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
             if slot != nil, paragraph.length > 0 {
                 storage.removeAttribute(.strikethroughStyle, range: NSRange(location: NSMaxRange(paragraph) - 1, length: 1))
             }
+            // Nor through what is hidden — an emphasis's `*`, a link's address:
+            // laid out at a wrapped line's ends, a line through it reaches
+            // across the page.
+            storage.enumerateAttribute(.prismHidden, in: paragraph) { value, run, _ in
+                if value != nil { storage.removeAttribute(.strikethroughStyle, range: run) }
+            }
             if hidesTitle, paragraph.location == 0, case .heading(1) = row.kind, NSMaxRange(paragraph) < text.length {
                 collapse(storage, paragraph)
             }
@@ -1157,7 +1163,12 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             let glyphLocation = location(forGlyphAt: glyph)
             // A row that starts with a picture has its marker by the top of it.
             let startsWithImage = storage.attribute(.prismImage, at: first, effectiveRange: nil) != nil
-            let baseline = startsWithImage ? line.minY + PhoneImageBox.margin + ceil(font.ascender) : line.minY + glyphLocation.y
+            // An empty row's only glyph, its line break, is placed at the
+            // foot of the line, not on its baseline: its mark, where the
+            // words' baseline would be — as the first letter typed puts it.
+            let empty = paragraph.length <= 1 || first == NSMaxRange(paragraph) - 1
+            let baseline = startsWithImage ? line.minY + PhoneImageBox.margin + ceil(font.ascender)
+                : empty ? used.maxY + font.descender : line.minY + glyphLocation.y
             let middle = baseline - font.xHeight / 2
             switch row.kind {
             case .quote:
@@ -2484,6 +2495,55 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             })
         }
         return actions
+    }
+
+    // MARK: VoiceOver
+
+    /// What can be done to the row the caret is in, as VoiceOver's actions:
+    /// its box ticked, it folded — what the margin's marks do to a finger.
+    override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+        get {
+            let index = caret.row
+            guard rows.indices.contains(index) else { return nil }
+            var actions: [UIAccessibilityCustomAction] = []
+            if let task = rows[index].task {
+                actions.append(UIAccessibilityCustomAction(name: task == .open ? "Mark Done" : "Mark Not Done") { [weak self] _ in
+                    guard let self, let toggled = OutlineKeys.toggle(rows, at: index) else { return false }
+                    replace(toggled, caret: isFirstResponder ? caret : nil, undoName: "Toggle Done")
+                    UIAccessibility.post(notification: .announcement, argument: task == .open ? "Done" : "Not done")
+                    return true
+                })
+            }
+            for action in rowActions(index) where !action.title.hasPrefix("Mark ") && action.title != "Turn Into…" {
+                actions.append(UIAccessibilityCustomAction(name: action.title) { [weak self] _ in
+                    guard let self else { return false }
+                    action.performWithSender(nil, target: nil)
+                    UIAccessibility.post(notification: .layoutChanged, argument: self)
+                    return true
+                })
+            }
+            return actions
+        }
+        set {}
+    }
+
+    /// What the row the caret is in is — a box, ticked or not; folded —
+    /// which its words alone do not say.
+    override var accessibilityHint: String? {
+        get {
+            let index = caret.row
+            guard rows.indices.contains(index) else { return nil }
+            let row = rows[index]
+            var said: [String] = []
+            if let task = row.task { said.append(task == .open ? "Not done" : "Done") }
+            if row.isFolded { said.append("Folded, \(Row.unfold(row.folded).count) rows inside") }
+            // The ring round a list's bullet: how much of it is done.
+            if hasChecklist(under: index), case let progress = Checkboxes.underEach(rows)[index], !progress.isEmpty {
+                said.append("\(progress.done) of \(progress.total) done")
+            }
+            return said.isEmpty ? nil : said.joined(separator: ". ")
+        }
+        set {}
     }
 
     /// The kinds a row can be, to choose from: as the Mac's Turn Into.

@@ -272,6 +272,12 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
                 storage.addAttribute(.outlineHidden, value: true,
                                      range: NSRange(location: paragraph.location, length: stamp.fullRange.length))
             }
+            // A done row's line not through what is hidden — an emphasis's
+            // `*`, a link's address: laid out at a wrapped line's ends, a
+            // line through it reaches across the page.
+            storage.enumerateAttribute(.outlineHidden, in: paragraph) { value, run, _ in
+                if value != nil { storage.removeAttribute(.strikethroughStyle, range: run) }
+            }
             // A character the font set here lacks still needs a font that has it.
             storage.fixAttributes(in: paragraph)
         }

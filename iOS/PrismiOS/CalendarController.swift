@@ -134,6 +134,28 @@ private final class CalendarGrid: UIView {
         return CGRect(x: 0, y: Self.weekdayRow + CGFloat(week) * row, width: Self.weekColumn, height: row)
     }
 
+    /// Each week and day, to VoiceOver, where they are drawn.
+    override var accessibilityElements: [Any]? {
+        get {
+            var elements: [Any] = []
+            let today = Day.today
+            for (w, week) in NoteCalendar.weeks(of: month).enumerated() {
+                if let found = NoteCalendar.week(ofRow: week) {
+                    elements.append(CalendarElement(container: self, frame: weekRect(w), label: "Week \(found.week)", value: nil,
+                                                    selected: false) { [weak self] in self?.onChooseWeek?(found) })
+                }
+                for (d, day) in week.enumerated() {
+                    guard let day else { continue }
+                    elements.append(CalendarElement(container: self, frame: rect(week: w, weekday: d), label: CalendarElement.name(day),
+                                                    value: CalendarElement.value(marks[day], today: day == today),
+                                                    selected: false) { [weak self] in self?.onChoose?(day) })
+                }
+            }
+            return elements
+        }
+        set {}
+    }
+
     @objc private func tapped(_ gesture: UITapGestureRecognizer) {
         let point = gesture.location(in: self)
         for (w, week) in NoteCalendar.weeks(of: month).enumerated() {
@@ -200,5 +222,42 @@ private final class CalendarGrid: UIView {
             (isToday ? Ink.accent : Ink.secondary).setFill()
             UIBezierPath(ovalIn: CGRect(x: center.x - 2.5, y: center.y + 11, width: 5, height: 5)).fill()
         }
+    }
+}
+
+/// A place in a drawn calendar, to VoiceOver: a day or a week, said in
+/// words — what is done of its tasks, whether it is the one shown — and
+/// chosen as a tap chooses it.
+final class CalendarElement: UIAccessibilityElement {
+    private let choose: () -> Void
+
+    init(container: UIView, frame: CGRect, label: String, value: String?, selected: Bool, choose: @escaping () -> Void) {
+        self.choose = choose
+        super.init(accessibilityContainer: container)
+        accessibilityFrameInContainerSpace = frame
+        accessibilityLabel = label
+        accessibilityValue = value
+        accessibilityTraits = selected ? [.button, .selected] : .button
+    }
+
+    override func accessibilityActivate() -> Bool {
+        choose()
+        return true
+    }
+
+    /// A day, in words: "Friday, 30 October".
+    static func name(_ day: Day) -> String {
+        guard let date = day.date else { return day.description }
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEEEdMMMM")
+        return formatter.string(from: date)
+    }
+
+    /// What a day's mark says: its tasks, done of all; today.
+    static func value(_ mark: NoteCalendar.Mark?, today: Bool) -> String? {
+        var said: [String] = []
+        if today { said.append("Today") }
+        if let progress = mark?.progress, !progress.isEmpty { said.append("\(progress.done) of \(progress.total) tasks done") }
+        return said.isEmpty ? nil : said.joined(separator: ", ")
     }
 }

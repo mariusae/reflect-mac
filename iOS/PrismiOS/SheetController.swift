@@ -453,7 +453,8 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     }
 
     private func sliceBlocks(_ found: [(path: String, slices: [NoteSlice], editable: Bool)]) -> [SheetBlock] {
-        found.map { SliceBlock(path: $0.path, slices: $0.slices, editable: $0.editable, store: store, metrics: metrics) }
+        // What links to a note: a card each, as the Mac shows them, though the page is flat.
+        found.map { SliceBlock(path: $0.path, slices: $0.slices, editable: $0.editable, store: store, metrics: metrics, asCard: notePath != nil) }
     }
 
     private var isTyping: Bool { blocks.contains { $0.editors.contains(where: \.isFirstResponder) } }

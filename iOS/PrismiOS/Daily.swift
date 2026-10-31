@@ -458,6 +458,25 @@ final class WeekStripView: UIView {
 
     private var weekCell: CGRect { CGRect(x: 12, y: 40, width: Self.weekColumn, height: 52) }
 
+    /// The month's title and button, the week, and each day, to VoiceOver.
+    override var accessibilityElements: [Any]? {
+        get {
+            var elements: [Any] = [title, month]
+            if let week {
+                elements.append(CalendarElement(container: self, frame: weekCell, label: "Week \(week.week)", value: nil,
+                                                selected: week == chosenWeek) { [weak self] in self?.onChooseWeek?(week) })
+            }
+            let today = Day.today
+            for (i, day) in days.enumerated() {
+                elements.append(CalendarElement(container: self, frame: cell(i), label: CalendarElement.name(day),
+                                                value: CalendarElement.value(marks[day], today: day == today),
+                                                selected: day == shown && chosenWeek == nil) { [weak self] in self?.onChoose?(day) })
+            }
+            return elements
+        }
+        set {}
+    }
+
     @objc private func tapped(_ gesture: UITapGestureRecognizer) {
         let point = gesture.location(in: self)
         if weekCell.contains(point), let week {

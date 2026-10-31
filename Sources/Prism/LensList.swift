@@ -326,6 +326,30 @@ final class ListRow: NSView, NSDraggingSource {
         }
     }
 
+    // To VoiceOver: the note, to open; its circle, an action of its own.
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityLabel() -> String? { item.title.isEmpty ? "Untitled" : item.title }
+    override func accessibilityValue() -> Any? { [item.detail, item.snippet].compactMap { $0 }.joined(separator: ", ") }
+    override func isAccessibilitySelected() -> Bool { isChosen }
+    override func accessibilityPerformPress() -> Bool {
+        onClick?(false)
+        return true
+    }
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        var actions = [NSAccessibilityCustomAction(name: "Open Beside") { [weak self] in
+            self?.onClick?(true)
+            return true
+        }]
+        if item.checkable {
+            actions.append(NSAccessibilityCustomAction(name: item.task != nil ? "Mark Done" : "Take Out of Inbox") { [weak self] in
+                self?.onCheck?()
+                return true
+            })
+        }
+        return actions
+    }
+
     override func mouseDown(with event: NSEvent) {
         downAt = convert(event.locationInWindow, from: nil)
     }

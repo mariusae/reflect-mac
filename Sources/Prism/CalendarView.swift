@@ -89,6 +89,33 @@ final class CalendarView: NSView {
         return nil
     }
 
+    // MARK: To VoiceOver
+
+    /// Each week and day, a button where it is drawn: the day in words,
+    /// its tasks done of all; chosen as a click chooses it.
+    override func accessibilityChildren() -> [Any]? {
+        var children: [Any] = [previous, next]
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEEEdMMMM")
+        for (w, row) in weeks.enumerated() {
+            if let week = NoteCalendar.week(ofRow: row) {
+                children.append(CalendarPlace(parent: self, frame: weekRect(w), label: "Week \(week.week)", value: nil) { [weak self] in
+                    self?.onChooseWeek?(week)
+                })
+            }
+            for (d, day) in row.enumerated() {
+                guard let day else { continue }
+                var said: [String] = []
+                if day == .today { said.append("Today") }
+                if let progress = marks[day]?.progress, !progress.isEmpty { said.append("\(progress.done) of \(progress.total) tasks done") }
+                children.append(CalendarPlace(parent: self, frame: rect(week: w, weekday: d),
+                                              label: day.date.map(formatter.string(from:)) ?? day.description,
+                                              value: said.isEmpty ? nil : said.joined(separator: ", ")) { [weak self] in self?.onChoose?(day) })
+            }
+        }
+        return children
+    }
+
     // MARK: Drawing
 
     override func draw(_ dirtyRect: NSRect) {
@@ -222,4 +249,25 @@ final class CalendarView: NSView {
     }
 
     override var acceptsFirstResponder: Bool { true }
+}
+
+/// A day or a week of a calendar drawn in one view, to VoiceOver.
+private final class CalendarPlace: NSAccessibilityElement {
+    private let choose: () -> Void
+
+    init(parent: NSView, frame: NSRect, label: String, value: String?, choose: @escaping () -> Void) {
+        self.choose = choose
+        super.init()
+        setAccessibilityParent(parent)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(label)
+        setAccessibilityValue(value)
+        // In the window, from the view's own flipped measure.
+        setAccessibilityFrameInParentSpace(frame)
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        choose()
+        return true
+    }
 }

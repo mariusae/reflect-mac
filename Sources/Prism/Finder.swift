@@ -279,6 +279,23 @@ final class FinderRow: NSView {
     override func mouseDown(with event: NSEvent) {}
     override func mouseUp(with event: NSEvent) { onClick?(event.modifierFlags.contains(.command)) }
 
+    // To VoiceOver: what was found, to open — here, or beside.
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityLabel() -> String? { title.stringValue }
+    override func accessibilityValue() -> Any? { [detail.stringValue, trail?.stringValue].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ") }
+    override func isAccessibilitySelected() -> Bool { selected }
+    override func accessibilityPerformPress() -> Bool {
+        onClick?(false)
+        return true
+    }
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        [NSAccessibilityCustomAction(name: "Open Beside") { [weak self] in
+            self?.onClick?(true)
+            return true
+        }]
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         guard selected else { return }
         Ink.hover.setFill()
