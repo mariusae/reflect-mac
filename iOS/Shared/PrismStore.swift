@@ -13,7 +13,7 @@ import PrismCore
 @MainActor
 @Observable
 final class PrismStore {
-    static let graphPathKey = "GraphPath"
+    nonisolated static let graphPathKey = "GraphPath"
 
     private(set) var graph: Graph?
     private(set) var index: NoteIndex?
@@ -48,12 +48,20 @@ final class PrismStore {
 
     init(account: GitHubAccount) {
         self.account = account
-        if let path = UserDefaults.standard.string(forKey: Self.graphPathKey) {
-            root = URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
-        } else {
-            root = URL.documentsDirectory.appendingPathComponent("Graph", isDirectory: true)
-        }
+        root = Self.defaultRoot
+        Self.live = self
     }
+
+    /// Where the graph is kept: in the app's documents, unless set elsewhere.
+    nonisolated static var defaultRoot: URL {
+        if let path = UserDefaults.standard.string(forKey: graphPathKey) {
+            return URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
+        }
+        return URL.documentsDirectory.appendingPathComponent("Graph", isDirectory: true)
+    }
+
+    /// The app's own, while it runs: what Shortcuts' actions write through.
+    static weak var live: PrismStore?
 
     /// Whether there is a graph there: a folder with notes or days in it.
     var hasGraph: Bool {

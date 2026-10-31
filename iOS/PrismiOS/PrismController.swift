@@ -81,6 +81,8 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         }
         openForScript()
         QuickActions.onPending = { [weak self] in self?.openQuickAction() }
+        PendingIntent.onPending = { [weak self] in self?.openPendingIntent() }
+        DispatchQueue.main.async { [weak self] in self?.openPendingIntent() }
         DispatchQueue.main.async { [weak self] in self?.openQuickAction() }
         refreshQuickActions()
     }
@@ -1277,6 +1279,17 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
     }
 
     // MARK: The icon's quick actions
+
+    /// What Shortcuts asked for, opening the app: a new note, or today.
+    private func openPendingIntent() {
+        guard let intent = PendingIntent.pending, store.index != nil else { return }
+        PendingIntent.pending = nil
+        presentedViewController?.dismiss(animated: false)
+        switch intent {
+        case .newNote: compose()
+        case .today: writeToday()
+        }
+    }
 
     private func openQuickAction() {
         guard let path = QuickActions.pending else { return }

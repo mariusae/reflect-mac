@@ -1,11 +1,13 @@
 import UIKit
 import ReflectCore
 
-/// The app's icon held on the Home Screen: the notes written in last, each
-/// to open — as the magnifier held offers them in the app.
+/// The app's icon held on the Home Screen: a row at the top of today, a
+/// new note, and the notes written in last, each to open.
 @MainActor
 enum QuickActions {
     private static let type = "com.mariusae.Prism.note"
+    private static let today = "com.mariusae.Prism.today"
+    private static let newNote = "com.mariusae.Prism.newNote"
 
     /// A note chosen from the icon, waiting for the notes to be shown.
     static var pending: String? {
@@ -16,7 +18,13 @@ enum QuickActions {
 
     /// The icon's notes, the latest first — as many as it shows.
     static func update(_ entries: [NoteEntry]) {
-        UIApplication.shared.shortcutItems = entries.prefix(4).map { entry in
+        let capture = [
+            UIApplicationShortcutItem(type: today, localizedTitle: "Add to Today", localizedSubtitle: nil,
+                                      icon: UIApplicationShortcutIcon(systemImageName: "sun.max"), userInfo: nil),
+            UIApplicationShortcutItem(type: newNote, localizedTitle: "New Note", localizedSubtitle: nil,
+                                      icon: UIApplicationShortcutIcon(systemImageName: "square.and.pencil"), userInfo: nil),
+        ]
+        UIApplication.shared.shortcutItems = capture + entries.prefix(2).map { entry in
             UIApplicationShortcutItem(type: type, localizedTitle: entry.title.isEmpty ? (entry.path as NSString).lastPathComponent : entry.title,
                                       localizedSubtitle: nil, icon: UIApplicationShortcutIcon(systemImageName: "doc.text"),
                                       userInfo: ["path": entry.path as NSString])
@@ -26,6 +34,10 @@ enum QuickActions {
     /// An item chosen: its note, to open. Says whether it was one of ours.
     @discardableResult
     static func handle(_ item: UIApplicationShortcutItem) -> Bool {
+        if item.type == today || item.type == newNote {
+            PendingIntent.pending = item.type == today ? .today : .newNote
+            return true
+        }
         guard item.type == type, let path = item.userInfo?["path"] as? String else { return false }
         pending = path
         return true
