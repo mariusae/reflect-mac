@@ -1463,6 +1463,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         adjusting = false
         undoManager?.removeAllActions()
         readingUndo.removeAllActions()
+        endChoosingRows()
         heightMayHaveChanged()
     }
 
@@ -1517,6 +1518,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         cachedRanges = nil
         undoManager?.removeAllActions()
         readingUndo.removeAllActions()
+        endChoosingRows()
         measured = (prepared.width, prepared.fit, prepared.rows)
         showPicturesLoadedMeanwhile()
         heightMayHaveChanged()
@@ -2257,6 +2259,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     override func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+        // Choosing rows: a tap anywhere on a row takes it in, or out.
+        if gesture === markerTap, isChoosingRows { return rowUnder(gesture.location(in: self)) != nil }
         if gesture === markerTap { return target(at: gesture.location(in: self)) != nil }
         if gesture === dragScroll { return rowDrag != nil }
         // A carousel swiped to the picture before or after it.
@@ -2285,6 +2289,10 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     @objc private func tapped(_ gesture: UITapGestureRecognizer) {
+        if isChoosingRows {
+            if let index = rowUnder(gesture.location(in: self)) { toggleChosen(index) }
+            return
+        }
         switch target(at: gesture.location(in: self)) {
         case .marker(let index):
             let row = rows[index]
@@ -2408,6 +2416,9 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         didSet { outlineLayout.today = day == .today }
     }
     var rowDrag: RowDragState?
+    /// Rows chosen together, while they are: no typing meanwhile.
+    var rowChoice: RowChoice?
+    override var canBecomeFirstResponder: Bool { rowChoice == nil && super.canBecomeFirstResponder }
     /// While a row is carried: another finger scrolling the sheet under it.
     let dragScroll = UIPanGestureRecognizer()
     private lazy var pictureMenu = UIEditMenuInteraction(delegate: self)
@@ -2504,6 +2515,9 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             })
         }
         if isEditable {
+            actions.append(UIAction(title: "Select Rows", image: UIImage(systemName: "checklist")) { [weak self] _ in
+                self?.beginChoosingRows(with: index)
+            })
             actions.append(UIAction(title: "Turn Into…", image: UIImage(systemName: "arrow.triangle.2.circlepath")) { [weak self] _ in
                 self?.showTurnInto(forRow: index)
             })
@@ -2626,12 +2640,14 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     func moveRows(at index: Int, named name: String, put: ([Row], UndoManager) -> Void) {
         var all = rows
         guard all.indices.contains(index) else { return }
-        let block = OutlineEditing.block(all, index..<(index + 1))
-        let taken = Array(all[block])
+        // Choosing rows: all of them, each with those under it, in order.
+        let blocks = isChoosingRows && !chosenBlocks.isEmpty ? chosenBlocks : [OutlineEditing.block(all, index..<(index + 1))]
+        endChoosingRows()
+        let taken = blocks.flatMap { RowMove.detached(Array(all[$0])) }
         let undo = rowUndo
         undo.beginUndoGrouping()
         put(taken, undo)
-        _ = OutlineEditing.delete(&all, block)
+        for block in blocks.reversed() { _ = OutlineEditing.delete(&all, block) }
         replace(all, caret: nil, undoName: "Move to " + name)
         undo.endUndoGrouping()
         UINotificationFeedbackGenerator().notificationOccurred(.success)
