@@ -132,14 +132,6 @@ extension OutlineLayoutManager {
             solid.lineWidth = 1.5
             color.withAlphaComponent(mark.level > 0 ? 0.45 : 0.6).setStroke()
             if block.end > block.lineTop { solid.stroke() }
-            // Its end, marked: where to take it to make it longer.
-            if view.hoveredTimeBlock == block.head {
-                let tick = NSBezierPath()
-                tick.move(to: NSPoint(x: x - 4, y: block.end))
-                tick.line(to: NSPoint(x: x + 4, y: block.end))
-                tick.lineWidth = 1.5
-                tick.stroke()
-            }
             if let free = block.free, free.upperBound > free.lowerBound {
                 let dashed = NSBezierPath()
                 dashed.move(to: NSPoint(x: x, y: free.lowerBound + 2))
@@ -195,81 +187,5 @@ extension OutlineLayoutManager {
                 NSBezierPath(ovalIn: NSRect(x: x - 3.5, y: y - 3.5, width: 7, height: 7)).fill()
             }
         }
-    }
-
-    /// The time block at a point, and whether the point is at its line's
-    /// end — to make it longer or shorter — or on its time — to move it.
-    package func timeBlockHit(at point: NSPoint, origin: NSPoint) -> (block: TimeBlockGeometry, resizing: Bool)? {
-        guard let storage = textStorage, TimeBlockGeometry.any(in: storage) else { return nil }
-        for block in timeBlocks(origin: origin) {
-            let grip = NSRect(x: block.node.x - 7, y: block.end - 5, width: 14, height: 10)
-            if grip.contains(point) { return (block, true) }
-            let font = NSFont.monospacedDigitSystemFont(ofSize: block.measures.labelSize, weight: .regular)
-            let width = NSAttributedString(string: block.mark.label, attributes: [.font: font]).size().width
-            if NSRect(x: block.label.minX - 2, y: block.label.minY, width: width + 4, height: block.label.height).contains(point) { return (block, false) }
-        }
-        return nil
-    }
-}
-
-extension OutlineTextView {
-    /// The cursor over a time block: to move it, or to make it longer.
-    func timeBlockCursor(at point: NSPoint) -> NSCursor? {
-        guard isEditable, let hit = outlineLayout.timeBlockHit(at: point, origin: textContainerOrigin) else {
-            if hoveredTimeBlock != nil { hoveredTimeBlock = nil }
-            return nil
-        }
-        if hoveredTimeBlock != hit.block.head { hoveredTimeBlock = hit.block.head }
-        return hit.resizing ? .resizeUpDown : .openHand
-    }
-
-    /// A time block taken by its time, or its line's end, and dragged:
-    /// moved, or made longer or shorter, five minutes at a time — and, with
-    /// ⌥ held, the blocks after it with it. True when it was one.
-    func dragTimeBlock(_ event: NSEvent) -> Bool {
-        let point = convert(event.locationInWindow, from: nil)
-        guard isEditable, let hit = outlineLayout.timeBlockHit(at: point, origin: textContainerOrigin) else { return false }
-        window?.makeFirstResponder(self)
-        let original = rows
-        guard let timeline = Timeline.find(original).first(where: { $0.blocks.contains { $0.row == hit.block.head } }),
-              let index = timeline.blocks.firstIndex(where: { $0.row == hit.block.head }) else { return false }
-        let perMinute = hit.block.measures.perMinute
-        let texts = original.map(\.text)
-        let start = event.locationInWindow
-        var applied: (minutes: Int, following: Bool) = (0, false)
-        var moved = false
-        (hit.resizing ? NSCursor.resizeUpDown : NSCursor.closedHand).push()
-        defer { NSCursor.pop() }
-        undoManager?.beginUndoGrouping()
-        defer { undoManager?.endUndoGrouping() }
-        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp, .flagsChanged]) {
-            if next.type == .leftMouseUp { break }
-            let dy = start.y - next.locationInWindow.y
-            if !moved, abs(dy) < 3 { continue }
-            moved = true
-            // A quarter of an hour at a time, as the schedule's hours are.
-            let minutes = Int((dy / perMinute / 15).rounded()) * 15
-            let following = next.modifierFlags.contains(.option)
-            guard minutes != applied.minutes || following != applied.following else { continue }
-            let changed = timeline.moved(index, by: minutes, resizing: hit.resizing, following: following, texts: texts)
-            let before = rows
-            var after = before
-            // Each block as it was, then as this drag has it.
-            for block in timeline.blocks where block.row < after.count { after[block.row].text = original[block.row].text }
-            for (row, text) in changed where row < after.count { after[row].text = text }
-            let caret = caretPosition
-            replace(before, with: after, actionName: hit.resizing ? "Change Block's Length" : "Move Block")
-            restoreCaret(caret)
-            applied = (minutes, following)
-        }
-        if !moved {
-            // A click: the caret at the end of the block's words.
-            let paragraphs = paragraphRanges
-            if hit.block.head < paragraphs.count {
-                if isSelectingRows { leaveRowSelection() }
-                setSelectedRange(NSRange(location: NSMaxRange(paragraphs[hit.block.head]) - 1, length: 0))
-            }
-        }
-        return true
     }
 }

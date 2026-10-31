@@ -178,6 +178,7 @@ final class NoteBlock: UIView {
     private func makeEditor() -> OutlineEditor {
         let editor = OutlineEditor(metrics: storedMetrics)
         editor.day = ref.day
+        editor.styler.isPrivateNote = store?.index?.entry(ref.path)?.isPrivate == true
         addSubview(editor)
         editor.onChange = { [weak self] in self?.edited() }
         editor.onOpenLink = { [weak self] link in
@@ -933,7 +934,10 @@ enum Card {
         let face = Typeface.current
         let meta = meta(for: path, store: store) ?? ""
         let dated = GraphPaths.day(fromDailyPath: path) != nil || GraphPaths.week(fromWeeklyPath: path) != nil
-        let kicker = (dated ? [name, meta] : [meta]).filter { !$0.isEmpty }.joined(separator: "  ·  ").uppercased()
+        // What it is, said first: a topic, private.
+        let entry = store?.index?.entry(path)
+        let kinds = [entry?.isTopic == true ? "# Topic" : nil, entry?.isPrivate == true ? "Private" : nil].compactMap { $0 }
+        let kicker = (kinds + (dated ? [name, meta] : [meta])).filter { !$0.isEmpty }.joined(separator: "  ·  ").uppercased()
         let text = NSMutableAttributedString(string: kicker, attributes: label(size: size))
         guard !dated else { return text }
         let lead = NSMutableParagraphStyle()

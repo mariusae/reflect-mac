@@ -182,6 +182,7 @@ final class SliceBlock: UIView, SheetBlock {
             }
             previous = slice.crumbs
             let editor = OutlineEditor(metrics: metrics)
+            editor.styler.isPrivateNote = store?.index?.entry(path)?.isPrivate == true
             editor.load(slice.rows)
             // A note mid-conflict is settled whole, on its own, not piece by piece.
             editor.isEditable = editable && !ConflictMarkers.detect(savedText)

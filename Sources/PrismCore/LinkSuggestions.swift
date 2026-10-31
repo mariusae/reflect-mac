@@ -19,11 +19,14 @@ public enum LinkSuggestions {
         /// What the link says: a day as `YYYY-MM-DD`, a note by its title.
         public var name: String
         public var isDay: Bool
+        /// A topic: offered before other notes, marked `#`.
+        public var isTopic: Bool
 
-        public init(title: String, name: String, isDay: Bool) {
+        public init(title: String, name: String, isDay: Bool, isTopic: Bool = false) {
             self.title = title
             self.name = name
             self.isDay = isDay
+            self.isTopic = isTopic
         }
     }
 
@@ -78,8 +81,10 @@ public enum LinkSuggestions {
         for day in days where !found.contains(where: { $0.name == day.description }) {
             found.append(Candidate(title: dayTitle(day, today: today), name: day.description, isDay: true))
         }
-        for match in index.matches(query, limit: limit) where !match.entry.title.isEmpty {
-            found.append(Candidate(title: match.entry.title, name: match.entry.title, isDay: false))
+        // Topics first — what a link most often means to reach — each kind as the index ranks it.
+        let notes = index.matches(query, limit: limit).filter { !$0.entry.title.isEmpty }
+        for match in notes.filter({ $0.entry.isTopic }) + notes.filter({ !$0.entry.isTopic }) {
+            found.append(Candidate(title: match.entry.title, name: match.entry.title, isDay: false, isTopic: match.entry.isTopic))
         }
         return Array(found.prefix(limit))
     }

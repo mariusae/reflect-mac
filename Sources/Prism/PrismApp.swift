@@ -510,8 +510,18 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         submenu("Note", [
             item("Add to Inbox", #selector(PrismWindow.toggleInbox(_:)), "i", [.command, .shift]),
             item("Pin", #selector(PrismWindow.togglePinned(_:)), "p", [.command, .shift]),
-            item("Topic", #selector(PrismWindow.toggleTopic(_:))),
-            item("Private", #selector(PrismWindow.togglePrivate(_:))),
+            {
+                let topic = item("Topic", #selector(PrismWindow.toggleTopic(_:)))
+                topic.subtitle = "Marked #, and offered first when linking"
+                topic.toolTip = "A topic gathers what links to it: marked # wherever it is listed, and offered first when you type [[ or @."
+                return topic
+            }(),
+            {
+                let secret = item("Private", #selector(PrismWindow.togglePrivate(_:)))
+                secret.subtitle = "Its words kept out of lists, its links not looked up"
+                secret.toolTip = "A private note keeps to itself: its words are not shown in lists or in sync messages, and its links are never looked up."
+                return secret
+            }(),
             .separator(),
             item("Add Cover…", #selector(PrismWindow.addCover(_:))),
             item("Remove Cover", #selector(PrismWindow.removeCover(_:))),

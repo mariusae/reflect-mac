@@ -144,6 +144,20 @@ import ReflectCore
         let days = LinkSuggestions.candidates("tom", index: index, today: today)
         #expect(days.first == .init(title: "Tomorrow", name: "2026-10-04", isDay: true))
     }
+
+    @Test func topicsAreOfferedFirst() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("notes"), withIntermediateDirectories: true)
+        try "# Monarch\n".write(to: root.appendingPathComponent("notes/monarch.md"), atomically: true, encoding: .utf8)
+        try "---\ntopic: true\n---\n# Money\n".write(to: root.appendingPathComponent("notes/money.md"), atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let index = NoteIndex(root: root)
+        index.scan()
+        // "mon" names a Monday too: the notes after it.
+        let found = LinkSuggestions.candidates("mon", index: index, today: Day(year: 2026, month: 10, day: 3)).filter { !$0.isDay }
+        #expect(found.map(\.name) == ["Money", "Monarch"])
+        #expect(found.map(\.isTopic) == [true, false])
+    }
 }
 
 @Suite struct TimelineGapTests {

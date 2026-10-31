@@ -950,9 +950,17 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
                 guard let self, let index = store.index else { return }
                 store.setFrontmatter(path, "pinned", entry?.pin == nil ? String(index.nextPinOrder) : nil)
             })
-            items.append(UIAction(title: entry?.isTopic == true ? "Not a Topic" : "Make a Topic", image: UIImage(systemName: "number")) { [weak self] _ in
-                self?.store.setFrontmatter(path, "topic", entry?.isTopic == true ? nil : "true")
-            })
+            let topic = UIAction(title: entry?.isTopic == true ? "Not a Topic" : "Make a Topic", image: UIImage(systemName: "number")) { [weak self] _ in
+                self?.store.setFrontmatter(path, "topic", entry?.isTopic == true ? nil : "true", undoName: entry?.isTopic == true ? "Not a Topic" : "Make a Topic")
+            }
+            topic.subtitle = "Marked #, and offered first when linking"
+            items.append(topic)
+            let isPrivate = entry?.isPrivate == true
+            let secret = UIAction(title: isPrivate ? "Not Private" : "Make Private", image: UIImage(systemName: isPrivate ? "lock.open" : "lock")) { [weak self] _ in
+                self?.store.setFrontmatter(path, "private", isPrivate ? nil : "true", undoName: isPrivate ? "Not Private" : "Make Private")
+            }
+            secret.subtitle = "Its words kept out of lists, its links not looked up"
+            items.append(secret)
             items.append(UIAction(title: entry?.cover == nil ? "Add Cover…" : "Change Cover…", image: UIImage(systemName: "photo.artframe")) { [weak self, weak sheet] _ in
                 sheet?.saveAll()
                 self?.chooseCover(for: path)

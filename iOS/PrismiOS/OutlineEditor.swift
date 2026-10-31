@@ -129,6 +129,8 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
     var hidesTitle = false
     /// Where the caret is: the span it is in shows its marks.
     var caret: Int?
+    /// A private note's: its links never looked up for cards.
+    var isPrivateNote = false
     /// Rows folded inside a row an edit swallowed, with where they belong.
     var orphans: [(location: Int, rows: [Row])] = []
     /// The time blocks' slots, by where their paragraphs start: worked out
@@ -428,7 +430,8 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
                 // none for a link written `"no card"`.
                 let alone = text.substring(with: span.range) == text.substring(with: body).trimmingCharacters(in: .whitespaces)
                 var carded = false
-                if inHeading || span.hidesCard {
+                // A private note's links are never looked up, as on the Mac.
+                if inHeading || span.hidesCard || isPrivateNote {
                 } else if PhoneCards.lookup(target) != nil {
                     storage.addAttribute(.prismCard, value: target, range: NSRange(location: span.range.location, length: 1))
                     carded = true
@@ -1373,7 +1376,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         // typing, where holding the words moves the caret — is picked up.
         rowHold.minimumPressDuration = 0.4
         rowHold.isOnPicture = { [weak self] point in
-            guard let self, self.isEditable, self.rowUnder(point) != nil, !self.blockHold.isOnPicture!(point),
+            guard let self, self.isEditable, self.rowUnder(point) != nil,
                   self.webLink(at: point) == nil, self.noteLink(at: point) == nil else { return false }
             switch self.target(at: point) {
             case .image: return false
@@ -1388,17 +1391,6 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         linkHold.addTarget(self, action: #selector(heldLink(_:)))
         linkHold.delegate = self
         addGestureRecognizer(linkHold)
-        // A time block held by its times, its foot or its empty part: moved,
-        // or made longer — not its row picked up.
-        blockHold.minimumPressDuration = 0.3
-        blockHold.isOnPicture = { [weak self] point in
-            guard let self, self.isEditable else { return false }
-            return self.outlineLayout.timeBlockHit(at: CGPoint(x: point.x - self.textContainerInset.left,
-                                                               y: point.y - self.textContainerInset.top)) != nil
-        }
-        blockHold.addTarget(self, action: #selector(heldTimeBlock(_:)))
-        blockHold.delegate = self
-        addGestureRecognizer(blockHold)
         rowHold.delegate = self
         addGestureRecognizer(rowHold)
         pictureHold.delegate = self
@@ -2279,8 +2271,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         if let swipe = gesture as? UISwipeGestureRecognizer, carouselSwipes.contains(swipe) {
             return other is UIPanGestureRecognizer && other.view !== self && !(other.view is UIScrollView)
         }
-        return (gesture === pictureHold || gesture === rowHold || gesture === blockHold || gesture === linkHold) && other.view === self
-            && other !== markerTap && other !== pictureHold && other !== rowHold && other !== blockHold && other !== linkHold
+        return (gesture === pictureHold || gesture === rowHold || gesture === linkHold) && other.view === self
+            && other !== markerTap && other !== pictureHold && other !== rowHold && other !== linkHold
     }
 
 
@@ -2408,9 +2400,6 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// A web link held: its title, to add or change.
     private let linkHold = PictureHold()
     private let rowHold = PictureHold()
-    private let blockHold = PictureHold()
-    /// A time block being dragged.
-    var timeDrag: TimeDrag?
     /// The day the note is, if one: on today's, time blocks show the time now.
     var day: Day? {
         didSet { outlineLayout.today = day == .today }
@@ -3181,7 +3170,8 @@ final class OutlineToolbar: UIInputView {
         for (i, candidate) in candidates.enumerated() {
             var configuration = UIButton.Configuration.filled()
             configuration.title = candidate.title
-            configuration.image = UIImage(systemName: candidate.isDay ? "calendar" : candidate.title.hasPrefix("New “") ? "plus" : "doc.text",
+            configuration.image = UIImage(systemName: candidate.isDay ? "calendar" : candidate.title.hasPrefix("New “") ? "plus"
+                                          : candidate.isTopic ? "number" : "doc.text",
                                           withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .medium))
             configuration.imagePadding = 5
             configuration.titleLineBreakMode = .byTruncatingTail

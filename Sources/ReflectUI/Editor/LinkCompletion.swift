@@ -110,6 +110,17 @@ package final class LinkCompletion: NSObject, NSTableViewDataSource, NSTableView
         // An `@` is often just an at: it offers only notes there are, and
         // with none, shows nothing.
         items = trigger == .at ? found.filter { if case .create = $0.target { false } else { true } } : found
+        // Topics before other notes — what a link most often means to reach —
+        // each kind as found; days and a note to make where they were.
+        if let index = Self.sources?.index {
+            func topic(_ item: OpenQuickly.Item) -> Bool {
+                if case .note(let path) = item.target { return index.entry(path)?.isTopic == true }
+                return false
+            }
+            let notes = items.indices.filter { if case .note = items[$0].target { true } else { false } }
+            let ranked = notes.map { items[$0] }.filter(topic) + notes.map { items[$0] }.filter { !topic($0) }
+            for (slot, item) in zip(notes, ranked) { items[slot] = item }
+        }
         table.reloadData()
         if let chosen, let row = items.firstIndex(where: { "\($0.target)" == chosen }) {
             table.selectRowIndexes([row], byExtendingSelection: false)

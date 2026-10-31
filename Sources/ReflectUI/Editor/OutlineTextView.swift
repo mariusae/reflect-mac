@@ -713,11 +713,6 @@ package final class OutlineTextView: NSTextView {
     /// The link's card under the pointer — a post, a video, a page — whose
     /// "–" shows, to hide it.
     package var hoveredCardFrame: NSRect?
-    /// The time block under the pointer — its time, or its line's end —
-    /// whose end shows a grip.
-    package var hoveredTimeBlock: Int? {
-        didSet { if hoveredTimeBlock != oldValue { needsDisplay = true } }
-    }
 
     package override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -747,10 +742,6 @@ package final class OutlineTextView: NSTextView {
             NSCursor.frameResize(position: .bottomRight, directions: .all).set()
             return
         }
-        if outlineLayout.handleHit(at: point, origin: textContainerOrigin) == nil, let cursor = timeBlockCursor(at: point) {
-            cursor.set()
-            return
-        }
         // Bullets, checkboxes and pictures are things to click, not text:
         // over them the pointer is the arrow.
         if outlineLayout.handleHit(at: point, origin: textContainerOrigin) != nil
@@ -764,8 +755,6 @@ package final class OutlineTextView: NSTextView {
         let point = convert(event.locationInWindow, from: nil)
         if onPictureGrip(point) {
             NSCursor.frameResize(position: .bottomRight, directions: .all).set()
-        } else if outlineLayout.handleHit(at: point, origin: textContainerOrigin) == nil, let cursor = timeBlockCursor(at: point) {
-            cursor.set()
         } else if outlineLayout.handleHit(at: point, origin: textContainerOrigin) != nil
             || outlineLayout.pictureHit(at: point, origin: textContainerOrigin) != nil {
             NSCursor.arrow.set()
@@ -902,7 +891,6 @@ package final class OutlineTextView: NSTextView {
             dragPictureGrip(event)
             return
         }
-        if event.modifierFlags.intersection([.command, .shift, .control]).isEmpty, dragTimeBlock(event) { return }
         if let (picture, frame) = outlineLayout.pictureFrame(at: point, origin: textContainerOrigin) {
             window?.makeFirstResponder(self)
             // A carousel's buttons and dots turn it.

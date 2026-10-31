@@ -198,7 +198,9 @@ final class NoteSummaryRow: UIControl {
     func refresh() {
         let text = store.text(path)
         name.text = SliceBlock.name(path, store: store)
-        words.text = Self.firstWords(of: text)
+        // A private note's words kept out of lists: said to be private, no more.
+        let entry = store.index?.entry(path)
+        words.text = entry?.isPrivate == true ? "Private" : Self.firstWords(of: text)
         accessibilityLabel = name.text
         accessibilityValue = [Card.meta(for: path, store: store), words.text].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
         age.attributedText = NSAttributedString(string: (Card.meta(for: path, store: store) ?? "").uppercased(),

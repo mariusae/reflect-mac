@@ -381,6 +381,8 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
     /// What a note says first: its first rows, plain, as a line or two.
     private func snippet(_ path: String) -> String? {
+        // A private note's words kept out of lists: said to be private, no more.
+        if session.index.entry(path)?.isPrivate == true { return "Private" }
         guard let body = session.index.body(path) else { return nil }
         let rows = OutlineMarkdown.parse(body).rows.filter { row in
             if case .heading(1) = row.kind { return false }
