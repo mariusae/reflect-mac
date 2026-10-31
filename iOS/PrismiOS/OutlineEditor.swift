@@ -1679,7 +1679,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// Replaces the rows on screen with others — only the paragraphs that
     /// differ — as one step to undo, the caret put where it goes.
-    func replace(_ after: [Row], caret: OutlineKeys.Caret?, undoName: String? = nil) {
+    /// `registersUndo` false: a step on the way to a change undone whole later — what is heard, as it is.
+    func replace(_ after: [Row], caret: OutlineKeys.Caret?, undoName: String? = nil, registersUndo: Bool = true) {
         let before = rows
         let beforeCaret = self.caret
         guard before != after else { return }
@@ -1696,13 +1697,15 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
                                       with: OutlineText.attributed(Array(after[prefix..<(after.count - suffix)])))
         adjusting = false
         let undo = rowUndo
-        undo.registerUndo(withTarget: self) { editor in editor.replace(before, caret: beforeCaret, undoName: undoName) }
-        if let undoName { undo.setActionName(undoName) }
+        if registersUndo {
+            undo.registerUndo(withTarget: self) { editor in editor.replace(before, caret: beforeCaret, undoName: undoName) }
+            if let undoName { undo.setActionName(undoName) }
+        }
         if let caret { setCaret(caret) }
         changed()
         // Changed while read, not typed in: no keys to undo it with — said, with Undo.
         // Folding is only looking, not changing: not said.
-        if !isFirstResponder, let undoName, !["Fold", "Unfold"].contains(undoName), !undo.isUndoing, !undo.isRedoing {
+        if registersUndo, !isFirstResponder, let undoName, !["Fold", "Unfold"].contains(undoName), !undo.isUndoing, !undo.isRedoing {
             NotificationCenter.default.post(name: .prismUndoable, object: self, userInfo: ["name": undoName, "undo": undo])
         }
     }

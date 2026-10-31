@@ -366,6 +366,55 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
 
     /// A row with words in it, first in the note — its first row, when
     /// that is empty — not typed in: written, and shown.
+    // MARK: Said, at the top
+
+    /// While + is held: the row being said, first in the note — its words
+    /// as heard so far, replaced as more comes — and the rows as they were.
+    private var dictated: (row: Int, before: [Row])?
+
+    /// A row made first in the note, for what is about to be said.
+    func beginDictatedRow() {
+        guard let block = noteBlocks.first else { return }
+        if !block.isLive { block.goLive() }
+        let editor = block.editor
+        let before = editor.rows
+        var rows = before
+        let at = rows.first.map { if case .heading(1) = $0.kind { return 1 } else { return 0 } } ?? 0
+        if !(rows.indices.contains(at) && rows[at].text.isEmpty && rows[at].task == nil) {
+            rows.insert(.blank, at: min(at, rows.count))
+            editor.replace(rows, caret: nil, registersUndo: false)
+        }
+        dictated = (at, before)
+        relayout()
+        scroll.setContentOffset(CGPoint(x: 0, y: -scroll.adjustedContentInset.top), animated: true)
+    }
+
+    /// What has been heard so far, in its row.
+    func showDictated(_ text: String) {
+        guard let dictated, let editor = noteBlocks.first?.editor else { return }
+        var rows = editor.rows
+        guard rows.indices.contains(dictated.row), rows[dictated.row].text != text else { return }
+        rows[dictated.row].text = text
+        editor.replace(rows, caret: nil, registersUndo: false)
+        relayout()
+    }
+
+    /// Let go: kept — written, undone as one — or, cancelled or nothing
+    /// said, the note as it was.
+    func endDictatedRow(_ text: String?) {
+        guard let dictated, let block = noteBlocks.first else { return }
+        self.dictated = nil
+        let editor = block.editor
+        var rows = editor.rows
+        editor.replace(dictated.before, caret: nil, registersUndo: false)
+        if let text, !text.isEmpty, rows.indices.contains(dictated.row) {
+            rows[dictated.row].text = text
+            editor.replace(rows, caret: nil, undoName: "Dictation")
+        }
+        block.save()
+        relayout()
+    }
+
     func addAtTop(text: String) {
         guard let block = noteBlocks.first else { return }
         if !block.isLive { block.goLive() }

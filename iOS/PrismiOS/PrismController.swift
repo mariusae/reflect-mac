@@ -1279,6 +1279,8 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
     // MARK: Dictating
 
     private var dictation: Dictation?
+    /// Today's page, being said into while + is held.
+    private weak var dictatedInto: SheetController?
     private var askingToListen = false
 
     private func beginDictation() {
@@ -1298,10 +1300,17 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
                 guard self.dictation === dictation else { return }
                 self.bar.showEngine(engine)
             }
+            // Where it lands — the top of today — written there as it is heard.
+            saveAll()
+            let sheet = todayShown()?.sheet
+            dictatedInto = sheet
+            sheet?.beginDictatedRow()
             do {
-                try dictation.start(keyterms: store.index.map(Dictation.terms) ?? []) { text in self.bar.showHeard(text) }
+                try dictation.start(keyterms: store.index.map(Dictation.terms) ?? []) { [weak sheet] text in sheet?.showDictated(text) }
             } catch {
                 if self.dictation === dictation { self.dictation = nil }
+                sheet?.endDictatedRow(nil)
+                dictatedInto = nil
                 bar.hideHeard()
                 say("Dictation isn’t available right now.")
             }
@@ -1314,12 +1323,16 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             return
         }
         self.dictation = nil
+        let sheet = dictatedInto
+        dictatedInto = nil
         Task { @MainActor in
             let text = await dictation.stop()
             bar.hideHeard()
+            sheet?.endDictatedRow(cancelled ? nil : text)
             guard !cancelled, !text.isEmpty else { return }
             UINotificationFeedbackGenerator().notificationOccurred(.success)
-            addToToday(text)
+            // Today not shown after all: put there anyway.
+            if sheet == nil { addToToday(text) }
         }
     }
 
