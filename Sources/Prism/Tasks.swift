@@ -113,7 +113,7 @@ final class TaskPath: NSView {
         label.attributedStringValue = text
         label.lineBreakMode = .byTruncatingTail
         addSubview(label)
-        toolTip = "Open “\(steps.first ?? "")” (⌘-click: in the column beside; ⇧⌘-click: in a new one)"
+        toolTip = "Open “\(steps.first ?? "")” (⌘-click: beside)"
     }
 
     @available(*, unavailable)

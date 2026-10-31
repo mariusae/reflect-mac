@@ -36,6 +36,7 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
     private let back = UIButton(type: .system)
     private let type = UIButton(type: .system)
     private let reader = UIButton(type: .system)
+    private let browser = UIButton(type: .system)
     private let source = UILabel()
     private let headline = UILabel()
     private let spinner = UIActivityIndicatorView(style: .medium)
@@ -116,7 +117,7 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
                               withConfiguration: UIImage.SymbolConfiguration(pointSize: onClose == nil ? 17 : 15, weight: .semibold)), for: .normal)
         back.tintColor = Ink.text
         back.accessibilityLabel = onClose == nil ? "Back to the Note" : "Close the Page"
-        for button in [back, type, reader] { button.isPointerInteractionEnabled = true }
+        for button in [back, type, reader, browser] { button.isPointerInteractionEnabled = true }
         back.addAction(UIAction { [weak self] _ in self?.close() }, for: .touchUpInside)
         type.setImage(UIImage(systemName: "textformat.size", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .regular)), for: .normal)
         type.tintColor = Ink.text
@@ -125,7 +126,11 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         type.menu = typeMenu()
         reader.tintColor = Ink.text
         reader.addAction(UIAction { [weak self] _ in self?.toggleReading() }, for: .touchUpInside)
-        for view in [back, icon, source, headline, reader, type] as [UIView] { band.contentView.addSubview(view) }
+        browser.setImage(UIImage(systemName: "safari", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .regular)), for: .normal)
+        browser.tintColor = Ink.text
+        browser.accessibilityLabel = "Open in Browser"
+        browser.addAction(UIAction { [weak self] _ in self?.openInBrowser() }, for: .touchUpInside)
+        for view in [back, icon, source, headline, browser, reader, type] as [UIView] { band.contentView.addSubview(view) }
         view.addSubview(band)
         carousel.cornerConfiguration = .capsule()
         for (button, symbol, by) in [(earlier, "chevron.left", -1), (later, "chevron.right", 1)] {
@@ -187,6 +192,11 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
     /// The page, or the PDF, scrolled by hand: begun on.
     var onScrolledByHand: (() -> Void)?
 
+    /// What is read, out in the browser — the page followed to, on the site's.
+    func openInBrowser() {
+        UIApplication.shared.open(!item.isPDF && !reading ? web.url ?? url : url)
+    }
+
     func close() {
         if let onClose { return onClose() }
         if let navigation = navigationController { navigation.popViewController(animated: true) } else { dismiss(animated: true) }
@@ -238,9 +248,13 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         type.frame = CGRect(x: band.bounds.width - (reading ? 48 : 4), y: 0, width: reading ? 44 : 0, height: bandHeight)
         reader.isHidden = item.isPDF
         reader.frame = CGRect(x: type.frame.minX - (item.isPDF ? 0 : 40), y: 0, width: item.isPDF ? 0 : 40, height: bandHeight)
+        // A PDF of the graph's own: no browser to open it in.
+        let online = !item.url.isFileURL
+        browser.isHidden = !online
+        browser.frame = CGRect(x: reader.frame.minX - (online ? 40 : 0), y: 0, width: online ? 40 : 0, height: bandHeight)
         let textX = icon.frame.maxX + 10
-        source.frame = CGRect(x: textX, y: 9, width: reader.frame.minX - textX - 4, height: 14)
-        headline.frame = CGRect(x: textX, y: 24, width: reader.frame.minX - textX - 4, height: 19)
+        source.frame = CGRect(x: textX, y: 9, width: browser.frame.minX - textX - 4, height: 14)
+        headline.frame = CGRect(x: textX, y: 24, width: browser.frame.minX - textX - 4, height: 19)
         let inset = band.center.y + bandHeight / 2 + 12
         fitInsets()
         pdf.frame = CGRect(x: 0, y: inset - 4, width: view.bounds.width, height: view.bounds.height - inset + 4)
@@ -302,7 +316,7 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         pdf.document = nil
         reader.setImage(UIImage(systemName: reading ? "doc.plaintext.fill" : "doc.plaintext",
                                 withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .regular)), for: .normal)
-        reader.accessibilityLabel = reading ? "The Page as the Site Has It" : "Reader"
+        reader.accessibilityLabel = reading ? "The Page as the Site Has It" : "Reading View"
         view.setNeedsLayout()
         showSite()
         setBandHidden(false)
@@ -647,4 +661,7 @@ extension ReaderController {
 extension Notification.Name {
     /// The reader shown — the app's bar away — or gone.
     static let prismReader = Notification.Name("PrismReader")
+    /// A note changed while read, not typed in: its undo manager and the
+    /// change's name, to offer Undo for.
+    static let prismUndoable = Notification.Name("PrismUndoable")
 }

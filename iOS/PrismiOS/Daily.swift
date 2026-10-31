@@ -58,6 +58,15 @@ final class DayPager: UIViewController, UIPageViewControllerDataSource, UIPageVi
         pages.delegate = self
         addChild(pages)
         view.addSubview(pages.view)
+        // Typing, a sideways swipe moves the row in or out: not the day along.
+        for (name, typing) in [(UITextView.textDidBeginEditingNotification, true), (UITextView.textDidEndEditingNotification, false)] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let self, let editor = note.object as? UIView, editor.isDescendant(of: self.view) else { return }
+                    self.pages.view.subviews.compactMap { $0 as? UIScrollView }.forEach { $0.isScrollEnabled = !typing }
+                }
+            }
+        }
         pages.didMove(toParent: self)
         // The controls float over the day's top: it starts under them, and scrolls up under them.
         pages.additionalSafeAreaInsets.top = PaneBar.height

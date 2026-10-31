@@ -180,7 +180,7 @@ extension OutlineTextView {
                 if place == target { return index }
                 let inside = Row.unfold(row.folded).count
                 if target > place, target <= place + inside {
-                    perform("Expand", on: index..<(index + 1)) { rows, selection in
+                    perform("Unfold", on: index..<(index + 1)) { rows, selection in
                         OutlineEditing.unfold(&rows, at: selection.lowerBound)
                         return selection
                     }

@@ -185,7 +185,7 @@ final class BacklinkBlock: NSView, ColumnBlock {
                                      size: round(metrics.fontSize * 1.08), weight: .semibold)
         title.textColor = Ink.text
         title.lineBreakMode = .byTruncatingTail
-        title.toolTip = "Open “\(name)” (⌘-click: in the column beside; ⇧⌘-click: in a new one)"
+        title.toolTip = "Open “\(name)” (⌘-click: beside)"
         self.detail.stringValue = detail ?? ""
         self.detail.font = Typography.font(typography.bodyFamily, face: typography.bodyFace, size: round(metrics.fontSize * 0.82))
         self.detail.textColor = Ink.secondary

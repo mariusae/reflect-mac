@@ -791,7 +791,14 @@ final class BlockEditorController: UITableViewController, UITextFieldDelegate {
         switch indexPath.row {
         case 0: onMoveDay?(-1)
         case 1: onMoveDay?(1)
-        default: onDelete?()
+        default:
+            // Gone with its times and its list: asked first.
+            let ask = UIAlertController(title: "Delete This Block?", message: nil, preferredStyle: .actionSheet)
+            ask.addAction(UIAlertAction(title: "Delete Block", style: .destructive) { [weak self] _ in self?.onDelete?() })
+            ask.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+            ask.popoverPresentationController?.sourceView = tableView
+            ask.popoverPresentationController?.sourceRect = tableView.rectForRow(at: indexPath)
+            present(ask, animated: true)
         }
     }
 }

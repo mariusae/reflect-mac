@@ -322,9 +322,12 @@ extension OutlineEditor {
             timeDrag = TimeDrag(timeline: timeline, index: block, resizing: hit.resizing, startY: down.y, original: all,
                                 perMinute: hit.block.measures.perMinute, applied: 0)
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            // The whole drag, undone as one.
+            beginRowUndoGroup()
         case .changed:
             guard var drag = timeDrag else { return }
-            let minutes = Int(((point.y - drag.startY) / drag.perMinute / 5).rounded()) * 5
+            // A quarter of an hour at a time, as the schedule's hours are.
+            let minutes = Int(((point.y - drag.startY) / drag.perMinute / 15).rounded()) * 15
             guard minutes != drag.applied else { return }
             let changed = drag.timeline.moved(drag.index, by: minutes, resizing: drag.resizing, following: false,
                                               texts: drag.original.map(\.text))
@@ -337,6 +340,7 @@ extension OutlineEditor {
             timeDrag = drag
             UISelectionFeedbackGenerator().selectionChanged()
         default:
+            if timeDrag != nil { endRowUndoGroup() }
             timeDrag = nil
         }
     }

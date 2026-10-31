@@ -237,7 +237,7 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         let store = TimeBlocksPage.Store(
             flush: { [weak self] in self?.session.save() },
             read: { [weak self] path in self?.session.graph.read(path: path) },
-            write: { [weak self] writes in self?.session.write(writes) },
+            write: { [weak self] writes in self?.session.write(writes, undoName: "Change Schedule") },
             openNote: { [weak self] path in
                 guard let self else { return }
                 onOpenPath?(path, self, true)
@@ -642,8 +642,8 @@ final class PaneChrome: NSView {
     private let back = CloseButton(symbol: "chevron.left", pointSize: 13, toolTip: "Back (⌘[)")
     private let forward = CloseButton(symbol: "chevron.right", pointSize: 13, toolTip: "Forward (⌘])")
     private let title = TitleLabel()
-    private let earlier = CloseButton(symbol: "chevron.left", pointSize: 10, toolTip: "The Day Before (⌃⌘←)")
-    private let later = CloseButton(symbol: "chevron.right", pointSize: 10, toolTip: "The Day After (⌃⌘→)")
+    private let earlier = CloseButton(symbol: "chevron.left", pointSize: 10, toolTip: "The Day Before (⌥⌘[)")
+    private let later = CloseButton(symbol: "chevron.right", pointSize: 10, toolTip: "The Day After (⌥⌘])")
     private let month = CloseButton(symbol: "chevron.down", pointSize: 10, toolTip: "The Month")
     private let faces = NSSegmentedControl(images: [
         NSImage(systemSymbolName: "text.alignleft", accessibilityDescription: "Outline")!,

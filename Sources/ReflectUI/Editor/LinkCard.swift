@@ -223,7 +223,7 @@ package final class LinkCard: NSObject {
         }
         let url = URL.wiki(title)!
         buttons.append(button("Open", symbol: "arrow.right") { [weak self] in self?.follow(url, split: false) })
-        buttons.append(button("Open in Split View", symbol: "rectangle.split.2x1") { [weak self] in self?.follow(url, split: true) })
+        buttons.append(button("Open Beside", symbol: "rectangle.split.2x1") { [weak self] in self?.follow(url, split: true) })
     }
 
     private func follow(_ url: URL, split: Bool) {

@@ -94,7 +94,7 @@ extension OutlineTextView {
                     return folded.contains { text.contains($0) }
                 }
             }) else { return nil }
-            perform("Expand", on: index..<(index + 1)) { rows, selection in
+            perform("Unfold", on: index..<(index + 1)) { rows, selection in
                 OutlineEditing.unfold(&rows, at: selection.lowerBound)
                 return selection
             }

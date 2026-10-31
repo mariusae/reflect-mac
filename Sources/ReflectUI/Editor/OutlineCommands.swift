@@ -267,29 +267,29 @@ extension OutlineTextView {
     // MARK: Folding
 
     @objc package func collapse(_ sender: Any?) {
-        fold(name: "Collapse") { rows, index in -OutlineEditing.fold(&rows, at: index) }
+        fold(name: "Fold") { rows, index in -OutlineEditing.fold(&rows, at: index) }
     }
 
     @objc package func expand(_ sender: Any?) {
-        fold(name: "Expand") { rows, index in OutlineEditing.unfold(&rows, at: index) }
+        fold(name: "Unfold") { rows, index in OutlineEditing.unfold(&rows, at: index) }
     }
 
     @objc package func collapseCompletely(_ sender: Any?) {
-        fold(name: "Collapse") { rows, index in -OutlineEditing.foldCompletely(&rows, at: index) }
+        fold(name: "Fold") { rows, index in -OutlineEditing.foldCompletely(&rows, at: index) }
     }
 
     @objc package func expandCompletely(_ sender: Any?) {
-        fold(name: "Expand") { rows, index in OutlineEditing.unfold(&rows, at: index, completely: true) }
+        fold(name: "Unfold") { rows, index in OutlineEditing.unfold(&rows, at: index, completely: true) }
     }
 
     @objc package func collapseAll(_ sender: Any?) {
-        fold(name: "Collapse All", selection: 0..<paragraphRanges.count) { rows, index in
+        fold(name: "Fold All", selection: 0..<paragraphRanges.count) { rows, index in
             -OutlineEditing.foldCompletely(&rows, at: index)
         }
     }
 
     @objc package func expandAll(_ sender: Any?) {
-        fold(name: "Expand All", selection: 0..<paragraphRanges.count) { rows, index in
+        fold(name: "Unfold All", selection: 0..<paragraphRanges.count) { rows, index in
             OutlineEditing.unfold(&rows, at: index, completely: true)
         }
     }

@@ -192,8 +192,10 @@ final class Session {
         refreshNow()
     }
 
-    /// Notes written whole, and everything caught up.
-    func write(_ writes: [(path: String, source: String)]) {
+    /// Notes written whole, and everything caught up — named, undone as
+    /// one with Edit ▸ Undo, as they were before.
+    func write(_ writes: [(path: String, source: String)], undoName: String? = nil) {
+        let before = writes.map { (path: $0.path, source: graph.read(path: $0.path)) }
         do {
             for write in writes { try graph.write(write.source, path: write.path) }
         } catch {
@@ -201,19 +203,42 @@ final class Session {
         }
         notesChanged(Set(writes.map(\.path)))
         if ownsSync { sync.noteChanged() }
+        // After the notes shown are caught up, which clears what their editors could undo.
+        if let undoName { registerUndo(undoName, from: writes, back: before) }
+    }
+
+    /// Writes undone: each note as it was, if it is still as they left it.
+    private func registerUndo(_ name: String, from writes: [(path: String, source: String)], back before: [(path: String, source: String?)]) {
+        guard let undo = (NSApp.keyWindow ?? NSApp.mainWindow)?.undoManager else { return }
+        undo.registerUndo(withTarget: self) { session in
+            let now = writes.map { (path: $0.path, source: session.graph.read(path: $0.path)) }
+            // Changed since, elsewhere: not undone over it.
+            guard zip(now, writes).allSatisfy({ $0.source == $1.source }) else { return NSSound.beep() }
+            for old in before {
+                if let source = old.source {
+                    try? session.graph.write(source, path: old.path)
+                } else {
+                    try? FileManager.default.removeItem(at: session.graph.url(for: old.path))
+                }
+            }
+            session.notesChanged(Set(before.map(\.path)))
+            if session.ownsSync { session.sync.noteChanged() }
+            session.registerUndo(name, from: before.compactMap { old in old.source.map { (path: old.path, source: $0) } }, back: now)
+        }
+        undo.setActionName(name)
     }
 
     /// A note read, changed, written — when it changed.
-    func change(_ path: String, _ transform: (String) -> String?) {
+    func change(_ path: String, undoName: String? = nil, _ transform: (String) -> String?) {
         save()
         let source = graph.read(path: path) ?? ""
         guard let updated = transform(source), updated != source else { return }
-        write([(path, updated)])
+        write([(path, updated)], undoName: undoName)
     }
 
     /// Sets or takes away a frontmatter key of a note — `inbox`, `pinned`, `topic`, `private`, `cover`.
-    func setFrontmatter(_ path: String, _ key: String, _ value: String?) {
-        change(path) { Frontmatter.setting(key, to: value, in: $0) }
+    func setFrontmatter(_ path: String, _ key: String, _ value: String?, undoName: String? = nil) {
+        change(path, undoName: undoName) { Frontmatter.setting(key, to: value, in: $0) }
     }
 
     func entry(_ path: String) -> NoteEntry? {
@@ -281,13 +306,18 @@ final class Session {
         }
     }
 
-    /// A note by its title — made, if there is none by that name.
+    /// A note by its title — made, if there is none by that name: made so,
+    /// it goes again when it is left as it was made.
     func note(titled title: String) -> String? {
         if let path = index.resolve(title) { return path }
         guard !title.trimmingCharacters(in: .whitespaces).isEmpty, let path = try? NoteCreation.create(title: title, in: graph.root) else { return nil }
+        linkMade[path] = graph.read(path: path)
         index.refresh(path)
         return path
     }
+
+    /// Notes made by following a link to them, as they were made: left so, they go again.
+    private var linkMade: [String: String] = [:]
 
     private func title(of view: DayView) -> String? {
         view.ref.day == nil ? TitleRename.authoredTitle(path: view.ref.path, source: view.savedText) : nil
@@ -325,8 +355,19 @@ final class Session {
     func noteLeft(_ view: DayView) {
         let path = view.ref.path
         if pendingTitles[path] != nil { settleTitle(path) }
+        if linkMade[path] != nil { DispatchQueue.main.async { [weak self] in self?.dropIfUntouched(view.ref) } }
         guard blankNotes.contains(path) else { return }
         DispatchQueue.main.async { [weak self] in self?.dropIfBlank(view.ref) }
+    }
+
+    /// A note a link made, left as it was made: gone again, the link to it as it was.
+    private func dropIfUntouched(_ ref: NoteRef) {
+        let path = ref.path
+        guard let made = linkMade[path], !windows.contains(where: { $0.shows(ref) }) else { return }
+        linkMade[path] = nil
+        guard graph.exists(path: path), graph.read(path: path) == made else { return }
+        try? FileManager.default.removeItem(at: graph.url(for: path))
+        notesChanged([path])
     }
 
     private func dropIfBlank(_ ref: NoteRef) {
@@ -396,17 +437,39 @@ final class Session {
     func trash(_ path: String) {
         save()
         windows.forEach { $0.discard(path) }
+        var trashed: NSURL?
         do {
-            try FileManager.default.trashItem(at: graph.url(for: path), resultingItemURL: nil)
+            try FileManager.default.trashItem(at: graph.url(for: path), resultingItemURL: &trashed)
         } catch {
             Log.shared.error("files", "Could not move \(path) to the Trash", detail: error.localizedDescription)
             NSAlert(error: error).runModal()
             return
         }
         Log.shared.info("files", "Moved \(path) to the Trash")
+        let undo = (NSApp.keyWindow ?? NSApp.mainWindow)?.undoManager
         windows.forEach { $0.noteTrashed(path) }
         notesChanged([path])
         if ownsSync { sync.noteChanged() }
+        // Edit ▸ Undo: back out of the Trash, where it was.
+        if let trashed = trashed as URL?, let undo {
+            undo.registerUndo(withTarget: self) { session in session.untrash(path, from: trashed) }
+            undo.setActionName("Move to Trash")
+        }
+    }
+
+    private func untrash(_ path: String, from trashed: URL) {
+        let url = graph.url(for: path)
+        guard !FileManager.default.fileExists(atPath: url.path) else { return NSSound.beep() }
+        do {
+            try FileManager.default.moveItem(at: trashed, to: url)
+        } catch {
+            NSAlert(error: error).runModal()
+            return
+        }
+        Log.shared.info("files", "Put \(path) back from the Trash")
+        notesChanged([path])
+        if ownsSync { sync.noteChanged() }
+        windows.first?.open(path, beside: false)
     }
 
     /// A picture file made a note's cover: copied into the graph first.

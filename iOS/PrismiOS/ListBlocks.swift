@@ -125,7 +125,8 @@ final class SliceBlock: UIView, SheetBlock {
     private var dirty: Set<Int> = []
     private var saveTimer: Timer?
     var onOpen: (() -> Void)?
-    var onLink: ((String) -> Void)?
+    /// Told when a link is tapped in it: the link, and the note it is in.
+    var onLink: ((String, String) -> Void)?
     var onHeightChange: (() -> Void)?
     var onCaretMove: (() -> Void)?
 
@@ -180,7 +181,10 @@ final class SliceBlock: UIView, SheetBlock {
             // A note mid-conflict is settled whole, on its own, not piece by piece.
             editor.isEditable = editable && !ConflictMarkers.detect(savedText)
             editor.onChange = { [weak self] in self?.edited(i) }
-            editor.onOpenLink = { [weak self] link in self?.onLink?(link) }
+            editor.onOpenLink = { [weak self] link in
+                guard let self else { return }
+                onLink?(link, path)
+            }
             editor.onHeightChange = { [weak self] in
                 self?.setNeedsLayout()
                 self?.onHeightChange?()

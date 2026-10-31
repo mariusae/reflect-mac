@@ -43,7 +43,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         session.writeWindows()
     }
 
-    /// File ▸ Open New Reader (⌥⇧⌘N): the inbox's links, one at a time,
+    /// File ▸ Reading Queue (⌥⇧⌘N): the inbox's links, one at a time,
     /// the oldest first, in a window of their own — the one open brought forward.
     @objc func openReadingQueue(_ sender: Any?) {
         session?.openReadingQueue().showWindow(nil)
@@ -387,11 +387,16 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// The last window closed, Prism stays: ⌃⌥Space still takes a note,
+    /// and syncing goes on.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    /// The Dock's icon clicked with no window open: one on today.
+    /// The Dock's icon clicked with no window open: the last one again, as it was left.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { newWindow(nil) }
+        if !flag, let session, session.windows.isEmpty {
+            session.restoreWindows()
+            session.windows.forEach { $0.showWindow(nil) }
+        }
         return true
     }
 
@@ -424,7 +429,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("New Row in Today", #selector(PrismWindow.writeToday(_:)), "n"),
             item("New Note", #selector(PrismWindow.newNote(_:)), "n", [.command, .option]),
             item("New Window", #selector(PrismApp.newWindow(_:)), "n", [.command, .shift]),
-            item("Open New Reader", #selector(PrismApp.openReadingQueue(_:)), "n", [.command, .option, .shift]),
+            item("Reading Queue", #selector(PrismApp.openReadingQueue(_:)), "n", [.command, .option, .shift]),
             item("Quick Note", #selector(PrismApp.showQuickNote(_:)), " ", [.control, .option]),
             .separator(),
             item("Close", #selector(PrismWindow.closePaneOrWindow(_:)), "w"),
@@ -498,9 +503,9 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("Forward", #selector(PrismWindow.goForward(_:)), "]"),
             .separator(),
             item("Today", #selector(PrismWindow.goToday(_:)), "d"),
-            item("Previous Day", #selector(PrismWindow.previousDay(_:)), left, [.command, .control]),
-            item("Next Day", #selector(PrismWindow.nextDay(_:)), right, [.command, .control]),
-            item("This Week", #selector(PrismWindow.goThisWeek(_:)), "d", [.command, .shift]),
+            item("Previous Day", #selector(PrismWindow.previousDay(_:)), "[", [.command, .option]),
+            item("Next Day", #selector(PrismWindow.nextDay(_:)), "]", [.command, .option]),
+            item("This Week", #selector(PrismWindow.goThisWeek(_:)), "d", [.command, .option, .shift]),
         ])
         submenu("Note", [
             item("Add to Inbox", #selector(PrismWindow.toggleInbox(_:)), "i", [.command, .shift]),
@@ -512,10 +517,10 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("Remove Cover", #selector(PrismWindow.removeCover(_:))),
             .separator(),
             item("Read Note", #selector(PrismWindow.readPage(_:)), "r", [.command, .shift]),
-            item("Reader", #selector(PrismWindow.toggleReaderMode(_:)), "e", [.command, .shift]),
+            item("Reading View", #selector(PrismWindow.toggleReaderMode(_:)), "e", [.command, .shift]),
             item("Highlight Passage", #selector(PrismWindow.highlightPassage(_:)), "h", [.command, .shift]),
-            item("Previous Link", #selector(PrismWindow.previousSource(_:)), left, [.command, .option]),
-            item("Next Link", #selector(PrismWindow.nextSource(_:)), right, [.command, .option]),
+            item("Previous Link", #selector(PrismWindow.previousSource(_:)), left, [.command, .option, .control]),
+            item("Next Link", #selector(PrismWindow.nextSource(_:)), right, [.command, .option, .control]),
             .separator(),
             item("Copy Link", #selector(PrismWindow.copyNoteLink(_:))),
             item("Show in Finder", #selector(PrismWindow.revealNoteInFinder(_:))),
@@ -533,6 +538,11 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         window.submenu?.addItem(item("Zoom", #selector(NSWindow.performZoom(_:))))
         main.addItem(window)
         NSApp.windowsMenu = window.submenu
+        // Help, for macOS's own search of every menu: how a command is found.
+        let help = NSMenuItem(title: "Help", action: nil, keyEquivalent: "")
+        help.submenu = NSMenu(title: "Help")
+        main.addItem(help)
+        NSApp.helpMenu = help.submenu
         let order = ["Prism", "File", "Edit", "Format", "View", "Outline", "Note", "Go", "Graph", "Window", "Help"]
         let items = main.items
         main.removeAllItems()

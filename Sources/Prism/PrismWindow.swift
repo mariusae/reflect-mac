@@ -98,7 +98,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         lenses.onLens = { [weak self] lens in self?.choose(lens) }
         list.face = session.face
         list.typography = session.face.typography()
-        list.onChoose = { [weak self] item, beside in self?.open(item.path, beside: beside, fromList: true) }
+        list.onChoose = { [weak self] item, beside in self?.choose(item, beside: beside) }
         list.onCheck = { [weak self] item in self?.check(item) }
         list.onSearch = { [weak self] query in
             self?.searchQuery = query
@@ -250,7 +250,8 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     }
 
     /// Follows a link: a note by title — made, when there is none by that
-    /// name — a file in the graph, or the web.
+    /// name — a file in the graph, or the web: in the reader, at the right,
+    /// when the note links there; ⌘-clicked, or not the note's, in the browser.
     private func follow(_ url: URL, from pane: NotePane, beside: Bool) {
         if let index = panes.firstIndex(where: { $0 === pane }) { activate(index) }
         switch url.scheme {
@@ -261,9 +262,24 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             let path = url.path.removingPercentEncoding ?? url.path
             guard path.hasPrefix("assets/"), !path.contains("..") else { return NSSound.beep() }
             NSWorkspace.shared.open(session.graph.root.appendingPathComponent(path))
+        case "http", "https" where !beside:
+            if !read(url, from: pane) { NSWorkspace.shared.open(url) }
         default:
             NSWorkspace.shared.open(url)
         }
+    }
+
+    /// A page the pane's note links to, in the reader beside it: false, it does not.
+    private func read(_ url: URL, from pane: NotePane) -> Bool {
+        let path = pane.place.path
+        if let reader, readerOwner === pane, reader.notePath == path, reader.turn(to: url) {
+            reader.focus()
+            return true
+        }
+        guard ReaderPane.sources(of: path, session: session).contains(where: { $0.url == url || $0.address == url.absoluteString }),
+              openReader(path, beside: pane, focus: true), let reader else { return false }
+        reader.turn(to: url)
+        return true
     }
 
     func shows(_ ref: NoteRef) -> Bool { panes.contains { $0.shows(ref) } }
@@ -430,9 +446,9 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     /// A row's circle ticked: a task done; a note out of the inbox.
     private func check(_ item: ListItem) {
         if let task = item.task {
-            session.change(task.notePath) { Tasks.setting(done: true, ordinal: task.ordinal, in: $0) }
+            session.change(task.notePath, undoName: "Mark Done") { Tasks.setting(done: true, ordinal: task.ordinal, in: $0) }
         } else if lens == .inbox {
-            session.setFrontmatter(item.path, "inbox", nil)
+            session.setFrontmatter(item.path, "inbox", nil, undoName: "Take Out of Inbox")
         }
     }
 
@@ -496,6 +512,25 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     private func closeCommandBar() {
         commandBar.removeFromSuperview()
         activePane.focusNote()
+    }
+
+    /// A note chosen in the list: opened where it was found — at the task,
+    /// at the words searched for.
+    private func choose(_ item: ListItem, beside: Bool) {
+        open(item.path, beside: beside, fromList: true)
+        let words: [String]
+        if let task = item.task {
+            words = [task.text]
+        } else if lens == .search {
+            words = list.query.split(separator: " ").map(String.init)
+        } else {
+            return
+        }
+        guard !words.isEmpty else { return }
+        let ref = NoteRef(path: item.path)
+        DispatchQueue.main.async { [weak self] in
+            self?.panes.first(where: { $0.shows(ref) })?.note?.editor.reveal(.words(words))
+        }
     }
 
     /// A place ⌘K found: a note, a row lately written, a heading.
@@ -836,7 +871,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     /// ⇧⌘H: the passage chosen in the reader, into its note's Highlights.
     @objc func highlightPassage(_ sender: Any?) { reader?.highlightSelection() }
 
-    /// ⌥⌘← ⌥⌘→: what the reader's note links to before, or next.
+    /// ⌃⌥⌘← ⌃⌥⌘→: what the reader's note links to before, or next.
     @objc func previousSource(_ sender: Any?) { reader?.turn(-1) }
     @objc func nextSource(_ sender: Any?) { reader?.turn(1) }
 
@@ -846,22 +881,22 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
     @objc func toggleInbox(_ sender: Any?) {
         guard let note = menuNote else { return NSSound.beep() }
-        session.setFrontmatter(note.path, "inbox", note.isInInbox ? nil : "true")
+        session.setFrontmatter(note.path, "inbox", note.isInInbox ? nil : "true", undoName: note.isInInbox ? "Take Out of Inbox" : "Add to Inbox")
     }
 
     @objc func togglePinned(_ sender: Any?) {
         guard let note = menuNote, note.day == nil else { return NSSound.beep() }
-        session.setFrontmatter(note.path, "pinned", note.pin == nil ? String(session.index.nextPinOrder) : nil)
+        session.setFrontmatter(note.path, "pinned", note.pin == nil ? String(session.index.nextPinOrder) : nil, undoName: note.pin == nil ? "Pin" : "Unpin")
     }
 
     @objc func toggleTopic(_ sender: Any?) {
         guard let note = menuNote, note.day == nil else { return NSSound.beep() }
-        session.setFrontmatter(note.path, "topic", note.isTopic ? nil : "true")
+        session.setFrontmatter(note.path, "topic", note.isTopic ? nil : "true", undoName: "Topic")
     }
 
     @objc func togglePrivate(_ sender: Any?) {
         guard let note = menuNote else { return NSSound.beep() }
-        session.setFrontmatter(note.path, "private", note.isPrivate ? nil : "true")
+        session.setFrontmatter(note.path, "private", note.isPrivate ? nil : "true", undoName: "Private")
     }
 
     @objc func addCover(_ sender: Any?) {
@@ -879,7 +914,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
     @objc func removeCover(_ sender: Any?) {
         guard let note = menuNote, note.cover != nil else { return NSSound.beep() }
-        session.setFrontmatter(note.path, NoteCover.key, nil)
+        session.setFrontmatter(note.path, NoteCover.key, nil, undoName: "Remove Cover")
     }
 
     @objc func copyNoteLink(_ sender: Any?) {
@@ -923,7 +958,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         case #selector(previousDay(_:)), #selector(nextDay(_:)):
             return activePane.ref.day != nil || GraphPaths.week(fromWeeklyPath: activePane.place.path) != nil
         case #selector(toggleInbox(_:)):
-            item.title = note?.isInInbox == true ? "Remove from Inbox" : "Add to Inbox"
+            item.title = note?.isInInbox == true ? "Take Out of Inbox" : "Add to Inbox"
             return note != nil
         case #selector(togglePinned(_:)):
             item.title = note?.pin != nil ? "Unpin" : "Pin"

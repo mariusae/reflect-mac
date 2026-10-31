@@ -247,7 +247,8 @@ extension OutlineTextView {
             let dy = start.y - next.locationInWindow.y
             if !moved, abs(dy) < 3 { continue }
             moved = true
-            let minutes = Int((dy / perMinute / 5).rounded()) * 5
+            // A quarter of an hour at a time, as the schedule's hours are.
+            let minutes = Int((dy / perMinute / 15).rounded()) * 15
             let following = next.modifierFlags.contains(.option)
             guard minutes != applied.minutes || following != applied.following else { continue }
             let changed = timeline.moved(index, by: minutes, resizing: hit.resizing, following: following, texts: texts)

@@ -24,7 +24,8 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     /// Asked to open a note — at a row, by its place among all the note's
     /// rows, to show and mark a moment.
     var onOpen: ((String, Int?) -> Void)?
-    var onLink: ((String) -> Void)?
+    /// Told when a link is tapped: the link, and the note it is in.
+    var onLink: ((String, String) -> Void)?
     /// Asked to set a note's frontmatter key — `inbox` — or take it away.
     var onFlag: ((String, String, String?) -> Void)?
     /// How many notes link to the note shown, once found: its bar's count.
@@ -413,7 +414,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             } else {
                 let ref = NoteRef(path: path)
                 let block = NoteBlock(ref: ref, store: store, metrics: metrics, showsHeader: false, live: true)
-                block.onLink = { [weak self] link in self?.onLink?(link) }
+                block.onLink = { [weak self] link, from in self?.onLink?(link, from) }
                 notes = [block]
             }
         }
@@ -440,11 +441,10 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             }
             if let slices = block as? SliceBlock {
                 let path = slices.path
-                // What links here, opened at the link; else the note.
+                // Opened where it was found: at the link, the task, the words searched for.
                 let start = slices.slices.first?.start
-                let linked = notePath != nil
-                slices.onOpen = { [weak self] in self?.onOpen?(path, linked ? start : nil) }
-                slices.onLink = { [weak self] link in self?.onLink?(link) }
+                slices.onOpen = { [weak self] in self?.onOpen?(path, start) }
+                slices.onLink = { [weak self] link, from in self?.onLink?(link, from) }
             }
             content.addSubview(block)
         }

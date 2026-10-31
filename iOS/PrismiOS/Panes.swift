@@ -320,6 +320,11 @@ final class NoteController: UIViewController {
             return menu?(history.current) ?? UIMenu()
         }
         bar.backMenu = { [weak self] in self?.backMenu() }
+        // From the left edge, as ‹ does: back in the pane, while it has somewhere to go back to.
+        let edge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(swipedBack(_:)))
+        edge.edges = .left
+        edge.delegate = self
+        view.addGestureRecognizer(edge)
         // A link note's page, swiped in from the right: to read.
         let read = UISwipeGestureRecognizer(target: self, action: #selector(swipedToRead))
         read.direction = .left
@@ -338,7 +343,8 @@ final class NoteController: UIViewController {
     }
 
     @objc private func swipedToRead() {
-        guard GraphPaths.day(fromDailyPath: place.path) == nil else { return }
+        // Typing, a sideways swipe moves the row in or out: not to the page.
+        guard GraphPaths.day(fromDailyPath: place.path) == nil, !Self.typing(in: view) else { return }
         sheet?.saveAll()
         ReaderController.open(notePath: place.path, store: store, from: self)
     }
@@ -362,6 +368,16 @@ final class NoteController: UIViewController {
         sheet?.saveAll()
         history.go(place)
         show(row: row)
+    }
+
+    private static func typing(in view: UIView) -> Bool {
+        view.isFirstResponder || view.subviews.contains { typing(in: $0) }
+    }
+
+    @objc private func swipedBack(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        guard gesture.state == .ended, gesture.translation(in: view).x > 60 else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
+        back()
     }
 
     /// Back: in the pane, or out of it.
@@ -447,5 +463,13 @@ final class NoteController: UIViewController {
         if history.current.path == path {
             if history.canGoBack { history.goBack(); show() } else { onLeave?() }
         }
+    }
+}
+
+extension NoteController: UIGestureRecognizerDelegate {
+    /// The edge's own swipe only while the pane has somewhere to go back
+    /// to: else the stack's, out of the pane.
+    func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+        gesture is UIScreenEdgePanGestureRecognizer ? history.canGoBack : true
     }
 }

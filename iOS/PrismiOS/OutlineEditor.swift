@@ -1363,7 +1363,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         rowHold.minimumPressDuration = 0.4
         rowHold.isOnPicture = { [weak self] point in
             guard let self, self.isEditable, self.rowUnder(point) != nil, !self.blockHold.isOnPicture!(point),
-                  self.webLink(at: point) == nil else { return false }
+                  self.webLink(at: point) == nil, self.noteLink(at: point) == nil else { return false }
             switch self.target(at: point) {
             case .image: return false
             case .marker: return true
@@ -1373,13 +1373,13 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         rowHold.addTarget(self, action: #selector(heldRow(_:)))
         // A web link held — reading or typing — its menu, not the row picked up.
         linkHold.minimumPressDuration = 0.4
-        linkHold.isOnPicture = { [weak self] point in self?.webLink(at: point) != nil }
+        linkHold.isOnPicture = { [weak self] point in self?.webLink(at: point) != nil || self?.noteLink(at: point) != nil }
         linkHold.addTarget(self, action: #selector(heldLink(_:)))
         linkHold.delegate = self
         addGestureRecognizer(linkHold)
         // A time block held by its times, its foot or its empty part: moved,
         // or made longer — not its row picked up.
-        blockHold.minimumPressDuration = 0.25
+        blockHold.minimumPressDuration = 0.3
         blockHold.isOnPicture = { [weak self] point in
             guard let self, self.isEditable else { return false }
             return self.outlineLayout.timeBlockHit(at: CGPoint(x: point.x - self.textContainerInset.left,
@@ -1456,6 +1456,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         textStorage.setAttributedString(text)
         adjusting = false
         undoManager?.removeAllActions()
+        readingUndo.removeAllActions()
         heightMayHaveChanged()
     }
 
@@ -1509,6 +1510,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         cachedRows = nil
         cachedRanges = nil
         undoManager?.removeAllActions()
+        readingUndo.removeAllActions()
         measured = (prepared.width, prepared.fit, prepared.rows)
         showPicturesLoadedMeanwhile()
         heightMayHaveChanged()
@@ -1683,10 +1685,32 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         textStorage.replaceCharacters(in: NSRange(location: start, length: end - start),
                                       with: OutlineText.attributed(Array(after[prefix..<(after.count - suffix)])))
         adjusting = false
-        undoManager?.registerUndo(withTarget: self) { editor in editor.replace(before, caret: beforeCaret, undoName: undoName) }
-        if let undoName { undoManager?.setActionName(undoName) }
+        let undo = rowUndo
+        undo.registerUndo(withTarget: self) { editor in editor.replace(before, caret: beforeCaret, undoName: undoName) }
+        if let undoName { undo.setActionName(undoName) }
         if let caret { setCaret(caret) }
         changed()
+        // Changed while read, not typed in: no keys to undo it with — said, with Undo.
+        // Folding is only looking, not changing: not said.
+        if !isFirstResponder, let undoName, !["Fold", "Unfold"].contains(undoName), !undo.isUndoing, !undo.isRedoing {
+            NotificationCenter.default.post(name: .prismUndoable, object: self, userInfo: ["name": undoName, "undo": undo])
+        }
+    }
+
+    /// Where a change to the rows is undone from: the text's own, typing;
+    /// one of the editor's, else, which the text's is not while it is read.
+    private var rowUndo: UndoManager { undoManager ?? readingUndo }
+    private let readingUndo = UndoManager()
+
+    func beginRowUndoGroup() { rowUndo.beginUndoGrouping() }
+    func endRowUndoGroup() { rowUndo.endUndoGrouping() }
+
+    /// The keyboard bar's ↶ and ↷.
+    @objc func undoChange() { rowUndo.undo(); showUndoState() }
+    @objc func redoChange() { rowUndo.redo(); showUndoState() }
+
+    func showUndoState() {
+        toolbar?.showUndo(canUndo: rowUndo.canUndo, canRedo: rowUndo.canRedo)
     }
 
     private func changed() {
@@ -1917,6 +1941,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         }
         onCaretMove?()
         showFoldState()
+        showUndoState()
         if completing != nil, typedOpener == nil { refreshCompletion() }
         // The span the caret is in shows its marks; the one it left, not.
         let old = styler.caret
@@ -1995,6 +2020,42 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         replace(made.rows, caret: OutlineKeys.Caret(row: made.row, offset: made.offset), undoName: "New Time Block")
         inputDelegate?.textDidChange(self)
         inputDelegate?.selectionDidChange(self)
+    }
+
+    /// A keyboard's keys, as the Mac's: Tab in and out, the row moved,
+    /// marked, folded, made a checkbox or a task.
+    override var keyCommands: [UIKeyCommand]? {
+        guard isFirstResponder else { return super.keyCommands }
+        func key(_ title: String, _ input: String, _ flags: UIKeyModifierFlags, _ action: Selector) -> UIKeyCommand {
+            let command = UIKeyCommand(title: title, action: action, input: input, modifierFlags: flags)
+            command.wantsPriorityOverSystemBehavior = true
+            return command
+        }
+        return (super.keyCommands ?? []) + [
+            key("Indent", "\t", [], #selector(indent)),
+            key("Outdent", "\t", .shift, #selector(outdent)),
+            key("Move Up", UIKeyCommand.inputUpArrow, [.command, .control], #selector(moveUp)),
+            key("Move Down", UIKeyCommand.inputDownArrow, [.command, .control], #selector(moveDown)),
+            key("Bold", "b", .command, #selector(makeBold)),
+            key("Italic", "i", .command, #selector(makeItalic)),
+            key("Highlight", "h", [.command, .shift], #selector(makeHighlighted)),
+            key("Link…", "k", [.command, .alternate], #selector(insertLink)),
+            key("Checklist Item", "\r", .command, #selector(cycleChecklist)),
+            key("Task", "\r", [.command, .shift], #selector(cycleTask)),
+            key("Fold", "9", .command, #selector(foldHere)),
+            key("Unfold", "0", .command, #selector(unfoldHere)),
+            key("New Time Block", "\r", [.command, .alternate], #selector(newTimeBlock)),
+        ]
+    }
+
+    @objc func foldHere() {
+        guard rows.indices.contains(caret.row), !rows[caret.row].isFolded, OutlineEditing.hasChildren(rows, caret.row) else { return }
+        toggleFoldHere()
+    }
+
+    @objc func unfoldHere() {
+        guard rows.indices.contains(caret.row), rows[caret.row].isFolded else { return }
+        toggleFoldHere()
     }
 
     @objc func indent() { perform("Indent") { OutlineEditing.indent(&$0, $1) } }
@@ -2143,6 +2204,9 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     @objc func insertLink() {
         insertText("[[]]")
         selectedRange = NSRange(location: selectedRange.location - 2, length: 0)
+        // The notes to link offered at once, as typing `[[` offers them.
+        beginCompletion(typedAt: selectedRange.location - 1)
+        refreshCompletion()
     }
 
     // MARK: Taps and swipes
@@ -2219,10 +2283,11 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         case .marker(let index):
             let row = rows[index]
             if row.task != nil {
-                if let toggled = OutlineKeys.toggle(rows, at: index) {
-                    replace(toggled, caret: isFirstResponder ? caret : nil, undoName: "Toggle Done")
-                }
+                guard let toggled = OutlineKeys.toggle(rows, at: index) else { return }
+                replace(toggled, caret: isFirstResponder ? caret : nil, undoName: "Toggle Done")
             } else {
+                // Nothing under it to fold: nothing done, nothing felt.
+                guard row.isFolded || OutlineEditing.hasChildren(rows, index) else { return }
                 toggleFold(at: index)
             }
             UISelectionFeedbackGenerator().selectionChanged()
@@ -2388,13 +2453,20 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         }
         // Folded within, deeper down: all of it at once.
         if row.isFolded ? row.folded.contains(where: { $0.isFolded }) : inside.contains(where: { $0.isFolded }) {
-            actions.append(UIAction(title: "Unfold All", image: UIImage(systemName: "arrow.up.and.down")) { [weak self] _ in
+            actions.append(UIAction(title: "Unfold Completely", image: UIImage(systemName: "arrow.up.and.down")) { [weak self] _ in
                 self?.unfoldCompletely(at: index)
             })
         }
         if !row.isFolded, zip(inside.indices, inside).contains(where: { i, child in OutlineEditing.hasChildren(all, i) && !child.isFolded }) {
-            actions.append(UIAction(title: "Fold All", image: UIImage(systemName: "arrow.down.and.line.horizontal.and.arrow.up")) { [weak self] _ in
+            actions.append(UIAction(title: "Fold Completely", image: UIImage(systemName: "arrow.down.and.line.horizontal.and.arrow.up")) { [weak self] _ in
                 self?.foldCompletely(at: index)
+            })
+        }
+        if let task = row.task {
+            actions.append(UIAction(title: task == .open ? "Mark Done" : "Mark Not Done",
+                                    image: UIImage(systemName: task == .open ? "checkmark.circle" : "circle")) { [weak self] _ in
+                guard let self, let toggled = OutlineKeys.toggle(rows, at: index) else { return }
+                replace(toggled, caret: isFirstResponder ? caret : nil, undoName: "Toggle Done")
             })
         }
         if hasChecklist(under: index) {
@@ -2403,7 +2475,61 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             actions.append(UIAction(title: "Move Done to Bottom", image: UIImage(systemName: "arrow.down.to.line"),
                                     attributes: movable ? [] : .disabled) { [weak self] _ in self?.moveDoneToBottom(under: index) })
         }
+        if isEditable {
+            actions.append(UIAction(title: "Turn Into…", image: UIImage(systemName: "arrow.triangle.2.circlepath")) { [weak self] _ in
+                self?.showTurnInto(forRow: index)
+            })
+            actions.append(UIAction(title: "Delete Row", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
+                self?.deleteRow(at: index)
+            })
+        }
         return actions
+    }
+
+    /// The kinds a row can be, to choose from: as the Mac's Turn Into.
+    private func showTurnInto(forRow index: Int) {
+        guard rows.indices.contains(index) else { return }
+        let row = rows[index]
+        let kinds: [(String, String, Bool, (inout Row) -> Void)] = [
+            ("Bullet", "list.bullet", row.kind == .bullet && row.task == nil, { $0.kind = .bullet; $0.task = nil; $0.marker = "-" }),
+            ("Checkbox", "checkmark.square", row.kind == .bullet && row.task != nil && row.marker != "+",
+             { $0.kind = .bullet; $0.marker = "-"; $0.task = $0.task ?? .open }),
+            ("Task", "checkmark.circle", row.kind == .bullet && row.task != nil && row.marker == "+",
+             { $0.kind = .bullet; $0.marker = "+"; $0.task = $0.task ?? .open }),
+            ("Numbered", "list.number", row.kind == .ordered, { $0.kind = .ordered; $0.marker = "."; $0.task = nil }),
+            ("Heading 1", "textformat.size.larger", row.kind == .heading(1), { $0.kind = .heading(1); $0.task = nil }),
+            ("Heading 2", "textformat.size", row.kind == .heading(2), { $0.kind = .heading(2); $0.task = nil }),
+            ("Heading 3", "textformat.size.smaller", row.kind == .heading(3), { $0.kind = .heading(3); $0.task = nil }),
+            ("Quote", "text.quote", row.kind == .quote, { $0.kind = .quote; $0.task = nil }),
+        ]
+        let sheet = UIAlertController(title: "Turn Into", message: nil, preferredStyle: .actionSheet)
+        for (title, _, current, change) in kinds {
+            sheet.addAction(UIAlertAction(title: current ? "✓ " + title : title, style: .default) { [weak self] _ in
+                guard let self, rows.indices.contains(index) else { return }
+                var all = rows
+                all[index].spacing = 1
+                change(&all[index])
+                OutlineEditing.normalize(&all)
+                replace(all, caret: isFirstResponder ? caret : nil, undoName: "Change Row Type")
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        sheet.popoverPresentationController?.sourceView = self
+        sheet.popoverPresentationController?.sourceRect = CGRect(origin: rowMenuPoint, size: .zero)
+        window?.rootViewController.map { root in
+            var top = root
+            while let presented = top.presentedViewController { top = presented }
+            top.present(sheet, animated: true)
+        }
+    }
+
+    /// A row, and the rows under it, taken away.
+    private func deleteRow(at index: Int) {
+        var all = rows
+        guard all.indices.contains(index) else { return }
+        _ = OutlineEditing.delete(&all, index..<(index + 1))
+        replace(all, caret: nil, undoName: "Delete Row")
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     func unfoldCompletely(at index: Int) {
@@ -2485,7 +2611,33 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// The link held, for its menu.
     private var heldLinkNow: (row: Int, offset: Int, address: String, title: String, frame: CGRect)?
 
+    /// The link to a note at a point — `[[Title]]` — and where it is drawn.
+    private func noteLink(at point: CGPoint) -> (link: String, frame: CGRect)? {
+        guard textStorage.length > 0 else { return nil }
+        let inContainer = CGPoint(x: point.x - textContainerInset.left, y: point.y - textContainerInset.top)
+        let glyph = outlineLayout.glyphIndex(for: inContainer, in: textContainer)
+        guard glyph < outlineLayout.numberOfGlyphs,
+              outlineLayout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainer).insetBy(dx: -4, dy: -4).contains(inContainer)
+        else { return nil }
+        let character = outlineLayout.characterIndexForGlyph(at: glyph)
+        var range = NSRange()
+        guard character < textStorage.length,
+              let link = textStorage.attribute(.prismLink, at: character, effectiveRange: &range) as? String, link.hasPrefix("[[") else { return nil }
+        let drawn = outlineLayout.boundingRect(forGlyphRange: outlineLayout.glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: textContainer)
+        return (link, drawn.offsetBy(dx: textContainerInset.left, dy: textContainerInset.top))
+    }
+
+    /// The link to a note held, for its menu.
+    private var heldNoteLink: (link: String, frame: CGRect)?
+
     @objc private func heldLink(_ gesture: UILongPressGestureRecognizer) {
+        if gesture.state == .began, webLink(at: gesture.location(in: self)) == nil, let link = noteLink(at: gesture.location(in: self)) {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            heldNoteLink = link
+            pictureMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: "notelink" as NSString,
+                                                                       sourcePoint: CGPoint(x: link.frame.midX, y: link.frame.minY)))
+            return
+        }
         guard gesture.state == .began, let link = webLink(at: gesture.location(in: self)) else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         heldLinkNow = link
@@ -2508,9 +2660,23 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
                 })
             }
         }
-        actions.append(UIAction(title: "Open", image: UIImage(systemName: "safari")) { [weak self] _ in self?.onOpenLink?(link.address) })
+        actions.append(UIAction(title: "Open", image: UIImage(systemName: "doc.plaintext")) { [weak self] _ in self?.onOpenLink?(link.address) })
+        if let url = URL(string: link.address) {
+            actions.append(UIAction(title: "Open in Browser", image: UIImage(systemName: "safari")) { _ in UIApplication.shared.open(url) })
+        }
         actions.append(UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { _ in UIPasteboard.general.string = link.address })
         return UIMenu(children: actions)
+    }
+
+    /// A link to a note held: opened, or copied.
+    fileprivate func noteLinkMenu() -> UIMenu? {
+        guard let held = heldNoteLink else { return nil }
+        let link = held.link
+        let title = String(link.dropFirst(2).dropLast(2)).components(separatedBy: "|")[0]
+        return UIMenu(children: [
+            UIAction(title: "Open", image: UIImage(systemName: "doc.text")) { [weak self] _ in self?.onOpenLink?(link) },
+            UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { _ in UIPasteboard.general.string = "[[\(title)]]" },
+        ])
     }
 
     fileprivate var heldLinkFrame: CGRect? { heldLinkNow?.frame }
@@ -2773,6 +2939,7 @@ final class OutlineToolbar: UIInputView {
     }())
     private let shift = OutlineToolbar.glass()
     private let move = OutlineToolbar.glass()
+    private let history = OutlineToolbar.glass()
     private let words = OutlineToolbar.glass()
     private let capsule = OutlineToolbar.glass()
     private let away = OutlineToolbar.glass()
@@ -2780,6 +2947,8 @@ final class OutlineToolbar: UIInputView {
     private let tools = UIStackView()
     private let formatting = UIStackView()
     private weak var fold: UIButton?
+    private weak var undo: UIButton?
+    private weak var redo: UIButton?
     private let chips = UIScrollView()
     private let chipRow = UIStackView()
 
@@ -2802,8 +2971,15 @@ final class OutlineToolbar: UIInputView {
             ("arrow.up", #selector(OutlineEditor.moveUp), "Move Up"),
             ("arrow.down", #selector(OutlineEditor.moveDown), "Move Down"),
         ], editor: editor, size: 14)
+        let undos = Self.stack([
+            ("arrow.uturn.backward", #selector(OutlineEditor.undoChange), "Undo"),
+            ("arrow.uturn.forward", #selector(OutlineEditor.redoChange), "Redo"),
+        ], editor: editor, size: 14)
         shift.contentView.addSubview(shifts)
         move.contentView.addSubview(moves)
+        history.contentView.addSubview(undos)
+        undo = undos.arrangedSubviews.first as? UIButton
+        redo = undos.arrangedSubviews.last as? UIButton
         for (stack, items) in [(tools, [
             ("rectangle.compress.vertical", #selector(OutlineEditor.toggleFoldHere), "Fold"),
             ("checkmark.square", #selector(OutlineEditor.cycleChecklist), "Checklist"),
@@ -2841,7 +3017,7 @@ final class OutlineToolbar: UIInputView {
         chips.addSubview(chipRow)
         capsule.contentView.addSubview(chips)
 
-        for piece in [shift, move, words, capsule, away] { container.contentView.addSubview(piece) }
+        for piece in [history, shift, move, words, capsule, away] { container.contentView.addSubview(piece) }
         addSubview(container)
         autoresizingMask = .flexibleHeight
     }
@@ -2889,13 +3065,13 @@ final class OutlineToolbar: UIInputView {
         let chipsWidth = chipRow.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
         chipRow.frame = CGRect(x: 6, y: 6, width: chipsWidth, height: Self.main - 12)
         chips.contentSize = CGSize(width: chipsWidth + 12, height: Self.main)
-        // The small ones over the middle of the main, side by side.
+        // The small ones over the middle of the main, side by side: undo, then the row's moves.
         let width: CGFloat = 88
         let middle = capsule.frame.midX
-        shift.frame = CGRect(x: middle - Self.gap / 2 - width, y: 0, width: width, height: Self.small)
-        move.frame = CGRect(x: middle + Self.gap / 2, y: 0, width: width, height: Self.small)
-        shift.contentView.subviews.first?.frame = shift.bounds.insetBy(dx: 4, dy: 0)
-        move.contentView.subviews.first?.frame = move.bounds.insetBy(dx: 4, dy: 0)
+        history.frame = CGRect(x: middle - width * 1.5 - Self.gap, y: 0, width: width, height: Self.small)
+        shift.frame = CGRect(x: middle - width / 2, y: 0, width: width, height: Self.small)
+        move.frame = CGRect(x: middle + width / 2 + Self.gap, y: 0, width: width, height: Self.small)
+        for piece in [history, shift, move] { piece.contentView.subviews.first?.frame = piece.bounds.insetBy(dx: 4, dy: 0) }
     }
 
     /// Touches between the pieces: the note's, under them, not the bar's.
@@ -2921,6 +3097,12 @@ final class OutlineToolbar: UIInputView {
         } completion: { _ in
             hidden.isHidden = true
         }
+    }
+
+    /// ↶ and ↷, dimmed when there is nothing to undo, or redo.
+    func showUndo(canUndo: Bool, canRedo: Bool) {
+        undo?.isEnabled = canUndo
+        redo?.isEnabled = canRedo
     }
 
     /// Fold, for a row with children; Unfold, for one folded; dimmed, neither.
@@ -2974,6 +3156,7 @@ extension OutlineEditor: UIEditMenuInteractionDelegate {
                              suggestedActions: [UIMenuElement]) -> UIMenu? {
         guard let id = configuration.identifier as? NSString else { return nil }
         if id == "link" { return linkMenu() }
+        if id == "notelink" { return noteLinkMenu() }
         if id.hasPrefix("row:"), let index = Int(id.substring(from: 4)) {
             let actions = rowActions(index)
             return actions.isEmpty ? nil : UIMenu(children: actions)
@@ -2994,6 +3177,7 @@ extension OutlineEditor: UIEditMenuInteractionDelegate {
     func editMenuInteraction(_ interaction: UIEditMenuInteraction, targetRectFor configuration: UIEditMenuConfiguration) -> CGRect {
         guard let id = configuration.identifier as? NSString else { return .null }
         if id == "link" { return heldLinkFrame ?? .null }
+        if id == "notelink" { return heldNoteLink?.frame ?? .null }
         if id.hasPrefix("row:") { return CGRect(x: rowMenuPoint.x - 12, y: rowMenuPoint.y - 12, width: 24, height: 24) }
         return pictureFrame(NSRangeFromString(id as String)) ?? .null
     }

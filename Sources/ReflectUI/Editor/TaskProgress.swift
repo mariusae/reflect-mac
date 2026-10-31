@@ -34,7 +34,7 @@ extension OutlineTextView {
             guard let folded = shown.indices.first(where: { index in
                 Row.unfold(shown[index].folded).contains { $0.task != nil && $0.task?.isDone != true }
             }) else { return false }
-            perform("Expand", on: folded..<(folded + 1)) { rows, selection in
+            perform("Unfold", on: folded..<(folded + 1)) { rows, selection in
                 OutlineEditing.unfold(&rows, at: selection.lowerBound)
                 return selection
             }

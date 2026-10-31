@@ -52,8 +52,8 @@ final class NoteBlock: UIView {
     private var dirty = false
     /// Told when the header is tapped: the note, to open on its own.
     var onOpen: (() -> Void)?
-    /// Told when a link is tapped in it.
-    var onLink: ((String) -> Void)?
+    /// Told when a link is tapped in it: the link, and the note it is in.
+    var onLink: ((String, String) -> Void)?
     /// Told when the caret in it moved.
     var onCaretMove: (() -> Void)?
     /// Told when typing in it stopped.
@@ -180,7 +180,10 @@ final class NoteBlock: UIView {
         editor.day = ref.day
         addSubview(editor)
         editor.onChange = { [weak self] in self?.edited() }
-        editor.onOpenLink = { [weak self] link in self?.onLink?(link) }
+        editor.onOpenLink = { [weak self] link in
+            guard let self else { return }
+            onLink?(link, ref.path)
+        }
         // A day has no cover; any other note's pictures can be one.
         if ref.day == nil {
             editor.onMakeCover = { [weak self] source in
@@ -346,7 +349,7 @@ final class NoteBlock: UIView {
     func setInbox(_ inInbox: Bool, marked: Bool, done: @escaping () -> Void) {
         var changed = false
         if inInbox, accessory == nil {
-            setAccessory(symbol: "checkmark.circle", label: "Done: Out of the Inbox", action: done)
+            setAccessory(symbol: "checkmark.circle", label: "Take Out of Inbox", action: done)
             changed = true
         } else if !inInbox, let accessory {
             self.accessory = nil

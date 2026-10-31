@@ -198,11 +198,29 @@ final class PrismStore {
 
     /// Sets or takes away a frontmatter key of a note — `inbox`, `topic`,
     /// `pinned` — and has everything showing it follow.
-    func setFrontmatter(_ path: String, _ key: String, _ value: String?) {
+    func setFrontmatter(_ path: String, _ key: String, _ value: String?, undoName: String? = nil) {
         let source = text(path)
         let updated = Frontmatter.setting(key, to: value, in: source)
         guard updated != source else { return }
         write(updated, path: path)
+        if let undoName { registerUndo(undoName, path: path, from: updated, back: source) }
+    }
+
+    /// What was done to notes outside their editors — a note out of the
+    /// inbox, pinned — to undo: offered for a moment, over the page.
+    let undo = UndoManager()
+
+    private func registerUndo(_ name: String, path: String, from updated: String, back source: String) {
+        undo.registerUndo(withTarget: self) { store in
+            // Changed since: not undone over it.
+            guard store.text(path) == updated else { return }
+            store.write(source, path: path)
+            store.registerUndo(name, path: path, from: source, back: updated)
+        }
+        undo.setActionName(name)
+        if !undo.isUndoing, !undo.isRedoing {
+            NotificationCenter.default.post(name: .prismUndoable, object: self, userInfo: ["name": name, "undo": undo])
+        }
     }
 
     // MARK: New notes
@@ -224,11 +242,32 @@ final class PrismStore {
         }
     }
 
+    /// A note by its title, followed to by a link — made, if there is none:
+    /// made so, it goes again when it is left as it was made.
+    func note(titled title: String) -> String? {
+        if let path = index?.resolve(title) { return path }
+        guard let graph, !title.trimmingCharacters(in: .whitespaces).isEmpty,
+              let path = try? NoteCreation.create(title: title, in: graph.root) else { return nil }
+        linkMade[path] = text(path)
+        noteChanged([path])
+        return path
+    }
+
+    /// Notes made by following a link to them, as they were made.
+    private var linkMade: [String: String] = [:]
+
     /// A note made here, left: gone, when nothing was written in it; else
     /// moved to the file its title names — nothing links to it yet. Says
     /// where it is now.
     @discardableResult
     func settleNewNote(_ path: String) -> String? {
+        // Made by a link, left as it was: gone again.
+        if let made = linkMade.removeValue(forKey: path), let graph {
+            guard text(path) == made else { return path }
+            try? FileManager.default.removeItem(at: graph.url(for: path))
+            noteChanged([path])
+            return nil
+        }
         guard blankNotes.contains(path), let graph, let index else { return path }
         let source = text(path)
         guard let title = TitleRename.authoredTitle(path: path, source: source) else {

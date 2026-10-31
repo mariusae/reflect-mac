@@ -70,6 +70,7 @@ final class LensList: NSView {
         field.sendsWholeSearchString = false
         field.target = self
         field.action = #selector(searched)
+        field.delegate = self
         field.isHidden = true
         addSubview(field)
         // Nothing of it past its glass.
@@ -359,5 +360,14 @@ final class ListRow: NSView, NSDraggingSource {
 
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         isHovered = false
+    }
+}
+
+extension LensList: NSSearchFieldDelegate {
+    /// ↓ in the field: into what was found, the first of it.
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard selector == #selector(NSResponder.moveDown(_:)), !rows.isEmpty else { return false }
+        step(1)
+        return true
     }
 }

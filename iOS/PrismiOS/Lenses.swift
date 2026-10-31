@@ -103,7 +103,7 @@ final class NoteListController: UIViewController, LensPage {
             row.transform = CGAffineTransform(translationX: -row.bounds.width, y: 0)
             row.alpha = 0
         } completion: { [weak self] _ in
-            self?.store.setFrontmatter(row.path, "inbox", nil)
+            self?.store.setFrontmatter(row.path, "inbox", nil, undoName: "Take Out of Inbox")
         }
     }
 
@@ -169,7 +169,7 @@ final class NoteSummaryRow: UIControl {
             doneButton.setImage(UIImage(systemName: "checkmark.circle", withConfiguration: UIImage.SymbolConfiguration(pointSize: 21, weight: .light)),
                                 for: .normal)
             doneButton.tintColor = Ink.secondary
-            doneButton.accessibilityLabel = "Done: Out of the Inbox"
+            doneButton.accessibilityLabel = "Take Out of Inbox"
             doneButton.addAction(UIAction { [weak self] _ in
                 guard let self else { return }
                 doneButton.setImage(UIImage(systemName: "checkmark.circle.fill",

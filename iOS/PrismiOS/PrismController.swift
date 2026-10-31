@@ -69,6 +69,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
                 MainActor.assumeIsolated { Dictation.prepare() }
             }
         }
+        NotificationCenter.default.addObserver(self, selector: #selector(undoable(_:)), name: .prismUndoable, object: nil)
         NotificationCenter.default.addObserver(forName: .prismReader, object: nil, queue: .main) { [weak self] note in
             let reading = note.object as? Bool ?? false
             MainActor.assumeIsolated {
@@ -173,9 +174,9 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
     private func makeSheet(_ kind: SheetKind, open: @escaping (PanePlace, Int?) -> Void) -> SheetController {
         let sheet = SheetController(kind: kind, store: store)
         sheet.onOpen = { path, row in open(PanePlace(path: path), row) }
-        sheet.onLink = { [weak self, weak sheet] link in
+        sheet.onLink = { [weak self, weak sheet] link, from in
             sheet?.saveAll()
-            self?.follow(link, open: open)
+            self?.follow(link, from: from, by: sheet, open: open)
         }
         sheet.onFlag = { [weak self] path, key, value in self?.store.setFrontmatter(path, key, value) }
         sheet.onChromeHidden = { [weak self] hidden in self?.setChromeHidden(hidden) }
@@ -231,21 +232,28 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
     }
 
     /// A link tapped: a note by its title — made, when there is none — a
-    /// day by its date, or the web.
-    private func follow(_ link: String, open: @escaping (PanePlace, Int?) -> Void) {
+    /// day by its date, or the web: read in the reader, when the note it is
+    /// in links there; else in Safari.
+    private func follow(_ link: String, from notePath: String, by sheet: UIViewController?, open: @escaping (PanePlace, Int?) -> Void) {
         if link.hasPrefix("[["), link.hasSuffix("]]") {
             let title = String(link.dropFirst(2).dropLast(2)).components(separatedBy: "|")[0].trimmingCharacters(in: .whitespaces)
             if let day = Day(title) {
                 open(PanePlace(path: GraphPaths.dailyPath(for: day)), nil)
-            } else if let path = store.index?.resolve(title) {
-                open(PanePlace(path: path), nil)
-            } else if let graph = store.graph, let path = try? NoteCreation.create(title: title, in: graph.root) {
-                store.noteChanged([path])
+            } else if let path = store.note(titled: title) {
                 open(PanePlace(path: path), nil)
             }
         } else if let url = URL(string: link), url.scheme != nil {
+            if let sheet, read(url, in: notePath, from: sheet) { return }
             openWeb(url)
         }
+    }
+
+    /// A page a note links to, in the reader, turned to it: false, the note does not.
+    private func read(_ url: URL, in notePath: String, from controller: UIViewController) -> Bool {
+        let sources = ReaderController.sources(of: notePath, store: store)
+        guard let index = sources.firstIndex(where: { $0.url == url || $0.address == url.absoluteString }) else { return false }
+        ReaderPlace.choose(sources[index], for: notePath, first: index == 0)
+        return ReaderController.open(notePath: notePath, store: store, from: controller)
     }
 
     func openWeb(_ url: URL) {
@@ -551,7 +559,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         }
         if readerColumn != nil {
             commands += [
-                UIKeyCommand(title: "Reader", action: #selector(keyReader), input: "e", modifierFlags: [.command, .shift]),
+                UIKeyCommand(title: "Reading View", action: #selector(keyReader), input: "e", modifierFlags: [.command, .shift]),
                 UIKeyCommand(title: "Highlight Passage", action: #selector(keyHighlight), input: "h", modifierFlags: [.command, .shift]),
                 UIKeyCommand(title: "Close Reader", action: #selector(keyClosePage), input: "w", modifierFlags: .command),
             ]
@@ -796,8 +804,10 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
 
     // MARK: Navigation
 
+    /// The stack's back swipe, out of a pane: not while the pane goes back in itself.
     func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
-        (shownStack.viewControllers.count) > 1
+        if let pane = shownStack.topViewController as? NoteController, pane.history.canGoBack { return false }
+        return shownStack.viewControllers.count > 1
     }
 
     func navigationController(_ navigationController: UINavigationController, didShow viewController: UIViewController, animated: Bool) {
@@ -972,6 +982,61 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         return UIMenu(title: SliceBlock.name(path, store: store), options: .displayInline, children: items)
     }
 
+    // MARK: Undo, while reading
+
+    private var undoPill: UIVisualEffectView?
+    private var undoPillTimer: Timer?
+
+    /// A change made while reading — a box ticked, a row moved — said over
+    /// the foot of the page for a moment, with Undo.
+    @objc private func undoable(_ note: Notification) {
+        guard let name = note.userInfo?["name"] as? String, let undo = note.userInfo?["undo"] as? UndoManager else { return }
+        undoPill?.removeFromSuperview()
+        undoPillTimer?.invalidate()
+        let effect = UIGlassEffect()
+        effect.isInteractive = true
+        let pill = UIVisualEffectView(effect: effect)
+        pill.cornerConfiguration = .capsule()
+        let label = UILabel()
+        label.text = name
+        label.font = .systemFont(ofSize: 15, weight: .medium)
+        label.textColor = Ink.secondary
+        var style = UIButton.Configuration.plain()
+        style.title = "Undo"
+        style.baseForegroundColor = Ink.accent
+        style.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = .systemFont(ofSize: 15, weight: .semibold)
+            return attributes
+        }
+        let button = UIButton(configuration: style, primaryAction: UIAction { [weak self, weak pill] _ in
+            if undo.canUndo { undo.undo() }
+            UISelectionFeedbackGenerator().selectionChanged()
+            self?.dropUndoPill(pill)
+        })
+        let row = UIStackView(arrangedSubviews: [label, button])
+        row.spacing = 6
+        row.alignment = .center
+        pill.contentView.addSubview(row)
+        let size = row.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        let width = size.width + 32, height: CGFloat = 44
+        pill.frame = CGRect(x: (view.bounds.width - width) / 2, y: bar.frame.minY - height - 12, width: width, height: height)
+        row.frame = CGRect(x: 18, y: 0, width: size.width, height: height)
+        pill.alpha = 0
+        view.addSubview(pill)
+        undoPill = pill
+        UIView.animate(withDuration: 0.2) { pill.alpha = 1 }
+        undoPillTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: false) { [weak self, weak pill] _ in
+            MainActor.assumeIsolated { self?.dropUndoPill(pill) }
+        }
+    }
+
+    private func dropUndoPill(_ pill: UIView?) {
+        guard let pill else { return }
+        if pill === undoPill { undoPill = nil }
+        UIView.animate(withDuration: 0.25) { pill.alpha = 0 } completion: { _ in pill.removeFromSuperview() }
+    }
+
     /// Something gone wrong, said for a moment over the foot of the page.
     private func say(_ message: String) {
         let label = PaddedLabel()
@@ -993,7 +1058,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
 
     private func confirmDelete(_ path: String, title: String) {
         let alert = UIAlertController(title: "Delete “\(title)”?",
-                                      message: "It stays in the graph’s history, and your other devices lose it when this iPhone next syncs.",
+                                      message: "It stays in the graph’s history, and your other devices lose it when this \(UIDevice.current.model) next syncs.",
                                       preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { [weak self] _ in self?.delete(path) })

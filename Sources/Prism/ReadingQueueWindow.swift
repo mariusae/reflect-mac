@@ -25,7 +25,7 @@ final class ReadingQueueWindow: NSWindowController, NSWindowDelegate {
     /// At the foot, on glass: Snooze, and Done.
     private let bar = GlassCapsule()
     private let snooze = CloseButton(symbol: "clock", pointSize: 14, toolTip: "Snooze: Bring It Back Later")
-    private let done = CloseButton(symbol: "checkmark", pointSize: 14, toolTip: "Done: Out of the Inbox, and the Next (⌘↩)")
+    private let done = CloseButton(symbol: "checkmark", pointSize: 14, toolTip: "Done: Take It Out of the Inbox, and On to the Next (⌘↩)")
     private let rule = RuleView()
     private var barTucked = false
 
@@ -43,7 +43,7 @@ final class ReadingQueueWindow: NSWindowController, NSWindowDelegate {
         let window = HandScrollWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 900),
                                       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                                       backing: .buffered, defer: false)
-        window.title = "Prism Reader"
+        window.title = "Reading Queue"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.backgroundColor = Ink.paper
@@ -178,8 +178,9 @@ final class ReadingQueueWindow: NSWindowController, NSWindowDelegate {
     @objc func finish(_ sender: Any?) {
         guard let path = shownPath else { return }
         begun = nil
-        session.setFrontmatter(path, "inbox", nil)
-        session.setFrontmatter(path, ReadingQueue.snoozeKey, nil)
+        session.change(path, undoName: "Take Out of Inbox") {
+            Frontmatter.setting(ReadingQueue.snoozeKey, to: nil, in: Frontmatter.setting("inbox", to: nil, in: $0))
+        }
         refresh()
     }
 
@@ -208,7 +209,7 @@ final class ReadingQueueWindow: NSWindowController, NSWindowDelegate {
     private func put(off snooze: ReadingQueue.Snooze) {
         guard let path = shownPath else { return }
         begun = nil
-        session.setFrontmatter(path, ReadingQueue.snoozeKey, ReadingQueue.written(snooze.until(from: Date())))
+        session.setFrontmatter(path, ReadingQueue.snoozeKey, ReadingQueue.written(snooze.until(from: Date())), undoName: "Snooze")
         refresh()
     }
 

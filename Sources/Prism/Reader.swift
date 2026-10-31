@@ -116,6 +116,7 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
         chrome.onType = { [weak self] view in self?.showTypeMenu(from: view) }
         chrome.onReader = { [weak self] in self?.toggleReading() }
         chrome.onStep = { [weak self] by in self?.turn(by) }
+        chrome.onBrowser = { [weak self] in self?.openInBrowser() }
         chrome.onTop = { [weak self] in
             guard let self else { return }
             if source.isPDF { pdf.document?.page(at: 0).map(pdf.go(to:)) } else { web.evaluateJavaScript("window.scrollTo({top: 0, behavior: 'smooth'})") }
@@ -149,6 +150,25 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
             index = 0
             open()
         }
+    }
+
+    /// What is read, out in the browser — the page followed to, on the
+    /// site's; a PDF of the graph's, in its own app.
+    func openInBrowser() {
+        NSWorkspace.shared.open(!source.isPDF && !reading ? web.url ?? url : url)
+    }
+
+    /// Turned to the source at an address the note links to: false, none there.
+    @discardableResult
+    func turn(to address: URL) -> Bool {
+        guard let found = sources.firstIndex(where: { $0.url == address || $0.address == address.absoluteString }) else { return false }
+        if found != index {
+            savePlace()
+            index = found
+            ReaderPlace.choose(source, for: notePath, first: index == 0)
+            open()
+        }
+        return true
     }
 
     /// The next of the note's sources, or the one before.
@@ -564,7 +584,7 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
         let passage = passage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !passage.isEmpty else { return NSSound.beep() }
         let address = source.address
-        session.change(notePath) { source in
+        session.change(notePath, undoName: "Highlight") { source in
             let after = WebCapture.highlighting(passage, in: source, of: address)
             return after == source ? nil : after
         }
@@ -638,25 +658,27 @@ final class ReaderPDFView: PDFView {
 /// The reader's controls, floating on glass over its top: at the left, the
 /// page's icon, its site and how long it takes, its title — clicked, back
 /// to the top; at the right, ‹ › through what the note has to read, when
-/// it has more than one, the reader, the type, and ×.
+/// it has more than one, the reader, the type, the browser, and ×.
 final class ReaderChrome: NSView {
     var onClose: (() -> Void)?
     var onType: ((NSView) -> Void)?
     var onTop: (() -> Void)?
     var onReader: (() -> Void)?
     var onStep: ((Int) -> Void)?
+    var onBrowser: (() -> Void)?
 
     private let band = GlassCapsule()
     private let right = GlassCapsule()
     private let iconView = NSImageView()
     private let source = NSTextField(labelWithString: "")
     private let headline = NSTextField(labelWithString: "")
-    private let previous = CloseButton(symbol: "chevron.left", pointSize: 11, toolTip: "What the Note Links to Before (⌥⌘←)")
-    private let next = CloseButton(symbol: "chevron.right", pointSize: 11, toolTip: "What the Note Links to Next (⌥⌘→)")
+    private let previous = CloseButton(symbol: "chevron.left", pointSize: 11, toolTip: "What the Note Links to Before (⌃⌥⌘←)")
+    private let next = CloseButton(symbol: "chevron.right", pointSize: 11, toolTip: "What the Note Links to Next (⌃⌥⌘→)")
     private let count = NSTextField(labelWithString: "")
     private let divider = RuleView()
-    private let reader = CloseButton(symbol: "doc.plaintext", pointSize: 13, toolTip: "Reader: the Words Alone (⇧⌘E)")
+    private let reader = CloseButton(symbol: "doc.plaintext", pointSize: 13, toolTip: "Reading View: the Words Alone (⇧⌘E)")
     private let type = CloseButton(symbol: "textformat.size", pointSize: 13, toolTip: "Type (⌘- ⌘+)")
+    private let browser = CloseButton(symbol: "safari", pointSize: 13, toolTip: "Open in Browser")
     private let close = CloseButton(symbol: "xmark", pointSize: 11, toolTip: "Close the Page (⇧⌘R)")
     private(set) var isTucked = false
     /// Where its band starts: past the window's own buttons, in a window of its own.
@@ -668,9 +690,9 @@ final class ReaderChrome: NSView {
     /// The reader on: lit, and the type to set.
     var reading = false {
         didSet {
-            reader.image = NSImage(systemSymbolName: reading ? "doc.plaintext.fill" : "doc.plaintext", accessibilityDescription: "Reader")?
+            reader.image = NSImage(systemSymbolName: reading ? "doc.plaintext.fill" : "doc.plaintext", accessibilityDescription: "Reading View")?
                 .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
-            reader.toolTip = reading ? "The Page as the Site Has It (⇧⌘E)" : "Reader: the Words Alone (⇧⌘E)"
+            reader.toolTip = reading ? "The Page as the Site Has It (⇧⌘E)" : "Reading View: the Words Alone (⇧⌘E)"
             needsLayout = true
         }
     }
@@ -719,7 +741,7 @@ final class ReaderChrome: NSView {
         right.content.addSubview(count)
         right.content.addSubview(divider)
         for (button, action) in [(previous, #selector(previousClicked)), (next, #selector(nextClicked)), (reader, #selector(readerClicked)),
-                                 (type, #selector(typeClicked)), (close, #selector(closeClicked))] {
+                                 (type, #selector(typeClicked)), (browser, #selector(browserClicked)), (close, #selector(closeClicked))] {
             button.contentTintColor = Ink.text
             button.target = self
             button.action = action
@@ -742,6 +764,7 @@ final class ReaderChrome: NSView {
     @objc private func previousClicked() { onStep?(-1) }
     @objc private func nextClicked() { onStep?(1) }
     @objc private func closeClicked() { onClose?() }
+    @objc private func browserClicked() { onBrowser?() }
     @objc private func topClicked() { onTop?() }
 
     func setTucked(_ tucked: Bool) {
@@ -771,7 +794,8 @@ final class ReaderChrome: NSView {
         x = reader.frame.maxX
         type.isHidden = !reading || isPDF
         type.frame = NSRect(x: x, y: 4, width: type.isHidden ? 0 : 28, height: side - 8)
-        close.frame = NSRect(x: type.frame.maxX, y: 4, width: 26, height: side - 8)
+        browser.frame = NSRect(x: type.frame.maxX, y: 4, width: 28, height: side - 8)
+        close.frame = NSRect(x: browser.frame.maxX, y: 4, width: 26, height: side - 8)
         right.frame = NSRect(x: bounds.width - 12 - (close.frame.maxX + 4), y: y, width: close.frame.maxX + 4, height: side)
         // The band: as wide as what it says, as far as the room goes.
         // What they say, measured: a truncating label's own size is what it was last given.

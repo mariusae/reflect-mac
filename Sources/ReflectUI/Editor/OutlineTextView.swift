@@ -872,7 +872,7 @@ package final class OutlineTextView: NSTextView {
         // A folded row's pill: opened.
         if let index = outlineLayout.foldPillHit(at: point, origin: textContainerOrigin) {
             window?.makeFirstResponder(self)
-            perform("Expand", on: index..<(index + 1), followingCaret: false) { rows, selection in
+            perform("Unfold", on: index..<(index + 1), followingCaret: false) { rows, selection in
                 OutlineEditing.unfold(&rows, at: selection.lowerBound)
                 return selection
             }
@@ -1015,13 +1015,97 @@ package final class OutlineTextView: NSTextView {
             LinkCard.shared.hide()
             return linkMenu(link)
         }
+        if outlineLayout.pictureHit(at: point, origin: textContainerOrigin) == nil, let url = link(at: point), let title = url.wikiTarget {
+            LinkCard.shared.hide()
+            return noteLinkMenu(url, title: title)
+        }
         guard let picture = outlineLayout.pictureHit(at: point, origin: textContainerOrigin),
-              let location = rangeOfPicture(picture)?.location else { return super.menu(for: event) }
+              let location = rangeOfPicture(picture)?.location else { return rowMenu(for: event, at: point) }
         LinkCard.shared.hide()
         window?.makeFirstResponder(self)
         if selectedRows != nil { leaveRowSelection() }
         setSelectedRange(NSRange(location: location, length: 0))
         return pictureMenu(picture, at: location)
+    }
+
+    // MARK: A row's menu
+
+    /// What can be done to the row clicked — as the phone's row held and
+    /// let go offers it — over the text's own Cut, Copy and Paste.
+    private func rowMenu(for event: NSEvent, at point: NSPoint) -> NSMenu? {
+        guard isEditable, let index = rowUnder(point) else { return super.menu(for: event) }
+        // The row clicked is the one acted on: the caret to it, unless what is chosen holds it.
+        if !targetRows.contains(index) {
+            if selectedRows != nil { leaveRowSelection() }
+            setSelectedRange(NSRange(location: characterIndexForInsertion(at: point), length: 0))
+        }
+        let menu = super.menu(for: event) ?? NSMenu()
+        let all = rows
+        let row = all[index]
+        let end = OutlineEditing.subtreeEnd(all, index)
+        let inside = all[(index + 1)..<end]
+        func command(_ title: String, _ action: Selector, tag: Int = 0) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.tag = tag
+            return item
+        }
+        var items: [NSMenuItem] = []
+        if row.isFolded {
+            items.append(command("Unfold", #selector(expand(_:))))
+        } else if !inside.isEmpty {
+            items.append(command("Fold", #selector(collapse(_:))))
+        }
+        if row.isFolded ? row.folded.contains(where: \.isFolded) : inside.contains(where: \.isFolded) {
+            items.append(command("Unfold Completely", #selector(expandCompletely(_:))))
+        }
+        if !row.isFolded, zip(inside.indices, inside).contains(where: { i, child in OutlineEditing.hasChildren(all, i) && !child.isFolded }) {
+            items.append(command("Fold Completely", #selector(collapseCompletely(_:))))
+        }
+        if let task = row.task {
+            items.append(command(task == .open ? "Mark Done" : "Mark Not Done", #selector(toggleDone(_:))))
+        }
+        if row.task == nil, inside.contains(where: { $0.task != nil }) {
+            items.append(command("Move Done to Bottom", #selector(moveDoneToBottom(_:))))
+        }
+        let kinds: [(String, Int, Bool)] = [
+            ("Bullet", 0, row.kind == .bullet && row.task == nil),
+            ("Checkbox", 14, row.kind == .bullet && row.task != nil && row.marker != "+"),
+            ("Task", 10, row.kind == .bullet && row.task != nil && row.marker == "+"),
+            ("Numbered", 11, row.kind == .ordered),
+            ("Heading 1", 1, row.kind == .heading(1)),
+            ("Heading 2", 2, row.kind == .heading(2)),
+            ("Heading 3", 3, row.kind == .heading(3)),
+            ("Quote", 12, row.kind == .quote),
+        ]
+        let turn = NSMenuItem(title: "Turn Into", action: nil, keyEquivalent: "")
+        turn.submenu = NSMenu(title: "Turn Into")
+        for (title, tag, current) in kinds {
+            let item = command(title, #selector(setRowType(_:)), tag: tag)
+            item.state = current ? .on : .off
+            turn.submenu?.addItem(item)
+        }
+        items.append(turn)
+        items.append(command(targetRows.count > 1 ? "Delete Rows" : "Delete Row", #selector(deleteRows(_:))))
+        items.append(.separator())
+        for (i, item) in items.enumerated() { menu.insertItem(item, at: i) }
+        return menu
+    }
+
+    /// A link to a note: opened here or beside, or its link copied.
+    private func noteLinkMenu(_ url: URL, title: String) -> NSMenu {
+        let menu = NSMenu(title: "Link")
+        menu.addItem(ClosureMenuItem(title: "Open") { [weak self] in
+            guard let self else { return }
+            navigator?.outlineView(self, open: url, inSplit: false)
+        })
+        menu.addItem(ClosureMenuItem(title: "Open Beside") { [weak self] in
+            guard let self else { return }
+            navigator?.outlineView(self, open: url, inSplit: true)
+        })
+        menu.addItem(.separator())
+        menu.addItem(ClosureMenuItem(title: "Copy Link") { Self.copy(string: "[[\(title)]]") })
+        return menu
     }
 
     // MARK: A link's menu
@@ -1062,6 +1146,11 @@ package final class OutlineTextView: NSTextView {
         menu.addItem(ClosureMenuItem(title: "Open Link") { [weak self] in
             guard let self, let url = URL(string: link.address) else { return }
             navigator?.outlineView(self, open: url, inSplit: false)
+        })
+        // Beside, for a page, is the browser's.
+        menu.addItem(ClosureMenuItem(title: "Open in Browser") {
+            guard let url = URL(string: link.address) else { return }
+            NSWorkspace.shared.open(url)
         })
         menu.addItem(ClosureMenuItem(title: "Copy Link") { Self.copy(string: link.address) })
         return menu
@@ -1204,12 +1293,12 @@ package final class OutlineTextView: NSTextView {
                 return selection
             }
         } else if row.isFolded {
-            perform("Expand", on: index..<(index + 1), followingCaret: false) { rows, selection in
+            perform("Unfold", on: index..<(index + 1), followingCaret: false) { rows, selection in
                 OutlineEditing.unfold(&rows, at: selection.lowerBound)
                 return selection
             }
         } else if OutlineEditing.hasChildren(rows, index) {
-            perform("Collapse", on: index..<(index + 1), followingCaret: false) { rows, selection in
+            perform("Fold", on: index..<(index + 1), followingCaret: false) { rows, selection in
                 OutlineEditing.fold(&rows, at: selection.lowerBound)
                 return selection
             }
