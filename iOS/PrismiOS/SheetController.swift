@@ -635,14 +635,14 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
                 named.append(card)
             }
         }
-        // Today's meetings over its note.
-        var before: [SheetBlock] = []
+        // Today's meetings, first under its note.
+        var meetings: [SheetBlock] = []
         if path == GraphPaths.dailyPath(for: .today), MeetingsBlock.wanted {
-            let meetings = blocks.first(where: { $0 is MeetingsBlock }) as? MeetingsBlock ?? MeetingsBlock(metrics: self.metrics)
-            meetings.onMeeting = { [weak self] event in self?.onMeeting?(event) }
-            before.append(meetings)
+            let block = blocks.first(where: { $0 is MeetingsBlock }) as? MeetingsBlock ?? MeetingsBlock(metrics: self.metrics)
+            block.onMeeting = { [weak self] event in self?.onMeeting?(event) }
+            meetings.append(block)
         }
-        self.setBlocks(note: path, before: before, after: still + after + named)
+        self.setBlocks(note: path, after: meetings + still + after + named)
     }
 
     /// To what links here, at the note's end.

@@ -357,7 +357,7 @@ final class NotePane: NSView, OutlineTextViewNavigator {
             block.onHeightChange = { [weak self] in self?.relayout() }
             document.addSubview(block)
             meetings = block
-            blocks.insert(block, at: 0)
+            blocks.append(block)
         }
         // Still open from the days before: a heading over them, on cards as what links here is.
         if !carried.isEmpty {

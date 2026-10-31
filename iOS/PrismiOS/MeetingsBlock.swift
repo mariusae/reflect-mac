@@ -2,7 +2,7 @@ import UIKit
 import ReflectCore
 import PrismCore
 
-/// Over today's note: the day's meetings, from the calendars — each its
+/// Under today's note: the day's meetings, from the calendars — each its
 /// time and name, tapped, its note: made the first time, with when it is
 /// and who is in it, and linked from the day. Not yet allowed to read the
 /// calendars: a button to allow it, or Not Now, once.
@@ -57,6 +57,10 @@ final class MeetingsBlock: UIView, SheetBlock {
             MeetingsBlock.dismissed = true
             self?.show()
         }, for: .touchUpInside)
+        heading.attributedText = NSAttributedString(string: "MEETINGS", attributes: [
+            .font: metrics.face.heading(round(metrics.size * 0.8), weight: .semibold), .foregroundColor: Ink.secondary,
+        ])
+        addSubview(heading)
         addSubview(ask)
         addSubview(notNow)
         show()
@@ -99,21 +103,25 @@ final class MeetingsBlock: UIView, SheetBlock {
     }
 
     private var rowHeight: CGFloat { ceil(metrics.size * 1.9) }
+    /// Under a heading of its own, as Still Open is.
+    private var top: CGFloat { 52 }
+    private let heading = UILabel()
 
     func height(width: CGFloat) -> CGFloat {
-        if !ask.isHidden { return 64 }
-        return events.isEmpty ? 0 : 14 + CGFloat(events.count) * rowHeight + 6
+        if !ask.isHidden { return top + 46 }
+        return events.isEmpty ? 0 : top + CGFloat(events.count) * rowHeight + 6
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         let inner = bounds.width - 2 * NoteBlock.side
+        heading.frame = CGRect(x: NoteBlock.side, y: 22, width: inner, height: 20)
         if !ask.isHidden {
             let size = ask.intrinsicContentSize
-            ask.frame = CGRect(x: NoteBlock.side - 6, y: 14, width: size.width, height: 38)
-            notNow.frame = CGRect(x: ask.frame.maxX + 8, y: 14, width: notNow.intrinsicContentSize.width, height: 38)
+            ask.frame = CGRect(x: NoteBlock.side - 6, y: top, width: size.width, height: 38)
+            notNow.frame = CGRect(x: ask.frame.maxX + 8, y: top, width: notNow.intrinsicContentSize.width, height: 38)
         }
-        var y: CGFloat = 14
+        var y = top
         for row in rows {
             row.frame = CGRect(x: NoteBlock.side, y: y, width: inner, height: rowHeight)
             y += rowHeight

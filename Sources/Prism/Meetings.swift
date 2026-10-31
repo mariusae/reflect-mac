@@ -3,7 +3,7 @@ import ReflectCore
 import ReflectUI
 import PrismCore
 
-/// Over today's note: the day's meetings, from the calendars — each its
+/// Under today's note: the day's meetings, from the calendars — each its
 /// time and name, clicked, its note: made the first time, with when it is
 /// and who is in it, and linked from the day. Not yet allowed to read the
 /// calendars: a button to allow it, or Not Now, once.
@@ -41,6 +41,7 @@ final class MeetingsBlock: NSView, ColumnBlock {
         notNow.contentTintColor = Ink.secondary
         notNow.target = self
         notNow.action = #selector(notNowClicked)
+        addSubview(heading)
         addSubview(ask)
         addSubview(notNow)
         show()
@@ -98,22 +99,27 @@ final class MeetingsBlock: NSView, ColumnBlock {
         return NSRect(x: ((width - column) / 2).rounded(), y: 0, width: column, height: 0)
     }
 
+    /// Under a heading of its own, as Still open is.
+    private var top: CGFloat { round(metrics.fontSize * 3.2) }
+    private lazy var heading = ColumnLabel("Meetings", metrics: metrics)
+
     func desiredHeight(width: CGFloat) -> CGFloat {
-        if !ask.isHidden { return 56 }
-        return events.isEmpty ? 0 : 16 + CGFloat(events.count) * rowHeight + 4
+        if !ask.isHidden { return top + 40 }
+        return events.isEmpty ? 0 : top + CGFloat(events.count) * rowHeight + 4
     }
 
     override func layout() {
         super.layout()
         let column = column(bounds.width)
         let x = column.minX + metrics.indent - 2
+        heading.frame = NSRect(x: x, y: round(metrics.fontSize * 1.6), width: column.maxX - x, height: heading.intrinsicContentSize.height)
         if !ask.isHidden {
             ask.sizeToFit()
-            ask.frame.origin = NSPoint(x: x, y: 16)
+            ask.frame.origin = NSPoint(x: x, y: top)
             notNow.sizeToFit()
-            notNow.frame.origin = NSPoint(x: ask.frame.maxX + 8, y: 16 + (ask.frame.height - notNow.frame.height) / 2)
+            notNow.frame.origin = NSPoint(x: ask.frame.maxX + 8, y: top + (ask.frame.height - notNow.frame.height) / 2)
         }
-        var y: CGFloat = 16
+        var y = top
         for row in rows {
             row.frame = NSRect(x: x, y: y, width: column.maxX - x, height: rowHeight)
             y += rowHeight
