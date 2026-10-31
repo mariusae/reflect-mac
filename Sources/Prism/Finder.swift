@@ -20,7 +20,7 @@ final class Finder: NSView, NSTextFieldDelegate {
     private var rows: [FinderRow] = []
     private var places: [Place] = []
     private var selection = 0
-    private var face: Typeface = .lato
+    private var face: Typeface = .system
     /// What the field asks for, empty.
     var placeholder = "Go to a note"
     var hintText = "↩ Open   ⌘↩ Beside"

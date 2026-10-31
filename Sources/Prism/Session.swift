@@ -56,7 +56,7 @@ final class Session {
             defaults.set(Typeface.ideal.rawValue, forKey: "Typeface")
         }
         face = defaults.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)).flatMap { Typeface.available.contains($0) ? $0 : nil }
-            ?? (ideal ? .ideal : .lato)
+            ?? (ideal ? .ideal : .system)
         recent = Self.loadRecent(graph.root)
         index.scan()
         applyHistory()

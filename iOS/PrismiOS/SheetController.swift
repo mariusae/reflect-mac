@@ -707,10 +707,9 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     }
 }
 
-/// Over what links to a note, at its end: a hairline, and how many.
+/// Over what links to a note, at its end: room, no more — the cards say
+/// what they are, and the bar how many.
 final class LinkedHead: UIView, SheetBlock {
-    private let label = UILabel()
-    private let rule = UIView()
     var onHeightChange: (() -> Void)?
     var onCaretMove: (() -> Void)?
     var editors: [OutlineEditor] { [] }
@@ -719,23 +718,15 @@ final class LinkedHead: UIView, SheetBlock {
 
     init(count: Int, metrics: PhoneMetrics) {
         super.init(frame: .zero)
-        rule.backgroundColor = Ink.rule
-        addSubview(rule)
-        label.attributedText = NSAttributedString(string: "LINKED FROM \(count) \(count == 1 ? "NOTE" : "NOTES")", attributes: Card.label(size: metrics.size))
-        addSubview(label)
+        isAccessibilityElement = true
+        accessibilityLabel = "Linked from \(count) \(count == 1 ? "note" : "notes")"
+        accessibilityTraits = .header
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    func height(width: CGFloat) -> CGFloat { 64 }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        let side = NoteBlock.side
-        rule.frame = CGRect(x: side, y: 24, width: bounds.width - 2 * side, height: 1 / max(traitCollection.displayScale, 1))
-        label.frame = CGRect(x: side, y: 36, width: bounds.width - 2 * side, height: 20)
-    }
+    func height(width: CGFloat) -> CGFloat { 28 }
 
     func save() {}
     func notesChanged(_ paths: Set<String>) {}
@@ -760,7 +751,7 @@ extension UIGestureRecognizer {
 extension PhoneState {
     /// The text size set, in points.
     static var size: CGFloat {
-        get { UserDefaults.standard.object(forKey: "TextSize") as? CGFloat ?? 16 }
+        get { UserDefaults.standard.object(forKey: "TextSize") as? CGFloat ?? 15 }
         set { UserDefaults.standard.set(newValue, forKey: "TextSize") }
     }
 }

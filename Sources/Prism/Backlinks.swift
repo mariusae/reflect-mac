@@ -102,32 +102,25 @@ final class ColumnLabel: NSView {
     }
 }
 
-/// Over a topic's backlinks, under the topic: how many notes link to it.
+/// Over a topic's backlinks, under the topic: room, no more — the cards
+/// say what they are.
 final class InlineBacklinksHeader: NSView, ColumnBlock {
-    private let label: ColumnLabel
     private let metrics: OutlineMetrics
 
     override var isFlipped: Bool { true }
 
     init(count: Int, metrics: OutlineMetrics) {
         self.metrics = metrics
-        label = ColumnLabel("Linked from", metrics: metrics)
-        label.count = count
         super.init(frame: .zero)
-        addSubview(label)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel("Linked from \(count) \(count == 1 ? "note" : "notes")")
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    func desiredHeight(width: CGFloat) -> CGFloat { round(metrics.fontSize * 2) + label.intrinsicContentSize.height }
-
-    override func layout() {
-        super.layout()
-        let column = min(metrics.columnWidth, bounds.width - 48)
-        let x = ((bounds.width - column) / 2).rounded() + metrics.indent - 2
-        label.frame = NSRect(x: x, y: round(metrics.fontSize * 1.6), width: bounds.width - x - 24, height: label.intrinsicContentSize.height)
-    }
+    func desiredHeight(width: CGFloat) -> CGFloat { round(metrics.fontSize * 1.6) }
 
     func scrubMarks(listed: Bool) -> [ScrubMark] {
         [ScrubMark(y: round(metrics.fontSize * 1.6), title: "Backlinks", detail: nil, rank: 2)]

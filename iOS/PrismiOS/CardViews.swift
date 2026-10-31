@@ -19,19 +19,25 @@ final class CardBackground: UIView {
         rule.backgroundColor = Ink.rule
         addSubview(rule)
         style()
+        // Its edge and shadow, light or dark, set again as the appearance changes.
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: CardBackground, _) in view.style() }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
     private func style() {
-        backgroundColor = flat ? .clear : Ink.card
+        // On the white page, a shade under it and edged, as the Mac's stand off the paper.
+        backgroundColor = flat ? .clear : Ink.backlinkCard
         layer.cornerRadius = flat ? 0 : Card.radius
         layer.cornerCurve = .continuous
+        layer.borderWidth = flat ? 0 : 1 / max(traitCollection.displayScale, 1)
+        layer.borderColor = Ink.rule.resolvedColor(with: traitCollection).cgColor
         layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = flat ? 0 : 0.06
-        layer.shadowRadius = 5
-        layer.shadowOffset = CGSize(width: 0, height: 1)
+        // Lifted off the page a little, as the Mac's are.
+        layer.shadowOpacity = flat ? 0 : traitCollection.userInterfaceStyle == .dark ? 0.5 : 0.09
+        layer.shadowRadius = 7
+        layer.shadowOffset = CGSize(width: 0, height: 2)
         rule.isHidden = !flat || !ruled
     }
 

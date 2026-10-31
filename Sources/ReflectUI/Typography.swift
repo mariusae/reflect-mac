@@ -224,6 +224,10 @@ package struct Typography: Equatable {
         return NSFont(descriptor: font.fontDescriptor.addingAttributes([.variation: axes]), size: size) ?? font
     }
 
+    /// Apple's New York, as a family's name: the system's serif, which no
+    /// family name reaches.
+    package static let newYork = "New York"
+
     /// A font of a family at a size: the face chosen in it, else its
     /// regular (or, for `heavy`, its bold); the system's, for no family — or
     /// for one no longer installed.
@@ -231,6 +235,10 @@ package struct Typography: Equatable {
                      monospaced: Bool = false) -> NSFont {
         let system = monospaced ? NSFont.monospacedSystemFont(ofSize: size, weight: weight) : NSFont.systemFont(ofSize: size, weight: weight)
         guard let family else { return system }
+        // Apple's New York: no family to name, the system's own serif.
+        if family == newYork {
+            return NSFont(descriptor: system.fontDescriptor.withDesign(.serif) ?? system.fontDescriptor, size: size) ?? system
+        }
         let faces = Face.all(in: family)
         if let face, faces.contains(where: { $0.name == face }), let font = NSFont(name: face, size: size) {
             return withFeatures(font)

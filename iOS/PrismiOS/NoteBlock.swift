@@ -916,12 +916,9 @@ enum Formats {
 @MainActor
 enum Card {
     /// The page flat, as a magazine's: no cards, the notes on the paper
-    /// itself, parted by a hairline and headed by a small line in capitals.
-    /// Chosen in Settings; flat unless cards are.
-    nonisolated static var flat: Bool {
-        get { !UserDefaults.standard.bool(forKey: "PageCards") }
-        set { UserDefaults.standard.set(!newValue, forKey: "PageCards") }
-    }
+    /// itself, parted by a hairline and headed by a small line in capitals —
+    /// the one way it is set; what links to a note, alone, on cards.
+    nonisolated static let flat = true
 
     /// The small line in spaced capitals over things, at a text's size: a
     /// day's date, a gap's days, a card's site — one style for them all.

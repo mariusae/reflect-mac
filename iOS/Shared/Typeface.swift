@@ -2,12 +2,13 @@ import CoreText
 import UIKit
 import ReflectCore
 
-/// What notes are set in, as on the Mac: a face for the text, one for
-/// headings — most often the same — and a fixed-width one for code.
+/// What notes are set in, as on the Mac: one of a few styles — a face for
+/// the text, one for headings, one for code, and how they are set — ready
+/// made, the size alone to change.
 enum Typeface: String, CaseIterable, Identifiable {
-    case system, ideal, lato, alegreya, mona, plex, source, literata, fraunces
+    case ideal, apple, system
 
-    /// The faces this build has: Ideal Sans only when its fonts were there
+    /// The styles this build has: Ideal Sans only when its fonts were there
     /// to bundle — Hoefler's, copied from the owner's own, never fetched.
     static let available: [Typeface] = {
         let bundled = Bundle.main.resourceURL.map {
@@ -20,76 +21,49 @@ enum Typeface: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .mona: "Mona Sans"
-        case .literata: "Literata"
-        case .fraunces: "Literata & Fraunces"
-        case .source: "Source Serif & Sans"
-        case .plex: "IBM Plex"
-        case .alegreya: "Alegreya Sans"
-        case .lato: "Lato"
         case .ideal: "Ideal Sans"
-        case .system: "SF Pro"
+        case .apple: "New York"
+        case .system: "System"
+        }
+    }
+
+    /// What it is, under its name where it is chosen.
+    var detail: String {
+        switch self {
+        case .ideal: "Hoefler’s Ideal Sans, in its Book"
+        case .apple: "Apple’s New York, a serif for reading"
+        case .system: "SF Pro, as the system sets it"
         }
     }
 
     /// The faces differ in how big they look at a size: each is scaled to
-    /// read as Mona Sans does.
-    private var scale: CGFloat {
-        switch self {
-        case .mona, .system, .plex: 1
-        case .lato: 1
-        case .ideal: 1.02
-        case .literata, .fraunces: 0.97
-        case .source: 1.05
-        case .alegreya: 1.12
-        }
-    }
+    /// read alike.
+    private var scale: CGFloat { self == .ideal ? 1.02 : 1 }
 
     /// Line height, in ems.
     var lineHeight: CGFloat {
         switch self {
-        case .mona: 1.42
-        case .plex: 1.4
-        case .alegreya, .lato: 1.4
-        // Its Book set closer, as solid paragraphs are; its Light given more air.
-        case .ideal: Self.idealBook ? 1.38 : 1.45
-        case .system: 1.33
-        case .literata, .fraunces, .source: 1.5
+        case .ideal: 1.38
+        case .apple: 1.42
+        case .system: 1.36
         }
     }
+
+    /// Apple's New York, as a family's name: the system's serif, which no
+    /// family name reaches.
+    static let newYork = "New York"
 
     private var family: String? {
         switch self {
-        case .mona: "Mona Sans"
-        case .literata, .fraunces: "Literata"
-        case .source: "Source Serif 4"
-        case .plex: "IBM Plex Sans"
-        case .alegreya: "Alegreya Sans"
-        case .lato: "Lato"
         case .ideal: "Ideal Sans SSm"
+        case .apple: Self.newYork
         case .system: nil
         }
     }
 
-    private var headingFamily: String? {
-        switch self {
-        case .source: "Source Sans 3"
-        case .fraunces: "Fraunces"
-        default: family
-        }
-    }
+    private var headingFamily: String? { family }
 
-    private var monoFamily: String? {
-        switch self {
-        case .mona: "Monaspace Xenon"
-        case .literata, .fraunces, .alegreya: "JetBrains Mono"
-        case .lato: "Paper Mono"
-        case .ideal: "Operator Mono SSm"
-        case .source: "Source Code Pro"
-        case .plex: "IBM Plex Mono"
-        case .system: nil
-        }
-    }
+    private var monoFamily: String? { self == .ideal ? "Operator Mono SSm" : nil }
 
     /// The weight bold is set in: Ideal Sans's Semibold, as on the Mac.
     var boldWeight: UIFont.Weight { self == .ideal ? .semibold : .bold }
@@ -108,31 +82,15 @@ enum Typeface: String, CaseIterable, Identifiable {
         return UIFont(descriptor: font.fontDescriptor.addingAttributes([.featureSettings: features]), size: font.pointSize)
     }
 
-    /// Ideal Sans's text in its Book — solid on a phone's white page — or
-    /// in its Light, as the Mac sets it: chosen in Settings.
-    static var idealBook: Bool {
-        get { !UserDefaults.standard.bool(forKey: "Typeface.idealLight") }
-        set { UserDefaults.standard.set(!newValue, forKey: "Typeface.idealLight") }
-    }
-
-    /// A text weight as the face is set. Ideal Sans: bold within the text its
-    /// Semibold, an even step up from its Book; in its Light, as the Mac
-    /// sets it, the text its Light.
+    /// A text weight as the face is set. Ideal Sans: bold within the text
+    /// its Semibold, an even step up from its Book.
     private func textWeight(_ weight: UIFont.Weight) -> UIFont.Weight {
         guard self == .ideal else { return weight }
         switch weight {
-        case .regular: return Self.idealBook ? .regular : .light
         case .bold: return .semibold
         case .heavy, .black: return .bold
         default: return weight
         }
-    }
-
-    /// A heading weight as the face is set: Ideal Sans's in its Book, Bold;
-    /// in its Light, as the Mac sets it, Semibold.
-    private func headingWeight(_ weight: UIFont.Weight) -> UIFont.Weight {
-        guard self == .ideal, !Self.idealBook else { return weight }
-        return textWeight(weight)
     }
 
     /// The size text is set at, for a size asked for.
@@ -143,16 +101,7 @@ enum Typeface: String, CaseIterable, Identifiable {
     }
 
     func heading(_ size: CGFloat, weight: UIFont.Weight = .bold) -> UIFont {
-        var font = font(headingFamily, size: size, weight: headingWeight(weight))
-        // Fraunces softened, its corners rounded.
-        if self == .fraunces {
-            let soft = "SOFT".utf8.reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
-            var axes = (CTFontCopyVariation(font as CTFont) as? [NSNumber: Any]) ?? [:]
-            axes[NSNumber(value: soft)] = 100
-            font = UIFont(descriptor: font.fontDescriptor.addingAttributes([UIFontDescriptor.AttributeName(rawValue: kCTFontVariationAttribute as String): axes]),
-                          size: size)
-        }
-        return font
+        font(headingFamily, size: size, weight: weight)
     }
 
     func mono(_ size: CGFloat) -> UIFont {
@@ -169,6 +118,13 @@ enum Typeface: String, CaseIterable, Identifiable {
     }
 
     private func font(_ family: String?, size: CGFloat, weight: UIFont.Weight, italic: Bool = false) -> UIFont {
+        // New York: the system's serif, by its design.
+        if family == Self.newYork {
+            var descriptor = UIFont.systemFont(ofSize: size, weight: weight).fontDescriptor
+            descriptor = descriptor.withDesign(.serif) ?? descriptor
+            if italic, let slanted = descriptor.withSymbolicTraits(descriptor.symbolicTraits.union(.traitItalic)) { descriptor = slanted }
+            return UIFont(descriptor: descriptor, size: size)
+        }
         guard let family else {
             var descriptor = UIFont.systemFont(ofSize: size, weight: weight).fontDescriptor
             if italic, let slanted = descriptor.withSymbolicTraits(descriptor.symbolicTraits.union(.traitItalic)) { descriptor = slanted }
@@ -222,17 +178,13 @@ enum Typeface: String, CaseIterable, Identifiable {
         return (styled.isEmpty ? all : styled).min { abs($0.weight - weight.rawValue) < abs($1.weight - weight.rawValue) }?.name
     }
 
-    /// The face chosen in Settings; else Ideal Sans, as on the Mac — Lato,
-    /// where it wasn't bundled. Ideal Sans taken up once, whatever was chosen.
+    /// The style chosen in Settings; else Ideal Sans, as on the Mac — the
+    /// system's, where it wasn't bundled.
     static var current: Typeface {
         get {
-            let defaults = UserDefaults.standard
-            let fallback: Typeface = available.contains(.ideal) ? .ideal : .lato
-            if !defaults.bool(forKey: "Typeface.idealAdopted"), fallback == .ideal {
-                defaults.set(true, forKey: "Typeface.idealAdopted")
-                defaults.set(Typeface.ideal.rawValue, forKey: "Typeface")
-            }
-            return defaults.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:)).flatMap { available.contains($0) ? $0 : nil } ?? fallback
+            let fallback: Typeface = available.contains(.ideal) ? .ideal : .system
+            return UserDefaults.standard.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:))
+                .flatMap { available.contains($0) ? $0 : nil } ?? fallback
         }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "Typeface") }
     }
@@ -262,28 +214,29 @@ enum Ink {
         UIColor { $0.userInterfaceStyle == .dark ? dark : light }
     }
 
-    // As Threads has it: white and near-black, ink black and near-white,
-    // greys for the rest.
-    static let paper = dynamic(.white, hex(0x101010))
-    /// What the cards lie on, a little darker than they are — or, the page
-    /// flat, the paper itself.
-    static var page: UIColor { UserDefaults.standard.bool(forKey: "PageCards") ? cardsPage : paper }
-    private static let cardsPage = dynamic(hex(0xf3f2ef), hex(0x000000))
-    /// A note's card.
-    static let card = dynamic(hex(0xfdfdfc), hex(0x1a1a1a))
-    static let text = dynamic(hex(0x000000), hex(0xf3f5f7))
-    static let secondary = dynamic(hex(0x999999), hex(0x777777))
+    // In the light, the Mac's: warm paper and warm ink — cream, and a
+    // brown-black — greys warmed to go with them. In the dark, the phone's
+    // own: near-black, for its screen, and near-white ink.
+    static let paper = dynamic(hex(0xfaf7f2), hex(0x101010))
+    static let page = paper
+    /// A note's card: lighter than the paper, as the Mac's.
+    static let card = dynamic(hex(0xfdfcf9), hex(0x1a1a1a))
+    /// What links to a note, on its card: lifted off the page — white on
+    /// the cream; in the dark, a grey well above the near-black.
+    static let backlinkCard = dynamic(hex(0xfefdfb), hex(0x232325))
+    static let text = dynamic(hex(0x2b2724), hex(0xf3f5f7))
+    static let secondary = dynamic(hex(0x958c83), hex(0x777777))
     /// The small lines in spaced capitals over things: quieter than the
     /// text, a shade firmer than the secondary grey, to read at their size.
-    static let label = dynamic(hex(0x737373), hex(0x9e9e9e))
-    static let faint = dynamic(hex(0x000000, alpha: 0.3), hex(0xf3f5f7, alpha: 0.3))
-    static let rule = dynamic(hex(0x000000, alpha: 0.15), hex(0xf3f5f7, alpha: 0.15))
-    static let hover = dynamic(hex(0x000000, alpha: 0.04), hex(0xf3f5f7, alpha: 0.06))
-    static let shelf = dynamic(hex(0xf5f5f5), hex(0x1e1e1e))
-    static let codeBack = dynamic(hex(0x000000, alpha: 0.05), hex(0xf3f5f7, alpha: 0.08))
+    static let label = dynamic(hex(0x7a7067), hex(0x9e9e9e))
+    static let faint = dynamic(hex(0x2b2724, alpha: 0.32), hex(0xf3f5f7, alpha: 0.3))
+    static let rule = dynamic(hex(0x2b2724, alpha: 0.13), hex(0xf3f5f7, alpha: 0.15))
+    static let hover = dynamic(hex(0x2b2724, alpha: 0.05), hex(0xf3f5f7, alpha: 0.06))
+    static let shelf = dynamic(hex(0xf2ede5), hex(0x1e1e1e))
+    static let codeBack = dynamic(hex(0x2b2724, alpha: 0.05), hex(0xf3f5f7, alpha: 0.08))
     /// The floating compose button.
-    static let composeBack = dynamic(.white, hex(0x2a2a2a))
-    static let composeInk = dynamic(.black, .white)
+    static let composeBack = dynamic(hex(0xfdfcf9), hex(0x2a2a2a))
+    static let composeInk = dynamic(hex(0x2b2724), .white)
     static let accent = dynamic(hex(0x0095f6), hex(0x4cb5f9))
     static let pill = dynamic(UIColor(red: 0.15, green: 0.36, blue: 0.82, alpha: 0.09), UIColor(red: 0.52, green: 0.68, blue: 1, alpha: 0.14))
     static let week = dynamic(UIColor(red: 0.78, green: 0.52, blue: 0.12, alpha: 1), UIColor(red: 0.93, green: 0.7, blue: 0.32, alpha: 1))
@@ -292,9 +245,8 @@ enum Ink {
     static let marked = dynamic(UIColor(red: 1, green: 0.86, blue: 0.3, alpha: 0.45), UIColor(red: 0.85, green: 0.7, blue: 0.2, alpha: 0.35))
 }
 
-/// How a face is set, past its size: lines' height, the space between rows,
-/// the outline's indent, and how large headings are — each face its own,
-/// as on the Mac, kept as changed in Settings.
+/// How a style is set, past its size: lines' height, the space between
+/// rows, the outline's indent, and how large headings are — as it comes.
 struct PhoneSpacing: Codable, Equatable {
     /// Each line's height, in ems.
     var lineHeight: Double
@@ -307,27 +259,11 @@ struct PhoneSpacing: Codable, Equatable {
     /// How headings are set; nil, as they always were — larger, bold.
     var headingCase: HeadingCase? = nil
 
-    static func defaults(_ face: Typeface) -> PhoneSpacing {
-        // Lato as the Mac sets it.
-        if face == .lato { return PhoneSpacing(lineHeight: 1.39, rowSpacing: 0.34, indent: 1.6, headingScale: 1.25, headingCase: .smallCaps) }
-        return PhoneSpacing(lineHeight: Double(face.lineHeight), rowSpacing: 0.32, indent: 1.35, headingScale: 1.55)
-    }
-
-    private static func key(_ face: Typeface) -> String { "Spacing." + face.rawValue }
-
-    /// A face's, as set.
     static func of(_ face: Typeface) -> PhoneSpacing {
-        guard let data = UserDefaults.standard.data(forKey: key(face)),
-              let stored = try? JSONDecoder().decode(PhoneSpacing.self, from: data) else { return defaults(face) }
-        return stored
-    }
-
-    /// Keeps a face's; its defaults, kept as none.
-    static func set(_ spacing: PhoneSpacing, for face: Typeface) {
-        if spacing == defaults(face) {
-            UserDefaults.standard.removeObject(forKey: key(face))
-        } else if let data = try? JSONEncoder().encode(spacing) {
-            UserDefaults.standard.set(data, forKey: key(face))
+        switch face {
+        case .ideal: PhoneSpacing(lineHeight: 1.38, rowSpacing: 0.32, indent: 1.35, headingScale: 1.55)
+        case .apple: PhoneSpacing(lineHeight: 1.42, rowSpacing: 0.3, indent: 1.35, headingScale: 1.45)
+        case .system: PhoneSpacing(lineHeight: 1.36, rowSpacing: 0.3, indent: 1.35, headingScale: 1.45)
         }
     }
 }

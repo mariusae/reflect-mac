@@ -3,107 +3,47 @@ import ReflectCore
 import PrismCore
 import ReflectUI
 
-/// What notes are set in: a face for the text, one for headings — most
-/// often the same — and a fixed-width one for code.
+/// What notes are set in: one of a few styles, each a face for the text,
+/// one for headings, one for code, and how they are set — ready made, the
+/// size alone to change.
 enum Typeface: String, CaseIterable {
-    case mona, literata, fraunces, source, plex, alegreya, lato, styrene, ideal, charter, recursive, go, system
+    case ideal, apple, system
 
-    /// Faces not bundled — their licences do not allow it — offered only
-    /// where they are installed.
-    private var isBundled: Bool { self != .styrene && self != .ideal }
-
-    /// The faces there are on this Mac.
+    /// Ideal Sans is not bundled — its licence does not allow it — and is
+    /// offered only where it is installed, or was copied in at build.
     static var available: [Typeface] {
         let installed = Set(NSFontManager.shared.availableFontFamilies)
-        return allCases.filter { face in face.isBundled || face.family.map(installed.contains) == true }
+        return allCases.filter { $0 != .ideal || installed.contains("Ideal Sans SSm") }
     }
 
     var title: String {
         switch self {
-        case .mona: "Mona Sans"
-        case .literata: "Literata"
-        case .fraunces: "Literata & Fraunces"
-        case .alegreya: "Alegreya Sans"
-        case .lato: "Lato"
-        case .source: "Source Serif & Sans"
-        case .plex: "IBM Plex"
-        case .styrene: "Styrene B"
         case .ideal: "Ideal Sans"
-        case .charter: "Charter"
-        case .recursive: "Recursive"
-        case .go: "Go"
-        case .system: "SF Pro"
+        case .apple: "New York"
+        case .system: "System"
         }
     }
 
-    /// The faces differ in how big they look at a size: each is scaled to
-    /// read as Mona Sans does.
-    private var scale: CGFloat {
+    /// What it is, under its name where it is chosen.
+    var detail: String {
         switch self {
-        case .mona, .system, .plex: 1
-        case .ideal, .lato: 1.02
-        case .literata, .fraunces, .styrene: 0.97
-        // Its small letters are small: set larger to read as large.
-        case .alegreya: 1.12
-        case .source: 1.05
-        case .charter: 1.03
-        case .recursive: 0.95
-        case .go: 0.93
-        }
-    }
-
-    /// Line height, as a multiple of the face's own: the sans faces set tall
-    /// already; the serifs, for reading at length, are given more.
-    private var leading: CGFloat {
-        switch self {
-        case .mona, .recursive: 1.22
-        case .go, .plex: 1.26
-        case .styrene, .ideal, .alegreya: 1
-        case .lato: 1.18
-        case .charter, .system: 1.32
-        case .literata, .fraunces, .source: 1.36
+        case .ideal: "Hoefler’s Ideal Sans, in its Book, with Semibold headings"
+        case .apple: "Apple’s New York, a serif for reading, with SF Mono"
+        case .system: "SF Pro and SF Mono, as the system sets them"
         }
     }
 
     private var family: String? {
         switch self {
-        case .mona: "Mona Sans"
-        case .literata, .fraunces: "Literata"
-        case .alegreya: "Alegreya Sans"
-        case .lato: "Lato"
-        case .source: "Source Serif 4"
-        case .plex: "IBM Plex Sans"
-        case .styrene: "Styrene B LC"
         case .ideal: "Ideal Sans SSm"
-        case .charter: "Charter"
-        case .recursive: "Recursive Sans Linear Static"
-        case .go: "Go"
+        case .apple: Typography.newYork
         case .system: nil
         }
     }
 
-    /// Headings: Source's in its sans, over the serif text.
-    private var headingFamily: String? {
-        switch self {
-        case .source: "Source Sans 3"
-        case .fraunces: "Fraunces"
-        default: family
-        }
-    }
-
     private var monoFamily: String? {
-        switch self {
-        case .mona: "Monaspace Xenon"
-        case .literata, .fraunces, .alegreya, .styrene: "JetBrains Mono"
-        case .lato: "Paper Mono"
-        // Hoefler's own, when it is installed; else the bundled one.
-        case .ideal: Self.isInstalled("Operator Mono SSm") ? "Operator Mono SSm" : "JetBrains Mono"
-        case .source: "Source Code Pro"
-        case .plex: "IBM Plex Mono"
-        case .recursive: "Recursive Mono Linear Static"
-        case .go: "Go Mono"
-        case .charter, .system: nil
-        }
+        // Hoefler's own, when it is installed; else the system's.
+        self == .ideal && Self.isInstalled("Operator Mono SSm") ? "Operator Mono SSm" : nil
     }
 
     private static func isInstalled(_ family: String) -> Bool {
@@ -123,8 +63,7 @@ enum Typeface: String, CaseIterable {
 
     // MARK: Settings
 
-    /// Where its defaults are not wanted: what the Settings window sets,
-    /// for each face its own — the faces differ in how they want setting.
+    /// How a style is set: its size, and the rest as it comes.
     struct Settings: Codable, Equatable {
         /// Points.
         var size: Double
@@ -148,61 +87,32 @@ enum Typeface: String, CaseIterable {
         var headingCase: HeadingCase? = nil
     }
 
-    /// How the face is set unless changed: sized to read as Mona Sans does
-    /// at 16 points; lines as tall as suits it; the faces of families set
-    /// by named styles — Book, Light, Semibold — named, not guessed at.
+    /// How the style is set.
     var defaults: Settings {
-        let flat = PageStyle.flat
-        let styles: (text: String?, heading: String?) = switch self {
-        case .styrene: ("Regular", "Bold")
-        // On cards, its Book reads heavy; its Semibold claims Book's weight.
-        // Flat, on the paper itself, its Book holds — and its Bold heads.
-        case .ideal: flat ? ("Book", "Bold") : ("Light", "Semibold")
-        case .fraunces: (nil, "SemiBold")
-        default: (nil, nil)
+        switch self {
+        case .ideal:
+            Settings(size: 14.5, lineHeight: 1.36, rowSpacing: 0.34, indent: 1.6, lineLength: 660, headingScale: 1.25,
+                     textStyle: "Book", headingStyle: "Semibold", smoothing: true)
+        case .apple:
+            Settings(size: 15, lineHeight: 1.42, rowSpacing: 0.3, indent: 1.6, lineLength: 640, headingScale: 1.3,
+                     textStyle: nil, headingStyle: nil, smoothing: true)
+        case .system:
+            Settings(size: 14, lineHeight: 1.36, rowSpacing: 0.32, indent: 1.6, lineLength: 660, headingScale: 1.3,
+                     textStyle: nil, headingStyle: nil, smoothing: true)
         }
-        let lineHeight: Double = switch self {
-        case .styrene: 1.42
-        // Flat, its Book a little closer; the column shorter, as a page's.
-        case .ideal: flat ? 1.42 : 1.45
-        case .alegreya: 1.45
-        // As it was: a multiple of the face's own line.
-        default: (naturalLine(style: styles.text) * leading * 100).rounded() / 100
-        }
-        // Lato, the face Prism opens in, as it was settled on.
-        if self == .lato {
-            return Settings(size: 15, lineHeight: 1.39, rowSpacing: 0.34, indent: 1.6, lineLength: 660, headingScale: 1.25,
-                            textStyle: nil, headingStyle: nil, smoothing: true, headingCase: .smallCaps)
-        }
-        // Alegreya Sans, as it was settled on.
-        if self == .alegreya {
-            return Settings(size: 18, lineHeight: 1.4, rowSpacing: 0.16, indent: 1.6, lineLength: 660, headingScale: 1.37,
-                            textStyle: nil, headingStyle: nil, smoothing: true)
-        }
-        // Ideal Sans at 15: its Book holds its own there, the column with room.
-        let size = self == .ideal ? 15 : Double(round(16 * scale * 2) / 2)
-        return Settings(size: size, lineHeight: lineHeight, rowSpacing: 0.34, indent: 1.6,
-                        lineLength: self == .ideal && flat ? 600 : 660, headingScale: 1.5, textStyle: styles.text, headingStyle: styles.heading,
-                        // Styrene's regular is heavy already: without the
-                        // smoothing that thickens strokes, it reads as a regular should.
-                        smoothing: self != .styrene)
     }
 
-    private var settingsKey: String { "Typography." + rawValue }
+    private var sizeKey: String { "TypeSize." + rawValue }
 
-    /// How it is set: its defaults, as changed in Settings.
+    /// How it is set: as it comes, at the size chosen.
     var settings: Settings {
         get {
-            guard let data = UserDefaults.standard.data(forKey: settingsKey),
-                  let stored = try? JSONDecoder().decode(Settings.self, from: data) else { return defaults }
-            return stored
+            var settings = defaults
+            if let size = UserDefaults.standard.object(forKey: sizeKey) as? Double { settings.size = size }
+            return settings
         }
         nonmutating set {
-            if newValue == defaults {
-                UserDefaults.standard.removeObject(forKey: settingsKey)
-            } else if let data = try? JSONEncoder().encode(newValue) {
-                UserDefaults.standard.set(data, forKey: settingsKey)
-            }
+            UserDefaults.standard.set(newValue.size == defaults.size ? nil : newValue.size, forKey: sizeKey)
         }
     }
 
@@ -212,31 +122,17 @@ enum Typeface: String, CaseIterable {
         return Double(NSLayoutManager().defaultLineHeight(for: font) / 100)
     }
 
-    /// Axes set on the headings' face: Fraunces softened, its corners rounded.
-    private var headingAxes: [String: Double] {
-        self == .fraunces ? ["SOFT": 100] : [:]
-    }
-
-    /// The upright styles of the text's family, and of the headings', lightest first.
-    var textStyles: [String] { Self.uprightStyles(in: family) }
-    var headingStyles: [String] { Self.uprightStyles(in: headingFamily) }
-
-    private static func uprightStyles(in family: String?) -> [String] {
-        guard let family else { return [] }
-        return Typography.Face.all(in: family).filter { !$0.italic }.sorted { $0.heaviness < $1.heaviness }.map(\.style)
-    }
-
     /// The outline's settings for this face, as it is set.
     func typography() -> Typography {
         let settings = settings
         let textFace = Self.face(settings.textStyle, in: family)
-        var typography = Typography(bodyFamily: family, headingFamily: headingFamily, monospaceFamily: monoFamily,
-                          bodyFace: textFace, headingFace: Self.face(settings.headingStyle, in: headingFamily),
+        var typography = Typography(bodyFamily: family, headingFamily: family, monospaceFamily: monoFamily,
+                          bodyFace: textFace, headingFace: Self.face(settings.headingStyle, in: family),
                           monospaceFace: Self.face(monoStyle, in: monoFamily),
                           size: CGFloat(settings.size), lineHeight: CGFloat(settings.lineHeight / naturalLine(style: settings.textStyle)),
                           rowSpacing: CGFloat(settings.rowSpacing), headingScale: CGFloat(settings.headingScale),
                           lineLength: CGFloat(settings.lineLength), indent: CGFloat(settings.indent),
-                          ink: Ink.notes, smoothing: settings.smoothing, headingAxes: headingAxes,
+                          ink: Ink.notes, smoothing: settings.smoothing, headingAxes: [:],
                           headingCase: settings.headingCase ?? .family)
         typography.flat = PageStyle.flat
         // Ideal Sans in its Book: bold within the text its Semibold, an even step up.

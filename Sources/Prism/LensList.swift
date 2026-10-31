@@ -39,7 +39,7 @@ final class LensList: NSView {
     /// The note shown beside: its row lit.
     var selected: String? { didSet { if selected != oldValue { rows.forEach { $0.isChosen = $0.item.task == nil && $0.item.path == selected } } } }
     var typography = Typography() { didSet { rebuild() } }
-    var face: Typeface = .lato
+    var face: Typeface = .system
 
     private let scroll = NSScrollView()
     private let list = FlippedView()

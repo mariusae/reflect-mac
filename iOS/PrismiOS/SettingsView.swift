@@ -2,15 +2,13 @@ import SwiftUI
 import ReflectCore
 import UIKit
 
-/// Settings: the face notes are set in, and how large — each shown as it
-/// reads, in a sample, before it is chosen.
+/// Settings: the style notes are set in — Ideal Sans, New York, the
+/// system's — and how large, each shown as it reads, in a sample, before
+/// it is chosen.
 struct SettingsView: View {
     @State private var face = Typeface.current
     @State private var size = Double(PhoneState.size)
-    @State private var spacing = PhoneSpacing.of(Typeface.current)
-    @State private var idealBook = Typeface.idealBook
-    @State private var flat = Card.flat
-    /// Told when the face or size changed: the sheets set again.
+    /// Told when the style or size changed: the sheets set again.
     let onChange: () -> Void
     let onDone: () -> Void
 
@@ -21,41 +19,25 @@ struct SettingsView: View {
                     sample
                         .listRowBackground(Color(Ink.card))
                 }
-                Section("Font") {
+                Section("Style") {
                     ForEach(Typeface.available) { option in
                         Button {
                             face = option
                         } label: {
                             HStack {
-                                Text(option.title)
-                                    .font(Font(option.body(17) as CTFont))
-                                    .foregroundStyle(Color(Ink.text))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(option.title)
+                                        .font(Font(option.body(17) as CTFont))
+                                        .foregroundStyle(Color(Ink.text))
+                                    Text(option.detail).font(.footnote).foregroundStyle(.secondary)
+                                }
                                 Spacer()
                                 if option == face {
                                     Image(systemName: "checkmark").foregroundStyle(Color(Ink.accent)).fontWeight(.semibold)
                                 }
                             }
                         }
-                        // Ideal Sans, chosen: its text in its Light, or its Book.
-                        if option == .ideal, face == .ideal {
-                            Picker("Weight", selection: $idealBook) {
-                                Text("Light").tag(false)
-                                Text("Book").tag(true)
-                            }
-                            .pickerStyle(.segmented)
-                        }
                     }
-                }
-                Section {
-                    Picker("Page", selection: $flat) {
-                        Text("Flat").tag(true)
-                        Text("Cards").tag(false)
-                    }
-                    .pickerStyle(.segmented)
-                } header: {
-                    Text("Page")
-                } footer: {
-                    Text("Flat: the notes on the page, parted by a line. Cards: each note on a card of its own.")
                 }
                 Section("Text Size") {
                     HStack(spacing: 14) {
@@ -64,22 +46,6 @@ struct SettingsView: View {
                         Image(systemName: "textformat.size.larger").foregroundStyle(.secondary)
                     }
                     Text("\(Int(size)) pt").font(.footnote).foregroundStyle(.secondary)
-                }
-                Section {
-                    setting("Line height", $spacing.lineHeight, 1.1...1.8, step: 0.02, unit: "em")
-                    setting("Space between rows", $spacing.rowSpacing, 0...0.8, step: 0.02, unit: "em")
-                    setting("Outline indent", $spacing.indent, 0.9...2.2, step: 0.05, unit: "em")
-                    setting("Heading size", $spacing.headingScale, 1.0...2.0, step: 0.01, unit: "×")
-                    Picker("Heading style", selection: Binding(get: { spacing.headingCase ?? .family },
-                                                               set: { spacing.headingCase = $0 == .family ? nil : $0 })) {
-                        ForEach(HeadingCase.allCases, id: \.self) { option in Text(option.title).tag(option) }
-                    }
-                    Button("Reset \(face.title) to Defaults") { spacing = PhoneSpacing.defaults(face) }
-                        .disabled(spacing == PhoneSpacing.defaults(face))
-                } header: {
-                    Text("Spacing")
-                } footer: {
-                    Text("Kept for each font: \(face.title)'s, as set here.")
                 }
             }
             .navigationTitle("Settings")
@@ -90,20 +56,6 @@ struct SettingsView: View {
         }
         .onChange(of: face) { _, face in
             Typeface.current = face
-            // Each face its own spacing: the one chosen's, as it was left.
-            spacing = PhoneSpacing.of(face)
-            onChange()
-        }
-        .onChange(of: spacing) { _, spacing in
-            PhoneSpacing.set(spacing, for: face)
-            changeSoon()
-        }
-        .onChange(of: flat) { _, flat in
-            Card.flat = flat
-            onChange()
-        }
-        .onChange(of: idealBook) { _, book in
-            Typeface.idealBook = book
             onChange()
         }
         .onChange(of: size) { _, size in
@@ -112,44 +64,15 @@ struct SettingsView: View {
         }
     }
 
-    /// A slider, its name over it, its value beside the name.
-    private func setting(_ name: String, _ value: Binding<Double>, _ range: ClosedRange<Double>, step: Double, unit: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(name)
-                Spacer()
-                Text(unit == "×" ? String(format: "%.2f×", value.wrappedValue) : String(format: "%.2f %@", value.wrappedValue, unit))
-                    .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
-            }
-            Slider(value: value, in: range, step: step)
-        }
-    }
-
-    /// The sheets set again a moment after a slider stops: not for each step of it.
-    @State private var pending: Task<Void, Never>?
-
-    private func changeSoon() {
-        pending?.cancel()
-        pending = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled else { return }
-            onChange()
-        }
-    }
-
-    /// A few rows as a note sets them, in the face and size chosen.
+    /// A few rows as a note sets them, in the style and size chosen.
     private var sample: some View {
-        // Read again when Ideal Sans's weight changes.
-        _ = idealBook
-        let metrics = PhoneMetrics(face: face, size: CGFloat(size), spacing: spacing)
+        let metrics = PhoneMetrics(face: face, size: CGFloat(size), spacing: PhoneSpacing.of(face))
         let lineSpacing = max(0, (metrics.lineHeight - 1.2) * metrics.size)
         return VStack(alignment: .leading, spacing: metrics.rowGap) {
             Text("Sunday, October 4")
                 .font(Font(metrics.heading(1) as CTFont))
-                .textCase(metrics.headingsInCapitals ? .uppercase : nil)
-                .tracking(metrics.headingsInCapitals ? metrics.size * CGFloat(HeadingCase.capitalsTracking) : 0)
                 .padding(.bottom, 4)
-            ForEach(Array(["Read the notes on cards, then look over the calendar for the week",
+            ForEach(Array(["Read the notes, then look over the calendar for the week",
                            "Lunch with Ana", "Bring the book back"].enumerated()), id: \.offset) { i, row in
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Circle().fill(Color(Ink.secondary)).frame(width: 5, height: 5).alignmentGuide(.firstTextBaseline) { $0[.bottom] + 4 }
