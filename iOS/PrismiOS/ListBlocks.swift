@@ -185,6 +185,8 @@ final class SliceBlock: UIView, SheetBlock {
             previous = slice.crumbs
             let editor = OutlineEditor(metrics: metrics)
             editor.styler.isPrivateNote = store?.index?.entry(path)?.isPrivate == true
+            // The day its note is: a task from it brought into today, or put off.
+            editor.day = GraphPaths.day(fromDailyPath: path)
             editor.load(slice.rows)
             // A note mid-conflict is settled whole, on its own, not piece by piece.
             editor.isEditable = editable && !ConflictMarkers.detect(savedText)

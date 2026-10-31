@@ -36,6 +36,9 @@ package final class OutlineTextView: NSTextView {
     package var isPrivateNote = false
     /// A row's Move to…: where to, asked for — then `moveRows(at:named:put:)`.
     package var onMoveRows: ((OutlineTextView, Int) -> Void)?
+    /// A row and those under it moved straight to a note — a day's, for a
+    /// task brought into today or put off.
+    package var onMoveRowsTo: ((OutlineTextView, Int, String) -> Void)?
 
     /// The day the note is, if it is one: on today's, time blocks show the
     /// time now, kept up to the minute.
@@ -1068,6 +1071,32 @@ package final class OutlineTextView: NSTextView {
             ("Heading 3", 3, row.kind == .heading(3)),
             ("Quote", 12, row.kind == .quote),
         ]
+        // A task: into today, or put off to a day — moved into that day's note.
+        if let move = onMoveRowsTo, Tasks.isTask(row), row.task?.isDone != true {
+            let today = Day.today
+            if day != today {
+                items.append(ClosureMenuItem(title: "Do Today") { [weak self] in
+                    guard let self else { return }
+                    move(self, index, GraphPaths.dailyPath(for: today))
+                })
+            }
+            let later = NSMenuItem(title: "Later", action: nil, keyEquivalent: "")
+            later.submenu = NSMenu(title: "Later")
+            for option in TaskLater.allCases where option.day(from: today) != day {
+                later.submenu?.addItem(ClosureMenuItem(title: option.title) { [weak self] in
+                    guard let self else { return }
+                    move(self, index, GraphPaths.dailyPath(for: option.day(from: today)))
+                })
+            }
+            if let onMoveRows {
+                later.submenu?.addItem(.separator())
+                later.submenu?.addItem(ClosureMenuItem(title: "Another Day…") { [weak self] in
+                    guard let self else { return }
+                    onMoveRows(self, index)
+                })
+            }
+            items.append(later)
+        }
         if let onMoveRows {
             items.append(ClosureMenuItem(title: "Move to…") { [weak self] in
                 guard let self else { return }

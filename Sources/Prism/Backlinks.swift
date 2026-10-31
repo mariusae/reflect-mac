@@ -102,6 +102,34 @@ final class ColumnLabel: NSView {
     }
 }
 
+/// A heading over cards in a column: Still open, over today's tasks from
+/// the days before.
+final class ColumnHeading: NSView, ColumnBlock {
+    private let label: ColumnLabel
+    private let metrics: OutlineMetrics
+
+    override var isFlipped: Bool { true }
+
+    init(_ title: String, metrics: OutlineMetrics) {
+        self.metrics = metrics
+        label = ColumnLabel(title, metrics: metrics)
+        super.init(frame: .zero)
+        addSubview(label)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    func desiredHeight(width: CGFloat) -> CGFloat { round(metrics.fontSize * 2) + label.intrinsicContentSize.height }
+
+    override func layout() {
+        super.layout()
+        let column = min(metrics.columnWidth, bounds.width - 48)
+        let x = ((bounds.width - column) / 2).rounded() + metrics.indent - 2
+        label.frame = NSRect(x: x, y: round(metrics.fontSize * 1.6), width: bounds.width - x - 24, height: label.intrinsicContentSize.height)
+    }
+}
+
 /// Over a topic's backlinks, under the topic: room, no more — the cards
 /// say what they are.
 final class InlineBacklinksHeader: NSView, ColumnBlock {

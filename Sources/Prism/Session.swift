@@ -229,6 +229,15 @@ final class Session {
         undo.setActionName(name)
     }
 
+    /// A row and those under it moved straight to a note — a task into a
+    /// day — undone as one.
+    func move(_ editor: OutlineTextView, _ index: Int, to path: String) {
+        let name = GraphPaths.day(fromDailyPath: path).map { day in
+            day == .today ? "Today" : day == Day.today.adding(1) ? "Tomorrow" : OpenQuickly.dayTitle(day)
+        } ?? self.name(of: path).title
+        editor.moveRows(at: index, named: name) { rows, undo in self.add(rows, to: path, undo: undo) }
+    }
+
     /// Rows put in another note — a day's top, any other's end — undone
     /// with `undo`, with the rest of the move.
     func add(_ rows: [Row], to path: String, undo: UndoManager?) {
@@ -353,6 +362,7 @@ final class Session {
             guard let self, let window = windows.first(where: { $0.window === editor.window }) else { return }
             window.chooseWhereToMove(editor, index, from: view.ref.path)
         }
+        view.editor.onMoveRowsTo = { [weak self] editor, index, path in self?.move(editor, index, to: path) }
         if view.ref.day == nil {
             view.editor.onMakeCover = { [weak self, weak view] source in
                 guard let self, let view else { return }

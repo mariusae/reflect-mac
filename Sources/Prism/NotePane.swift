@@ -45,6 +45,9 @@ final class NotePane: NSView, OutlineTextViewNavigator {
     private var linked: [BacklinkBlock] = []
     /// What links here, as last shown: not shown again unchanged.
     private var shownSources: [BacklinkSource]?
+    /// Today's tasks still open from the days before, as last shown.
+    private var shownCarried: [String] = []
+    private var carriedHeading: ColumnHeading?
     /// What links here changed while typed in there: shown once the keyboard leaves.
     private var linkedStale = false
 
@@ -298,9 +301,18 @@ final class NotePane: NSView, OutlineTextViewNavigator {
 
     // MARK: What links here
 
+    /// Today's: the tasks still open from the days before, by their note.
+    private func carriedTasks() -> [(path: String, tasks: [NoteTask])] {
+        guard ref.day == .today else { return [] }
+        let carried = Tasks.carried(session.index.tasks(), today: .today)
+        return Dictionary(grouping: carried, by: \.notePath).sorted { $0.key > $1.key }.map { ($0.key, $0.value) }
+    }
+
     private func showLinked(_ sources: [BacklinkSource]?) {
         guard place.face == .outline || ref.day == nil, let note else { return }
-        if sources == shownSources, !linked.isEmpty || sources?.isEmpty != false { return }
+        let carried = carriedTasks()
+        let carriedNow = carried.flatMap { group in group.tasks.map { "\(group.path)#\($0.ordinal)#\($0.text)" } }
+        if sources == shownSources, carriedNow == shownCarried, !linked.isEmpty || (sources?.isEmpty != false && carried.isEmpty) { return }
         // Not while typed in there: once the keyboard leaves.
         if isTypingInLinked {
             linkedStale = true
@@ -308,16 +320,29 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         }
         linked.forEach { $0.removeFromSuperview() }
         linkedHeader?.removeFromSuperview()
+        carriedHeading?.removeFromSuperview()
         linked = []
         linkedHeader = nil
+        carriedHeading = nil
         shownSources = sources
+        shownCarried = carriedNow
         var blocks: [ColumnBlock] = [note]
+        // Still open from the days before: a heading over them, on cards as what links here is.
+        if !carried.isEmpty {
+            let heading = ColumnHeading("Still open", metrics: session.metrics)
+            document.addSubview(heading)
+            carriedHeading = heading
+            let cards = carried.map(makeCarried)
+            linked += cards
+            blocks += [heading] + cards
+        }
         if let sources, !sources.isEmpty {
             let header = InlineBacklinksHeader(count: sources.count, metrics: session.metrics)
             document.addSubview(header)
             linkedHeader = header
-            linked = sources.map(makeLinked)
-            blocks += [header] + linked
+            let cards = sources.map(makeLinked)
+            linked += cards
+            blocks += [header] + cards
         }
         self.blocks = blocks
         updateBar()
@@ -325,16 +350,36 @@ final class NotePane: NSView, OutlineTextViewNavigator {
     }
 
     private func makeLinked(_ source: BacklinkSource) -> BacklinkBlock {
-        let root = session.graph.root
-        let name = session.name(of: source.path)
         let text = session.graph.read(path: source.path) ?? ""
-        let slices = TaskSlice.slices(holding: source.contexts.map(\.link), path: source.path, in: text)
-        let block = BacklinkBlock(path: source.path, slices: slices, editable: OutlineMarkdown.roundTrips(text),
+        return makeCard(source.path, slices: TaskSlice.slices(holding: source.contexts.map(\.link), path: source.path, in: text),
+                        text: text, unit: "link")
+    }
+
+    private func makeCarried(_ group: (path: String, tasks: [NoteTask])) -> BacklinkBlock {
+        let text = session.graph.read(path: group.path) ?? ""
+        let slices = TaskSlice.slices(of: group.tasks, in: text).map { slice -> TaskSlice in
+            var slice = slice
+            slice.crumbs = Tasks.visibleBreadcrumbs(slice.task?.breadcrumbs ?? [])
+            return slice
+        }
+        return makeCard(group.path, slices: slices, text: text, unit: "task")
+    }
+
+    /// A card of places in another note — what links here, a task still
+    /// open — edited here, written back there.
+    private func makeCard(_ path: String, slices: [TaskSlice], text: String, unit: String) -> BacklinkBlock {
+        let root = session.graph.root
+        let name = session.name(of: path)
+        let block = BacklinkBlock(path: path, slices: slices, editable: OutlineMarkdown.roundTrips(text),
                                   name: name.title, detail: name.detail,
-                                  folded: SessionState.shared.backlinkFolded(root, to: ref.path, from: source.path),
+                                  folded: SessionState.shared.backlinkFolded(root, to: ref.path, from: path), unit: unit,
                                   metrics: session.metrics, face: session.face, images: session.images, navigator: self)
         for editor in block.editors {
             editor.onEdit = { [weak self] editor in self?.writeBack(editor) }
+            // A task there: into today, or put off — from the note it is in.
+            editor.view.day = GraphPaths.day(fromDailyPath: path)
+            // Taken out of the card, it is taken out of its note as anything typed there is.
+            editor.view.onMoveRowsTo = { [weak self] view, index, destination in self?.session.move(view, index, to: destination) }
             editor.onResize = { [weak self] in self?.relayout() }
             editor.view.onRestyle = { [weak self] in self?.relayout() }
             editor.onLeave = { [weak self] in
@@ -345,12 +390,12 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         }
         let target = ref.path
         block.onFold = { [weak self] folded in
-            SessionState.shared.setBacklinkFolded(root, to: target, from: source.path, folded)
+            SessionState.shared.setBacklinkFolded(root, to: target, from: path, folded)
             self?.relayout()
         }
         block.onOpen = { [weak self] beside in
             guard let self else { return }
-            onOpenPath?(source.path, self, beside)
+            onOpenPath?(path, self, beside)
         }
         document.addSubview(block)
         return block

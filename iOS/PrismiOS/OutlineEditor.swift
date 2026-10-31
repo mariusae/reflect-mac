@@ -1267,6 +1267,9 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// The notes and days a name typed after `@` or `[[` could be: set for
     /// every editor by whoever has the index.
     static var suggest: ((String) -> [LinkSuggestions.Candidate])?
+    /// A row and those under it moved straight to a note — a day's, for a
+    /// task brought into today or put off: the app's to do.
+    static var moveTo: ((OutlineEditor, Int, String) -> Void)?
     /// A link being finished: what started it, and where its name starts.
     private var completing: (trigger: LinkSuggestions.Trigger, start: Int)?
     /// Where an `@` or `[` was just typed, to see once it is in whether it starts a link.
@@ -2475,6 +2478,25 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             actions.append(UIAction(title: "Move Done to Bottom", image: UIImage(systemName: "arrow.down.to.line"),
                                     attributes: movable ? [] : .disabled) { [weak self] _ in self?.moveDoneToBottom(under: index) })
         }
+        // A task: into today, or put off to a day — moved into that day's note.
+        if isEditable, Tasks.isTask(row), row.task?.isDone != true, let move = Self.moveTo {
+            let today = Day.today
+            if day != today {
+                actions.append(UIAction(title: "Do Today", image: UIImage(systemName: "sun.max")) { [weak self] _ in
+                    guard let self else { return }
+                    move(self, index, GraphPaths.dailyPath(for: today))
+                })
+            }
+            let later = TaskLater.allCases.filter { $0.day(from: today) != day }.map { option in
+                UIAction(title: option.title, image: UIImage(systemName: option.symbol)) { [weak self] _ in
+                    guard let self else { return }
+                    move(self, index, GraphPaths.dailyPath(for: option.day(from: today)))
+                }
+            }
+            actions.append(UIAction(title: "Later…", image: UIImage(systemName: "clock.arrow.circlepath")) { [weak self] _ in
+                self?.showLater(later, forRow: index)
+            })
+        }
         if isEditable, onMoveRows != nil {
             actions.append(UIAction(title: "Move to…", image: UIImage(systemName: "arrow.right.doc.on.clipboard")) { [weak self] _ in
                 guard let self else { return }
@@ -2539,6 +2561,26 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             return said.isEmpty ? nil : said.joined(separator: ". ")
         }
         set {}
+    }
+
+    /// When to put a task off to, to choose from — or another day, by Move to….
+    private func showLater(_ options: [UIAction], forRow index: Int) {
+        let sheet = UIAlertController(title: "Later", message: nil, preferredStyle: .actionSheet)
+        for option in options {
+            sheet.addAction(UIAlertAction(title: option.title, style: .default) { _ in option.performWithSender(nil, target: nil) })
+        }
+        if onMoveRows != nil {
+            sheet.addAction(UIAlertAction(title: "Another Day…", style: .default) { [weak self] _ in
+                guard let self else { return }
+                onMoveRows?(self, index)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        sheet.popoverPresentationController?.sourceView = self
+        sheet.popoverPresentationController?.sourceRect = CGRect(origin: rowMenuPoint, size: .zero)
+        var top = window?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        top?.present(sheet, animated: true)
     }
 
     /// The kinds a row can be, to choose from: as the Mac's Turn Into.

@@ -42,6 +42,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             guard let index = store?.index else { return [] }
             return LinkSuggestions.candidates(query, index: index)
         }
+        OutlineEditor.moveTo = { [weak self] editor, index, path in self?.move(editor, index, to: path) }
         finder.onChoose = { [weak self] place in self?.chose(place) }
         additionalSafeAreaInsets.bottom = BottomBar.height + BottomBar.margin - 34 + BottomBar.gap
         setUpBar()
@@ -1084,6 +1085,15 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
     }
 
     // MARK: Move to…
+
+    /// A row and those under it moved straight to a note — a task into a
+    /// day — undone as one.
+    private func move(_ editor: OutlineEditor, _ index: Int, to path: String) {
+        let name = GraphPaths.day(fromDailyPath: path).map { day in
+            day == .today ? "Today" : day == Day.today.adding(1) ? "Tomorrow" : NoteBlock.dayTitle(day)
+        } ?? SliceBlock.name(path, store: store)
+        editor.moveRows(at: index, named: name) { [store] rows, undo in store.add(rows, to: path, undo: undo) }
+    }
 
     /// Where a row goes, asked for as Go to asks — a note, a day — then the
     /// row and those under it moved there.

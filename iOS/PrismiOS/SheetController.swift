@@ -456,9 +456,10 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         relayout()
     }
 
-    private func sliceBlocks(_ found: [(path: String, slices: [NoteSlice], editable: Bool)]) -> [SheetBlock] {
+    private func sliceBlocks(_ found: [(path: String, slices: [NoteSlice], editable: Bool)], asCard: Bool? = nil) -> [SheetBlock] {
         // What links to a note: a card each, as the Mac shows them, though the page is flat.
-        found.map { SliceBlock(path: $0.path, slices: $0.slices, editable: $0.editable, store: store, metrics: metrics, asCard: notePath != nil) }
+        found.map { SliceBlock(path: $0.path, slices: $0.slices, editable: $0.editable, store: store, metrics: metrics,
+                               asCard: asCard ?? (notePath != nil)) }
     }
 
     private var isTyping: Bool { blocks.contains { $0.editors.contains(where: \.isFirstResponder) } }
@@ -545,21 +546,54 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
 
     /// Every note followed by what links to it — the one place links are
     /// shown from their other end.
+    /// Today's: the tasks still open from the days before, by their note —
+    /// to tick, or bring into today, or put off. Any other note's: none.
+    private func carried(into path: String, done: @escaping ([(path: String, slices: [NoteSlice], editable: Bool)]) -> Void) {
+        guard path == GraphPaths.dailyPath(for: .today), let graph = store.graph, let index = store.index else { return done([]) }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let tasks = Tasks.carried(index.tasks(), today: .today)
+            var runs: [(path: String, slices: [NoteSlice], editable: Bool)] = []
+            for (note, list) in Dictionary(grouping: tasks, by: \.notePath).sorted(by: { $0.key > $1.key }) {
+                guard let source = graph.read(path: note) else { continue }
+                let slices = NoteSlice.slices(of: list, in: source).map { slice -> NoteSlice in
+                    var slice = slice
+                    slice.crumbs = Tasks.visibleBreadcrumbs(slice.task?.breadcrumbs ?? [])
+                    return slice
+                }
+                runs.append((note, slices, OutlineMarkdown.roundTrips(source)))
+            }
+            DispatchQueue.main.async { done(runs) }
+        }
+    }
+
+    private var carriedShown: [String] = []
+
     private func refreshLinked(_ path: String) {
         linked(to: path) { [weak self] sources, found in
-            guard let self, self.kind == .note(path), !self.isTyping else { return }
-            self.linkedPaths = found.map(\.path).sorted {
-                (self.store.index?.entry($0)?.modified ?? .distantPast) > (self.store.index?.entry($1)?.modified ?? .distantPast)
-            }
-            if self.linkedCount != found.count {
-                self.linkedCount = found.count
-                self.onLinkedCount?(found.count)
-            }
-            guard sources != self.linkedShown || self.blocks.count == 1 else { return }
-            self.linkedShown = sources
-            let after: [SheetBlock] = found.isEmpty ? [] : [LinkedHead(count: found.count, metrics: self.metrics)] + self.sliceBlocks(found)
-            self.setBlocks(note: path, after: after)
+            guard let self else { return }
+            carried(into: path) { [weak self] runs in self?.showLinked(path, sources: sources, found: found, carried: runs) }
         }
+    }
+
+    private func showLinked(_ path: String, sources: [BacklinkSource], found: [(path: String, slices: [NoteSlice], editable: Bool)],
+                            carried: [(path: String, slices: [NoteSlice], editable: Bool)]) {
+        guard self.kind == .note(path), !self.isTyping else { return }
+        self.linkedPaths = found.map(\.path).sorted {
+            (self.store.index?.entry($0)?.modified ?? .distantPast) > (self.store.index?.entry($1)?.modified ?? .distantPast)
+        }
+        if self.linkedCount != found.count {
+            self.linkedCount = found.count
+            self.onLinkedCount?(found.count)
+        }
+        let carriedNow = carried.flatMap { run in run.slices.map { "\(run.path)#\($0.start)#\($0.rows.first?.text ?? "")" } }
+        guard sources != self.linkedShown || carriedNow != self.carriedShown || self.blocks.count == 1 else { return }
+        self.linkedShown = sources
+        self.carriedShown = carriedNow
+        // Still open from the days before: a head over them, on cards as what links here is.
+        let still: [SheetBlock] = carried.isEmpty ? [] : [HeadBlock(title: "Still Open", kicker: nil, metrics: self.metrics, isGroup: true)]
+            + self.sliceBlocks(carried, asCard: true)
+        let after: [SheetBlock] = found.isEmpty ? [] : [LinkedHead(count: found.count, metrics: self.metrics)] + self.sliceBlocks(found)
+        self.setBlocks(note: path, after: still + after)
     }
 
     /// To what links here, at the note's end.
