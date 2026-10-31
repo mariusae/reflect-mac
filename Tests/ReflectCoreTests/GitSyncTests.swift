@@ -177,6 +177,37 @@ enum SyncBackend: String, CaseIterable, CustomStringConvertible {
         return (fixture, a, backend.git(deviceB), deviceB)
     }
 
+    @Test(arguments: SyncBackend.allCases) func commitNamesWeftTiddlersByTitle(_ backend: SyncBackend) throws {
+        let fixture = try Fixture()
+        let git = backend.git(fixture.deviceA)
+        try write(fixture.deviceA, "wiki/hellothere.md", "---\ntitle: HelloThere\n---\nWelcome.\n")
+        _ = try git.cycle(.push)
+        #expect(try headMessage(fixture.deviceA) == "Add HelloThere")
+        try write(fixture.deviceA, "wiki/hellothere.md", "---\ntitle: HelloThere\n---\nWelcome back.\n")
+        _ = try git.cycle(.push)
+        #expect(try headMessage(fixture.deviceA) == "Update HelloThere")
+    }
+
+    /// An app settles what it can of a conflict before the lines are merged:
+    /// here, a line both devices changed, made the same on all sides.
+    @Test(arguments: SyncBackend.allCases) func aMergeIsPreparedByTheApp(_ backend: SyncBackend) throws {
+        let (fixture, a, b, deviceB) = try shared(backend, "wiki/t.md", "stamp: 1\nbody\n")
+        try write(deviceB, "wiki/t.md", "stamp: 2\nbody\n")
+        _ = try b.cycle(.push)
+        try write(fixture.deviceA, "wiki/t.md", "stamp: 3\nbody\n")
+        a.prepareMerge = { path, ours, base, theirs in
+            guard path == "wiki/t.md" else { return nil }
+            func settled(_ side: Data) -> Data {
+                Data(String(decoding: side, as: UTF8.self).replacingOccurrences(of: #"stamp: \d"#, with: "stamp: 3", options: .regularExpression).utf8)
+            }
+            return (settled(ours), settled(base), settled(theirs))
+        }
+        let report = try a.cycle(.full)
+        #expect(report.conflicted.isEmpty)
+        #expect(try read(fixture.deviceA, "wiki/t.md") == "stamp: 3\nbody\n")
+        #expect(try headMessage(fixture.deviceA) == "Merge changes from other devices")
+    }
+
     @Test(arguments: SyncBackend.allCases) func conflictingEditsAreCommittedWithLabelledMarkers(_ backend: SyncBackend) throws {
         let (fixture, a, b, deviceB) = try shared(backend, "notes/shared.md", "# Shared\n\noriginal line\n")
         try write(deviceB, "notes/shared.md", "# Shared\n\nedited on b\n")

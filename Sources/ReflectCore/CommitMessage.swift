@@ -77,8 +77,9 @@ public enum CommitMessage {
         let fallback: String
         if let day = GraphPaths.day(fromDailyPath: path) {
             fallback = "daily note for \(day)"
-        } else if path.hasPrefix("notes/"), path.hasSuffix(".md") {
-            let stem = String(path.dropFirst(6).dropLast(3).split(separator: "/").last ?? "")
+        } else if path.hasPrefix("notes/") || path.hasPrefix("wiki/"), path.hasSuffix(".md") {
+            // A note, or one of weft's tiddlers, named by its title.
+            let stem = String(path.dropLast(3).split(separator: "/").last ?? "")
             let label = humanize(stem)
             guard !label.isEmpty else { return nil }
             fallback = label

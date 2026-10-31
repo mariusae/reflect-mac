@@ -71,6 +71,14 @@ public final class Git: @unchecked Sendable {
 
     public init(backend: any GitBackend) { self.backend = backend }
 
+    /// Asked, when both sides changed a text file, for the three sides to
+    /// merge by lines in their place: an app that knows a file's form
+    /// better than lines settles what it can first — weft merges a
+    /// tiddler's frontmatter field by field. Given the path from the
+    /// repository's top, and this device's side, the base and the other's.
+    /// Nil, or nil back: the sides are merged as they are.
+    public var prepareMerge: (@Sendable (_ path: String, _ ours: Data, _ base: Data, _ theirs: Data) -> (ours: Data, base: Data, theirs: Data)?)?
+
     /// One cycle of the sync.
     public func sync(_ mode: Mode) async throws -> SyncReport {
         try await turn { try self.cycle(mode) }
@@ -308,7 +316,7 @@ public final class Git: @unchecked Sendable {
             let file = topURL.appendingPathComponent(path)
             switch (stages[2], stages[3]) {
             case let (ours?, theirs?):
-                let mine = try backend.blob(ours), other = try backend.blob(theirs)
+                var mine = try backend.blob(ours), other = try backend.blob(theirs)
                 if Self.isBinary(mine) || Self.isBinary(other) {
                     let copy = Self.conflictCopyPath(path)
                     try write(mine, to: file)
@@ -320,7 +328,10 @@ public final class Git: @unchecked Sendable {
                     // at a line's end and the other took off is no change, and
                     // must not pull the line into the conflict — where keeping
                     // both sides would write it twice.
-                    let base = try stages[1].map(backend.blob) ?? Data()
+                    var base = try stages[1].map(backend.blob) ?? Data()
+                    if let prepared = prepareMerge?(path, mine, base, other) {
+                        (mine, base, other) = prepared
+                    }
                     let merged = try backend.mergeText(ours: Self.trimmingLineEnds(mine), base: Self.trimmingLineEnds(base),
                                                        theirs: Self.trimmingLineEnds(other),
                                                        labels: (Self.ourLabel, "base", Self.theirLabel))
