@@ -24,6 +24,9 @@ public final class GraphSync {
     public private(set) var status: Status = .idle
     /// Told of the files a merge wrote, to read again.
     @ObservationIgnored public var onPulled: ([String]) -> Void = { _ in }
+    /// Told how each cycle went — what it did, or why it failed — but not
+    /// of one the system stopped.
+    @ObservationIgnored public var onFinished: ((Result<SyncReport, Error>) -> Void)?
     /// Done before each cycle: a GitHub token refreshed, on the phone.
     @ObservationIgnored public var prepare: (() async throws -> Void)?
 
@@ -90,10 +93,12 @@ public final class GraphSync {
                 pulled = report.pulled
                 if report.pulled { onPulled(report.changed) }
                 status = .synced(Date())
+                onFinished?(.success(report))
             } catch is SyncStopped {
                 status = .idle
             } catch {
                 status = .failed(error.localizedDescription)
+                onFinished?(.failure(error))
             }
             for completion in toTell { completion(pulled) }
             running = false

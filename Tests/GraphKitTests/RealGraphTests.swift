@@ -22,5 +22,15 @@ import Testing
         print(String(format: "%d pages in %.2f s; %d written back unchanged; backlinks and names for 2000 in %.2f s",
                      index.entries.count, loading, unchanged, Date().timeIntervalSince(resolving)))
         #expect(changed.isEmpty, "\(changed.prefix(5))")
+        // As Quick Open asks, a letter at a time.
+        _ = index.search("x")
+        let searching = Date()
+        var typed = ""
+        for letter in "monarch planning" {
+            typed.append(letter)
+            _ = index.search(typed, limit: 14)
+            _ = index.recent(limit: 14)
+        }
+        print(String(format: "16 keystrokes searched in %.1f ms", Date().timeIntervalSince(searching) * 1000))
     }
 }

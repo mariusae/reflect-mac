@@ -41,6 +41,21 @@ public final class PageIndex: @unchecked Sendable {
     private var outgoing: [String: Set<String>] = [:]
     /// The title of the page in each file.
     private var titlesByPath: [String: String] = [:]
+
+    /// What search looks through, folded once as each page is indexed —
+    /// case, accents and widths set aside — so that a search, as each
+    /// letter is typed, only compares bytes.
+    private struct Folded {
+        var names: [String]
+        var text: [UInt8]
+    }
+    private var folded: [String: Folded] = [:]
+    private var sortedTitles: [String]?
+    private var byRecency: [String]?
+
+    static func fold(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
+    }
     private var incoming: [String: Set<String>] = [:]
 
     /// Whether private notes are read too: Prism lists them, saying only
@@ -52,7 +67,13 @@ public final class PageIndex: @unchecked Sendable {
         includesPrivate = includingPrivate
     }
 
-    public var titles: [String] { entries.keys.sorted() }
+    /// Every title, in order: kept, and sorted again only after a change.
+    public var titles: [String] {
+        if let sortedTitles { return sortedTitles }
+        let sorted = entries.keys.sorted()
+        sortedTitles = sorted
+        return sorted
+    }
 
     public subscript(title: String) -> Page? { entries[title]?.page }
 
@@ -68,6 +89,7 @@ public final class PageIndex: @unchecked Sendable {
             let committed = uncommitted.contains(entry.path) ? nil : times[entry.path]
             entries[title]?.modified = committed ?? entry.written
         }
+        byRecency = nil
     }
 
     /// Reads every page. A title two files claim goes to the first by path;
@@ -78,6 +100,9 @@ public final class PageIndex: @unchecked Sendable {
         outgoing = [:]
         incoming = [:]
         titlesByPath = [:]
+        folded = [:]
+        sortedTitles = nil
+        byRecency = nil
         // Read one by one: side by side, the notes' parsing contends and
         // takes twice as long.
         for path in Self.pagePaths(in: root) {
@@ -210,20 +235,34 @@ public final class PageIndex: @unchecked Sendable {
     /// Pages by what is typed: those whose title or an alias starts with it,
     /// then those containing it, then those whose text does.
     public func search(_ query: String, limit: Int = 50) -> [String] {
-        let query = query.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return [] }
-        var starts: [String] = [], contains: [String] = [], inText: [String] = []
+        let query = Self.fold(query.trimmingCharacters(in: .whitespaces))
+        guard !query.isEmpty, limit > 0 else { return [] }
+        var starts: [String] = [], contains: [String] = []
+        let titles = titles
         for title in titles {
-            guard let entry = entries[title] else { continue }
-            if entry.names.contains(where: { $0.range(of: query, options: [.caseInsensitive, .diacriticInsensitive, .anchored]) != nil }) {
+            guard let names = folded[title]?.names else { continue }
+            if names.contains(where: { $0.hasPrefix(query) }) {
                 starts.append(title)
-            } else if entry.names.contains(where: { $0.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil }) {
+            } else if names.contains(where: { $0.contains(query) }) {
                 contains.append(title)
-            } else if entry.page.text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil {
-                inText.append(title)
             }
         }
-        return Array((starts + contains + inText).prefix(limit))
+        var found = starts + contains
+        guard found.count < limit else { return Array(found.prefix(limit)) }
+        // Then what pages say: their bytes searched for the query's, till enough are found.
+        let named = Set(found)
+        let needle = Array(query.utf8)
+        for title in titles where !named.contains(title) {
+            guard let text = folded[title]?.text, text.count >= needle.count else { continue }
+            let hit = needle.withUnsafeBytes { n in
+                text.withUnsafeBytes { h in memmem(h.baseAddress, h.count, n.baseAddress, n.count) != nil }
+            }
+            if hit {
+                found.append(title)
+                if found.count == limit { break }
+            }
+        }
+        return found
     }
 
     // MARK: Renaming
@@ -304,6 +343,9 @@ public final class PageIndex: @unchecked Sendable {
 
     private func index(_ entry: Entry) {
         titlesByPath[entry.path] = entry.page.title
+        folded[entry.page.title] = Folded(names: entry.names.map(Self.fold), text: Array(Self.fold(entry.page.text).utf8))
+        sortedTitles = nil
+        byRecency = nil
         let targets = WikiLinks.targets(in: entry.page.text)
         outgoing[entry.page.title] = targets
         for target in targets { incoming[NoteIndex.foldKey(target), default: []].insert(entry.page.title) }
@@ -311,6 +353,9 @@ public final class PageIndex: @unchecked Sendable {
 
     private func unindex(_ entry: Entry) {
         if titlesByPath[entry.path] == entry.page.title { titlesByPath[entry.path] = nil }
+        folded[entry.page.title] = nil
+        sortedTitles = nil
+        byRecency = nil
         for target in outgoing[entry.page.title] ?? [] { incoming[NoteIndex.foldKey(target)]?.remove(entry.page.title) }
         outgoing[entry.page.title] = nil
     }
@@ -340,7 +385,8 @@ public final class PageIndex: @unchecked Sendable {
 
     /// The pages written most lately, newest first.
     public func recent(limit: Int = 50) -> [String] {
-        entries.values.sorted { $0.modified > $1.modified }.prefix(limit).map(\.page.title)
+        if byRecency == nil { byRecency = entries.values.sorted { $0.modified > $1.modified }.map(\.page.title) }
+        return Array(byRecency!.prefix(limit))
     }
 }
 
