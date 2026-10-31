@@ -4,6 +4,7 @@
 import { isGitHubSigned, sha256 } from "./crypto.ts";
 import { RepoHub, type Device } from "./hub.ts";
 import { mayDictate, realtimeToken } from "./scribe.ts";
+import { ask, type Task } from "./claude.ts";
 
 export { RepoHub };
 
@@ -19,6 +20,10 @@ export interface Env {
   ELEVENLABS_API_KEY: string;
   /// Comma-separated: the GitHub logins that may dictate.
   SCRIBE_USERS: string;
+  /// Anthropic's API key, for a note summed up or its tasks found.
+  ANTHROPIC_API_KEY: string;
+  /// Comma-separated: the GitHub logins that may ask Claude; unset, those that may dictate.
+  CLAUDE_USERS?: string;
 }
 
 export default {
@@ -29,6 +34,7 @@ export default {
       if (url.pathname === "/devices" && (request.method === "POST" || request.method === "DELETE")) return await devices(request, env);
       if (url.pathname === "/events") return await events(request, env, url);
       if (url.pathname === "/scribe-token" && request.method === "POST") return await scribeToken(request, env);
+      if (url.pathname === "/claude" && request.method === "POST") return await claude(request, env);
       if (url.pathname === "/" && request.method === "GET") return new Response("reflect-sync-relay\n");
       return new Response("Not found\n", { status: 404 });
     } catch (error) {
@@ -170,4 +176,18 @@ async function scribeToken(request: Request, env: Env): Promise<Response> {
   const login = await gitHubLogin(bearer(request));
   if (!mayDictate(login, env.SCRIBE_USERS)) return new Response("Not allowed to dictate\n", { status: 403 });
   return Response.json({ token: await realtimeToken(env.ELEVENLABS_API_KEY) }, { headers: { "Cache-Control": "no-store" } });
+}
+
+/// A note summed up, or its tasks found: `{task, title, text}` in, `{lines}` out.
+async function claude(request: Request, env: Env): Promise<Response> {
+  if (!env.ANTHROPIC_API_KEY) return new Response("Claude is not set up on the relay\n", { status: 503 });
+  const login = await gitHubLogin(bearer(request));
+  if (!mayDictate(login, env.CLAUDE_USERS ?? env.SCRIBE_USERS)) return new Response("Not allowed to ask Claude\n", { status: 403 });
+  const body = (await request.json().catch(() => ({}))) as { task?: string; title?: string; text?: string };
+  if (body.task !== "summarize" && body.task !== "tasks") return new Response("Ask to summarize, or for tasks\n", { status: 400 });
+  const text = (body.text ?? "").trim();
+  if (!text) return new Response("Nothing to read\n", { status: 400 });
+  if (text.length > 400_000) return new Response("The note is too long\n", { status: 413 });
+  const lines = await ask(env.ANTHROPIC_API_KEY, body.task as Task, (body.title ?? "").trim(), text);
+  return Response.json({ lines }, { headers: { "Cache-Control": "no-store" } });
 }

@@ -942,6 +942,35 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         session.setFrontmatter(note.path, "private", note.isPrivate ? nil : "true", undoName: "Private")
     }
 
+    // MARK: Claude
+
+    /// Note ▸ Summarize with Claude: a Summary at the note's top, undoable.
+    @objc func summarizeNote(_ sender: Any?) { askClaude("summarize", undoName: "Summarize") { NoteAssistant.withSummary($0, in: $1) } }
+
+    /// Note ▸ Find Tasks with Claude: what it says to do, as tasks under Actions at its end.
+    @objc func findTasks(_ sender: Any?) { askClaude("tasks", undoName: "Find Tasks") { NoteAssistant.withTasks($0, in: $1) } }
+
+    private func askClaude(_ task: String, undoName: String, put: @escaping @Sendable ([String], String) -> String?) {
+        guard let note = menuNote, !note.isPrivate, let ask = NoteAssistant.ask else { return NSSound.beep() }
+        session.save()
+        let path = note.path, title = note.title
+        let text = session.graph.read(path: path) ?? ""
+        activePane.status = "Asking Claude…"
+        Task { @MainActor in
+            defer { activePane.status = nil }
+            do {
+                let lines = try await ask(task, title, text)
+                session.change(path, undoName: undoName) { put(lines, $0) }
+                if task == "tasks", lines.isEmpty { NSSound.beep() }
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "Claude could not read “\(title)”"
+                alert.informativeText = error.localizedDescription
+                if let window { _ = await alert.beginSheetModal(for: window) } else { alert.runModal() }
+            }
+        }
+    }
+
     /// Note ▸ Insert Template: its rows put in — a day's at its top, any other note's at its end.
     @objc func insertTemplate(_ sender: NSMenuItem) {
         guard let note = menuNote, let template = sender.representedObject as? String,
@@ -1011,6 +1040,8 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             return note?.day == nil && note != nil
         case #selector(togglePrivate(_:)):
             item.state = note?.isPrivate == true ? .on : .off
+        case #selector(summarizeNote(_:)), #selector(findTasks(_:)):
+            return note != nil && note?.isPrivate == false && NoteAssistant.ask != nil
         case #selector(toggleTemplate(_:)):
             item.state = note?.isTemplate == true ? .on : .off
             return note != nil && note?.day == nil

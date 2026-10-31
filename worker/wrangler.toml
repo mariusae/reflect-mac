@@ -28,3 +28,5 @@ SCRIBE_USERS = "mariusae"
 #   APNS_KEY_ID            the key's ID
 #   APNS_TEAM_ID           the Apple Developer team's ID
 #   ELEVENLABS_API_KEY     ElevenLabs' API key, for dictation
+#   ANTHROPIC_API_KEY      Anthropic's API key, for a note summed up or its tasks found
+# CLAUDE_USERS, set like SCRIBE_USERS, says who may ask Claude; unset, those who may dictate.

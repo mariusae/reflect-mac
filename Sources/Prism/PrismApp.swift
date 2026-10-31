@@ -62,6 +62,12 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         session?.quickNote?.show()
     }
 
+    /// The GitHub token the relay knows the user by.
+    @MainActor private static func relayToken() async throws -> String {
+        guard GitHubGraph.account.isSignedIn else { throw GitHubError("Not signed in to GitHub") }
+        return try await GitHubGraph.account.validAccessToken()
+    }
+
     /// Prism ▸ Settings: the typography window.
     @objc func showSettings(_ sender: Any?) {
         guard let session else { return }
@@ -165,8 +171,13 @@ final class PrismApp: NSObject, NSApplicationDelegate {
                 guard GitHubGraph.account.isSignedIn else { throw GitHubError("Not signed in to GitHub") }
                 return try await SyncRelay.scribeToken(accessToken: try await GitHubGraph.account.validAccessToken())
             }
+            // Claude, through the relay too.
+            NoteAssistant.ask = { task, title, text in
+                try await SyncRelay.claude(task, title: title, text: text, accessToken: try await Self.relayToken())
+            }
         } else {
             Dictation.scribeToken = nil
+            NoteAssistant.ask = nil
         }
         if !Session.scripted {
             session.startQuickNote()
@@ -544,6 +555,9 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             }(),
             .separator(),
             item("Remove Cover", #selector(PrismWindow.removeCover(_:))),
+            .separator(),
+            item("Summarize with Claude", #selector(PrismWindow.summarizeNote(_:))),
+            item("Find Tasks with Claude", #selector(PrismWindow.findTasks(_:))),
             .separator(),
             item("Read Note", #selector(PrismWindow.readPage(_:)), "r", [.command, .shift]),
             item("Reading View", #selector(PrismWindow.toggleReaderMode(_:)), "e", [.command, .shift]),

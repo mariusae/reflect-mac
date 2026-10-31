@@ -65,6 +65,24 @@ public enum SyncRelay {
         return token
     }
 
+    /// What Claude, through the relay, makes of a note: `summarize`, a few
+    /// lines summing it up; `tasks`, the things it says to do.
+    public static func claude(_ task: String, title: String, text: String, accessToken: String) async throws -> [String] {
+        guard let host else { throw GitHubError("There is no sync relay to ask Claude through") }
+        var request = URLRequest(url: URL(string: "https://\(host)/claude")!, timeoutInterval: 90)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["task": task, "title": title, "text": text])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status),
+              let lines = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["lines"] as? [String] else {
+            throw GitHubError("The sync relay answered \(status): \(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+        return lines
+    }
+
     static func hex(_ data: Data) -> String { data.map { String(format: "%02x", $0) }.joined() }
 
     /// Whether the app was signed to be pushed to through APNs' sandbox: its

@@ -14,7 +14,9 @@ So another device's writing comes in within seconds, not when the app is next op
   - `POST` and `DELETE /devices`: an iPhone registering or unregistering.
   - `GET /events`: a Mac's WebSocket.
   - `POST /scribe-token`: a single-use token for ElevenLabs' realtime transcription, for the phone's dictation. Only the GitHub logins in `SCRIBE_USERS` get one.
+  - `POST /claude`: a note summed up, or the tasks in it found, by Claude (Opus 5.5, low effort). It takes `{task: "summarize" | "tasks", title, text}` and answers `{lines}`. Only the GitHub logins in `CLAUDE_USERS` may ask; with that unset, those in `SCRIBE_USERS`. It needs the `ANTHROPIC_API_KEY` secret: `npx wrangler secret put ANTHROPIC_API_KEY`.
 - `src/scribe.ts`: who may dictate, and asking ElevenLabs for a token.
+- `src/claude.ts`: asking Claude to sum up a note, or find its tasks.
 - `src/hub.ts`: one Durable Object per repository. It holds the push tokens and the open sockets.
 - `src/crypto.ts`: checks webhook signatures and signs the APNs token.
 

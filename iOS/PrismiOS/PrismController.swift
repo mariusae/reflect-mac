@@ -65,6 +65,10 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
                 guard account.isSignedIn else { throw GitHubError("Not signed in to GitHub") }
                 return try await SyncRelay.scribeToken(accessToken: try await account.validAccessToken())
             }
+            // Claude, through the relay too.
+            NoteAssistant.ask = { task, title, text in
+                try await SyncRelay.claude(task, title: title, text: text, accessToken: try await Self.relayToken(account))
+            }
             Dictation.prepare()
             NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { Dictation.prepare() }
@@ -953,6 +957,18 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         let entry = store.index?.entry(path)
         let day = GraphPaths.day(fromDailyPath: path)
         var items: [UIMenuElement] = []
+        // Claude, for any note not private: kept off the network, as its links are.
+        if NoteAssistant.ask != nil, entry?.isPrivate != true {
+            let title = entry?.title ?? SliceBlock.name(path, store: store)
+            items.append(UIMenu(title: "Claude", image: UIImage(systemName: "sparkles"), children: [
+                UIAction(title: "Summarize", image: UIImage(systemName: "text.append")) { [weak self] _ in
+                    self?.askClaude("summarize", path: path, title: title, undoName: "Summarize") { NoteAssistant.withSummary($0, in: $1) }
+                },
+                UIAction(title: "Find Tasks", image: UIImage(systemName: "checklist")) { [weak self] _ in
+                    self?.askClaude("tasks", path: path, title: title, undoName: "Find Tasks") { NoteAssistant.withTasks($0, in: $1) }
+                },
+            ]))
+        }
         // A template's rows put in: a day's at its top, any other note's at its end.
         if let templates = store.index?.templates.filter({ $0.path != path }), !templates.isEmpty {
             items.append(UIMenu(title: "Insert Template", image: UIImage(systemName: "doc.on.doc"), children: templates.map { template in
@@ -1168,6 +1184,34 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             sheet.prefersGrabberVisible = true
         }
         topPresenter.present(finder, animated: true)
+    }
+
+    // MARK: Claude
+
+    /// The GitHub token the relay knows the user by.
+    private static func relayToken(_ account: GitHubAccount) async throws -> String {
+        guard account.isSignedIn else { throw GitHubError("Not signed in to GitHub") }
+        return try await account.validAccessToken()
+    }
+
+    /// A note read by Claude, through the relay: a summary at its top, or
+    /// the tasks it speaks of at its end — undoable.
+    private func askClaude(_ task: String, path: String, title: String, undoName: String,
+                           put: @escaping @Sendable ([String], String) -> String?) {
+        guard let ask = NoteAssistant.ask else { return }
+        saveAll()
+        let text = store.text(path)
+        say("Asking Claude…")
+        Task { @MainActor in
+            do {
+                let lines = try await ask(task, title, text)
+                if task == "tasks", lines.isEmpty { return say("Claude found nothing to do in it.") }
+                store.change(path, undoName: undoName) { put(lines, $0) }
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } catch {
+                say("Claude could not read it: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: Read Next
