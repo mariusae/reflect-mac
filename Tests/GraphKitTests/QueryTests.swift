@@ -58,6 +58,23 @@ import Testing
         #expect(wiki.entry(atPath: "notes/zeta.md")?.page.title == "Zeta")
     }
 
+    /// Words found as typed first, with the line saying them — not the
+    /// first "i" in the file.
+    @Test func findsWordsTogetherFirst() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("find-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wiki = PageIndex(root: root)
+        let day = { (n: Double) in Date(timeIntervalSince1970: n * 86400) }
+        try wiki.save(Page(title: "Ant", id: "01idid", modified: day(1),
+                           text: "- Meeting\n  - I do worry about AI’s effect on our thinking.\n- Other"))
+        try wiki.save(Page(title: "Scattered", modified: day(5), text: "I said it. Do it. A worry."))
+        try wiki.save(Page(title: "Nothing", modified: day(9), text: "No such words."))
+        let found = wiki.find("i do worry")
+        #expect(found.map(\.title) == ["Ant", "Scattered"])
+        #expect(found[0].phrase && found[0].line == "I do worry about AI’s effect on our thinking.")
+        #expect(wiki.find("ai's effect").first?.title == "Ant")
+    }
+
     @Test func blocksAreParsedAndReplaced() {
         let text = "Intro\n\n```query\ntag: A\n```\n\n```swift\nlet x\n```\n\n```query\ntag: B\n```\n"
         #expect(MarkdownBlock.parse(text)[1] == .query(Query(text: "tag: A")))

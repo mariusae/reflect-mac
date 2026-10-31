@@ -40,6 +40,23 @@ import Testing
         #expect(index.containing("design doc").map(\.path) == ["notes/design.md"])
     }
 
+    /// Words found together first, shown by the line saying them — not the
+    /// frontmatter's `id:`, where the first "i" is.
+    @Test func wordsTogetherFirstWithTheirLine() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("index-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("notes"), withIntermediateDirectories: true)
+        try Data("---\nid: 01abc\n---\n# Ant\n- Meeting\n    - I do worry about AI’s effect on our thinking.\n".utf8)
+            .write(to: root.appendingPathComponent("notes/ant.md"))
+        try Data("---\nid: 02def\n---\n# Apart\n- I said it. Do it. A worry.\n".utf8).write(to: root.appendingPathComponent("notes/apart.md"))
+        let index = NoteIndex(root: root)
+        index.scan()
+        let found = index.containing("i do worry")
+        #expect(found.map(\.path) == ["notes/ant.md", "notes/apart.md"])
+        #expect(found.first?.snippet == "I do worry about AI’s effect on our thinking.")
+        #expect(index.containing("ai's effect").first?.path == "notes/ant.md")
+    }
+
     @Test func onlyTextNotesAreIndexed() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("index-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

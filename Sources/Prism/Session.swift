@@ -198,8 +198,9 @@ final class Session {
             if paths.count > 40 {
                 loadPages()
             } else {
-                paths.filter(PageFolder.isPage).forEach(pages.reload)
-                if let history { pages.useHistory(history.times, uncommitted: history.uncommitted) }
+                let changed = paths.filter(PageFolder.isPage)
+                changed.forEach(pages.reload)
+                if let history { pages.useHistory(history.times, uncommitted: history.uncommitted, paths: Set(changed)) }
                 OutlineGraph.pages = pages
             }
         }
@@ -595,16 +596,37 @@ final class Session {
                   detail: $0.alias.map { "as \($0)" } ?? Self.ago.localizedString(for: $0.entry.modified, relativeTo: Date()),
                   flags: NoteFlags($0.entry), cover: $0.entry.cover)
         }
-        // Then those that say it: what the Search lens found, here — the words shown once open.
-        let named = Set(places.map(\.path))
+        // Then the rows lately written that say it, as they are listed with nothing typed.
+        let edited = trimmed.count < 2 ? [] : Array(recentPlaces(trimmed).prefix(6))
+        places += edited
+        // Then the notes that say it — the words together first — each with
+        // the line saying it, the words shown once open.
+        var named = Set(places.map(\.path))
         let words = trimmed.split(separator: " ").map(String.init)
-        places += (trimmed.count < 2 ? [] : index.containing(trimmed, limit: 30)).filter { !named.contains($0.path) }.map { found in
-            let entry = index.entry(found.path)
-            return Place(title: name(of: found.path).title, path: found.path,
-                         detail: entry?.isPrivate == true ? "Private" : found.snippet,
-                         flags: NoteFlags(entry), cover: entry?.cover, words: words)
+        guard trimmed.count >= 2 else { return places }
+        if let pages {
+            for found in pages.find(trimmed, limit: 30) where named.insert(found.path).inserted {
+                places.append(said(found.line, in: found.path, words: found.phrase ? [trimmed] : words))
+            }
+        } else {
+            for found in index.containing(trimmed, limit: 30) where named.insert(found.path).inserted {
+                places.append(said(found.snippet, in: found.path, words: words))
+            }
         }
         return places
+    }
+
+    /// A line found in a note, listed as a row lately written is: the line
+    /// itself, under its note's name — a private note's words not shown.
+    private func said(_ line: String, in path: String, words: [String]) -> Place {
+        let entry = index.entry(path)
+        let name = name(of: path).title
+        guard entry?.isPrivate != true, !line.isEmpty else {
+            return Place(title: name, path: path, detail: entry?.isPrivate == true ? "Private" : nil,
+                         flags: NoteFlags(entry), cover: entry?.cover, words: words)
+        }
+        return Place(title: line, path: path, detail: entry.map { Self.ago.localizedString(for: $0.modified, relativeTo: Date()) },
+                     flags: NoteFlags(entry), trail: name, cover: entry?.cover, words: words)
     }
 
     /// The rows lately written in, found by their words or their parents'.

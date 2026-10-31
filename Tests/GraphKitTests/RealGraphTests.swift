@@ -32,5 +32,14 @@ import Testing
             _ = index.recent(limit: 14)
         }
         print(String(format: "16 keystrokes searched in %.1f ms", Date().timeIntervalSince(searching) * 1000))
+        let finding = Date()
+        typed = ""
+        var found: [PageIndex.Found] = []
+        for letter in ProcessInfo.processInfo.environment["FIND"] ?? "i do worry" {
+            typed.append(letter)
+            found = index.find(typed, limit: 30)
+        }
+        print(String(format: "found by words, a letter at a time, in %.1f ms:", Date().timeIntervalSince(finding) * 1000))
+        for hit in found.prefix(5) { print("  \(hit.phrase ? "“”" : "  ") \(hit.title) — \(hit.line)") }
     }
 }

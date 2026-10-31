@@ -25,4 +25,21 @@ struct RecentEditsTitleTests {
         #expect(recent.matching("monarch", title: { _ in "Monarch" }).count == 1)
         #expect(recent.matching("monarch").isEmpty)
     }
+
+    /// A row written on — dictated, words changed as it went — is one edit,
+    /// and found by its words, quotes as typed.
+    @Test func aRowWrittenOnIsOneEdit() {
+        let day = "daily/2026-10-31.md"
+        func edit(_ text: String) -> RecentEdits.Edit { .init(path: day, text: text, ancestors: ["Ant"], date: Date()) }
+        let older = RecentEdits(edits: [
+            edit("I do worry about AI’s effect on our thinking for ourselves. That’s a big one"),
+            edit("I do worry about AI’s effect on our thinking for ourselves."),
+            edit("I do worry about AI’s effect on our thinking"),
+            edit("I do worry about"),
+            edit("Think first it's super important to identify what the goal is."),
+        ])
+        #expect(older.distinct.count == 2)
+        #expect(older.matching("ai's effect").count == 1)
+        #expect(older.matching("i do worry").first?.text.hasSuffix("big one") == true)
+    }
 }

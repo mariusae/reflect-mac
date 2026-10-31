@@ -175,7 +175,7 @@ public final class NoteIndex: @unchecked Sendable {
         fileTimes[path] = written
         let modified = lastChanged(path, written: written)
         lock.unlock()
-        return (Self.entry(path: path, source: source, modified: modified), (source, source.lowercased()))
+        return (Self.entry(path: path, source: source, modified: modified), (source, Self.straightQuotes(source.lowercased())))
     }
 
     // MARK: When each note last changed
@@ -482,25 +482,71 @@ public final class NoteIndex: @unchecked Sendable {
         return best
     }
 
-    /// Notes with a query's words in them, by reading their text: what is
-    /// used when Reflect's own index is not there.
+    /// Notes with a query's words in them, by reading their text: those
+    /// with the words as typed, together, first, then those with every one
+    /// of them anywhere — each the most lately changed first — with the line
+    /// saying it, never the frontmatter.
     public func containing(_ query: String, limit: Int = 30) -> [(path: String, snippet: String)] {
-        let terms = Self.foldKey(query).split(separator: " ").map(String.init)
+        let phrase = Self.straightQuotes(Self.foldKey(query))
+        let terms = phrase.split(separator: " ").map(String.init)
         guard !terms.isEmpty else { return [] }
         lock.lock()
         let texts = bodies
         lock.unlock()
-        var found: [(path: String, snippet: String, modified: Date)] = []
-        for (path, body) in texts where terms.allSatisfy({ body.folded.contains($0) }) {
-            let text = body.text
-            guard let range = text.range(of: terms[0], options: [.caseInsensitive, .diacriticInsensitive]) else { continue }
-            let start = text.index(range.lowerBound, offsetBy: -40, limitedBy: text.startIndex) ?? text.startIndex
-            let end = text.index(range.upperBound, offsetBy: 80, limitedBy: text.endIndex) ?? text.endIndex
-            let snippet = text[start..<end].replacingOccurrences(of: "\n", with: " ")
-            found.append((path, (start > text.startIndex ? "…" : "") + snippet + (end < text.endIndex ? "…" : ""),
-                          entry(path)?.modified ?? .distantPast))
+        var found: [(path: String, phrase: Bool, modified: Date)] = []
+        for (path, body) in texts {
+            if body.folded.contains(phrase) {
+                found.append((path, true, entry(path)?.modified ?? .distantPast))
+            } else if terms.count > 1, terms.allSatisfy({ body.folded.contains($0) }) {
+                found.append((path, false, entry(path)?.modified ?? .distantPast))
+            }
         }
-        return found.sorted { $0.modified > $1.modified }.prefix(limit).map { ($0.path, $0.snippet) }
+        found.sort { a, b in a.phrase != b.phrase ? a.phrase : a.modified > b.modified }
+        return found.prefix(limit).compactMap { hit in
+            guard let text = texts[hit.path]?.text else { return nil }
+            return (hit.path, Self.snippet(in: text, phrase: phrase, terms: terms))
+        }
+    }
+
+    /// Curly quotes as straight ones, one for one: "ai's" finds "AI’s".
+    static func straightQuotes(_ text: String) -> String {
+        guard text.unicodeScalars.contains(where: { $0 == "\u{2018}" || $0 == "\u{2019}" || $0 == "\u{201C}" || $0 == "\u{201D}" }) else { return text }
+        return String(String.UnicodeScalarView(text.unicodeScalars.map { scalar -> Unicode.Scalar in
+            switch scalar {
+            case "\u{2018}", "\u{2019}": "'"
+            case "\u{201C}", "\u{201D}": "\""
+            default: scalar
+            }
+        }))
+    }
+
+    /// The line of a note's body saying a phrase — else its longest word —
+    /// plain, cut down round it when long.
+    static func snippet(in text: String, phrase: String, terms: [String]) -> String {
+        let body = CommitMessage.splitFrontmatter(text).1
+        let longest = terms.max { $0.count < $1.count } ?? phrase
+        var best: Substring?
+        for line in body.split(whereSeparator: \.isNewline) {
+            let folded = straightQuotes(line.lowercased())
+            if folded.range(of: phrase, options: .diacriticInsensitive) != nil { best = line; break }
+            if best == nil, folded.range(of: longest, options: .diacriticInsensitive) != nil { best = line }
+        }
+        var line = String(best ?? "").trimmingCharacters(in: .whitespaces)
+        for marker in ["- [ ] ", "- [x] ", "+ [ ] ", "+ [x] ", "- ", "* ", "+ ", "> "] where line.hasPrefix(marker) {
+            line.removeFirst(marker.count)
+            break
+        }
+        while line.hasPrefix("#") { line.removeFirst() }
+        line = InlineMarkup.plainText(line.trimmingCharacters(in: .whitespaces))
+        let most = 140
+        guard line.count > most else { return line }
+        let at = line.range(of: phrase, options: [.caseInsensitive, .diacriticInsensitive])
+            ?? line.range(of: longest, options: [.caseInsensitive, .diacriticInsensitive])
+        let center = at.map { line.distance(from: line.startIndex, to: $0.lowerBound) } ?? 0
+        let start = max(0, min(center - 40, line.count - most))
+        let from = line.index(line.startIndex, offsetBy: start)
+        let to = line.index(from, offsetBy: most, limitedBy: line.endIndex) ?? line.endIndex
+        return (start > 0 ? "…" : "") + line[from..<to] + (to < line.endIndex ? "…" : "")
     }
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+import GraphKit
 import ReflectCore
 
 /// The rows lately written in — each with the rows it is under — to go
@@ -60,20 +61,38 @@ public struct RecentEdits: Codable, Sendable, Equatable {
         let fresh = changed.map { Edit(path: path, text: $0.text, ancestors: $0.ancestors, date: date) }
         // A row typed in again and again is one edit: its latest words. One
         // whose words grew from an earlier edit's replaces it.
-        edits.removeAll { edit in
-            edit.path == path && fresh.contains { $0.text == edit.text || $0.text.hasPrefix(edit.text) && $0.ancestors == edit.ancestors }
-        }
+        edits.removeAll { edit in fresh.contains { Self.sameRow($0, edit) } }
         edits.insert(contentsOf: fresh, at: 0)
         if edits.count > Self.most { edits.removeLast(edits.count - Self.most) }
     }
 
+    /// Whether two edits are of one row, written on: in the same note, and
+    /// the same words — or one's grown from, or cut back to, the other's,
+    /// under the same rows; or mostly the same at their start.
+    public static func sameRow(_ a: Edit, _ b: Edit) -> Bool {
+        guard a.path == b.path else { return false }
+        if a.text == b.text { return true }
+        guard a.ancestors == b.ancestors else { return false }
+        if a.text.hasPrefix(b.text) || b.text.hasPrefix(a.text) { return true }
+        let shared = zip(a.text, b.text).prefix { $0 == $1 }.count
+        return shared >= max(16, min(a.text.count, b.text.count) / 2)
+    }
+
+    /// Each row once: its latest words — as written by an older Prism,
+    /// which kept a row's every few words.
+    public var distinct: [Edit] {
+        var kept: [Edit] = []
+        for edit in edits where !kept.contains(where: { Self.sameRow($0, edit) }) { kept.append(edit) }
+        return kept
+    }
+
     /// Those whose words, their parents', or their note's name — `title` —
-    /// have every word asked for.
+    /// have every word asked for: each row once.
     public func matching(_ query: String, title: (String) -> String = { _ in "" }) -> [Edit] {
-        let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
-        guard !words.isEmpty else { return edits }
-        return edits.filter { edit in
-            let haystack = ([title(edit.path)] + edit.ancestors + [edit.text]).joined(separator: " ").lowercased()
+        let words = PageIndex.fold(query).split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return distinct }
+        return distinct.filter { edit in
+            let haystack = PageIndex.fold(([title(edit.path)] + edit.ancestors + [edit.text]).joined(separator: " "))
             return words.allSatisfy { haystack.contains($0) }
         }
     }
