@@ -137,7 +137,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             }
         }
         lenses.lens = lens
-        lenses.inboxCount = session.index.inbox.count
+        lenses.inboxCount = session.notes(in: .inbox).count
         showStatus()
         tick(session.now)
         updatePanes()
@@ -355,7 +355,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
     /// The list, as the lens gathers it now.
     func refreshList() {
-        lenses.inboxCount = session.index.inbox.count
+        lenses.inboxCount = session.notes(in: .inbox).count
         guard listShown else { return }
         list.selected = activePane.place.path
         switch lens {
@@ -370,9 +370,9 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             }
         case .inbox:
             list.readNextCount = ReadingQueue.items(index: session.index, root: session.graph.root).items.count
-            list.show(.inbox, sections: [ListSection(title: nil, items: session.index.inbox.map { noteItem($0, checkable: true) })])
+            list.show(.inbox, sections: [ListSection(title: nil, items: session.notes(in: .inbox).map { noteItem($0, checkable: true) })])
         case .pinned:
-            list.show(.pinned, sections: [ListSection(title: nil, items: session.index.pinned.map { noteItem($0) })])
+            list.show(.pinned, sections: [ListSection(title: nil, items: session.notes(in: .pinned).map { noteItem($0) })])
         case .tasks:
             list.show(.tasks, sections: taskSections(blockable: false))
         case .search:

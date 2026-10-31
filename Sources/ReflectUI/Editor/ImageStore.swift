@@ -427,16 +427,22 @@ package final class ImageBox: NSObject {
     /// A link's card — a page's, a podcast's — not a picture.
     package let isCard: Bool
 
-    package init(source: String, size: CGSize, carousel: [String]? = nil, isCard: Bool = false) {
+    /// Drawn from the graph — a query's results, a page embedded — not a picture.
+    package let block: OutlineBlock?
+
+    package init(source: String, size: CGSize, carousel: [String]? = nil, isCard: Bool = false, block: OutlineBlock? = nil) {
         self.source = source
         self.size = size
         self.carousel = carousel
         self.isCard = isCard
+        self.block = block
     }
 
     /// The size it is drawn at in a column so wide: never wider than the
     /// column, never stretched.
     package func fitted(to width: CGFloat) -> CGSize {
+        // A block is set again at a narrower width: taller, not smaller.
+        if let block, size.width > width, width > 0 { return CGSize(width: width.rounded(), height: block.height(width: width.rounded())) }
         guard size.width > width, width > 0 else { return CGSize(width: size.width.rounded(), height: size.height.rounded()) }
         return CGSize(width: width.rounded(), height: (size.height * width / size.width).rounded())
     }

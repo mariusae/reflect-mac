@@ -89,6 +89,9 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
     package var onCharactersEdited: (() -> Void)?
     /// Where pictures come from; without it, images stay as Markdown.
     package var images: ImageStore?
+    /// The graph the note is in: with it, queries show what they find and
+    /// embedded pages what they say.
+    package var graph: OutlineGraph?
     /// Where the caret is: a shortened web address it is in is shown whole.
     package var caret: Int?
     /// The row the caret is in: a time block's time is written out there.
@@ -267,6 +270,8 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
                 storage.addAttribute(.outlineUppercase, value: true, range: words)
                 storage.addAttribute(.kern, value: round(metrics.fontSize * HeadingCase.capitalsTracking * 10) / 10, range: words)
             }
+            if case .quote = row.kind { Callout.style(storage, paragraph: paragraph, caret: caret, metrics: metrics) }
+            graphBlock(storage, paragraph: paragraph, row: row)
             // A block's time is told at its left; written out only where the caret is.
             if let slot, let stamp = slot.mark.head?.stamp, !slot.revealed, stamp.fullRange.length < paragraph.length {
                 storage.addAttribute(.outlineHidden, value: true,
@@ -281,6 +286,24 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
             // A character the font set here lacks still needs a font that has it.
             storage.fixAttributes(in: paragraph)
         }
+    }
+
+    /// What a query row finds, or an embedding row's page, drawn under it:
+    /// on its last letter, as a link's card is.
+    private func graphBlock(_ storage: NSTextStorage, paragraph: NSRange, row: Row) {
+        guard let graph else { return }
+        var block: OutlineBlock?
+        if case .code = row.kind, let query = GraphBlocks.query(in: row.text) {
+            block = GraphBlocks.results(of: query, in: graph, metrics: metrics)
+        } else if row.kind != .code, let target = GraphBlocks.embedded(in: row.text) {
+            block = GraphBlocks.embed(target, in: graph, metrics: metrics)
+        }
+        let text = storage.string as NSString
+        let body = paragraph.length - (text.substring(with: paragraph).hasSuffix("\n") ? 1 : 0)
+        guard let block, body > 0 else { return }
+        let width = max(200, min(metrics.columnWidth, 760) - metrics.textIndent(for: row))
+        storage.addAttribute(.outlineImage, value: ImageBox(source: "", size: CGSize(width: width, height: block.height(width: width)), block: block),
+                             range: NSRange(location: paragraph.location + body - 1, length: 1))
     }
 
     /// How a row looks, and how far it stands from the row before.

@@ -1,4 +1,5 @@
 import AppKit
+import GraphKit
 import ReflectCore
 
 /// A note as an outline, under its name: a day of the timeline under its
@@ -89,13 +90,19 @@ package final class DayView: NSView, NSTextViewDelegate {
         addSubview(editor)
         applyMetrics()
         load()
+        graphObserver = NotificationCenter.default.addObserver(forName: OutlineGraph.changed, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateGraph() }
+        }
     }
+
+    private var graphObserver: NSObjectProtocol?
 
     @available(*, unavailable)
     package required init?(coder: NSCoder) { fatalError() }
 
     deinit {
         if let coverObserver { NotificationCenter.default.removeObserver(coverObserver) }
+        if let graphObserver { NotificationCenter.default.removeObserver(graphObserver) }
     }
 
     package var metrics: OutlineMetrics {
@@ -358,6 +365,10 @@ package final class DayView: NSView, NSTextViewDelegate {
             focusBar.frame = NSRect(x: column.minX + metrics.indent - 6, y: y, width: column.width - metrics.indent + 6, height: FocusBar.height)
             y += focusBarRoom
         }
+        if let fieldsLine {
+            fieldsLine.frame = NSRect(x: column.minX + metrics.indent - 2, y: y, width: column.width - metrics.indent, height: fieldsLine.intrinsicContentSize.height)
+            y += fieldsRoom
+        }
         if let conflictView {
             conflictView.frame = NSRect(x: column.minX, y: y, width: column.width, height: conflictView.height(forWidth: column.width))
         } else {
@@ -462,6 +473,71 @@ package final class DayView: NSView, NSTextViewDelegate {
     }
 
     /// The room the path takes over the editor, in focus.
+    private var fieldsRoom: CGFloat { fieldsLine.map { ceil($0.intrinsicContentSize.height) + round(metrics.fontSize * 0.6) } ?? 0 }
+
+    // MARK: The graph
+
+    /// The fields the note's tags give it, set out over its outline: its
+    /// typed values, as GraphKit reads them.
+    private var fieldsLine: NSTextField?
+
+    /// The graph's pages, given to the editor — queries and embeds drawn —
+    /// and the note's typed fields shown, when it has any.
+    private func updateGraph() {
+        let pages = OutlineGraph.pages
+        let entry = pages?.entry(atPath: ref.path)
+        let wanted = savedText.contains("```query") || savedText.contains("![[")
+        if let pages, wanted {
+            editor.graph = OutlineGraph(pages: pages, title: entry?.page.title ?? PageFolder.fallbackTitle(for: ref.path))
+        } else if editor.graph != nil {
+            editor.graph = nil
+        }
+        let line = entry.flatMap { entry in pages.map { Self.fields(entry.page, schema: $0.schema(for: entry.page), metrics: metrics) } } ?? nil
+        // Nothing to draw from the graph, as before: nothing to lay out again.
+        guard wanted || line != fieldsLine?.attributedStringValue else { return }
+        if let line {
+            let field = fieldsLine ?? {
+                let field = NSTextField(labelWithString: "")
+                field.isSelectable = true
+                field.lineBreakMode = .byWordWrapping
+                addSubview(field)
+                fieldsLine = field
+                return field
+            }()
+            field.attributedStringValue = line
+        } else {
+            fieldsLine?.removeFromSuperview()
+            fieldsLine = nil
+        }
+        needsLayout = true
+        heightMayHaveChanged()
+    }
+
+    /// `BORN  10 Dec 1815    FIELD  Mathematics`: each typed field given a
+    /// value, its name small over nothing, its value as the schema says.
+    private static func fields(_ page: Page, schema: [FieldSpec], metrics: OutlineMetrics) -> NSAttributedString? {
+        let line = NSMutableAttributedString()
+        let label = metrics.typography.label(size: round(metrics.fontSize * 0.7))
+        let value: [NSAttributedString.Key: Any] = [.font: metrics.body, .foregroundColor: metrics.typography.ink.text]
+        for spec in schema {
+            guard let field = page[field: spec.name] else { continue }
+            let shown: String
+            switch (spec.kind, field) {
+            case (.date, .text(let text)): shown = FieldSpec.date(text)?.formatted(date: .abbreviated, time: .omitted) ?? text
+            case (.flag, .text(let text)): shown = FieldSpec.flag(text) ? "Yes" : "No"
+            case (_, .text(let text)): shown = text
+            case (_, .list(let list)): shown = list.joined(separator: ", ")
+            }
+            guard !shown.isEmpty else { continue }
+            if line.length > 0 { line.append(NSAttributedString(string: "     ", attributes: value)) }
+            line.append(NSAttributedString(string: spec.name.uppercased() + "  ", attributes: label))
+            var attributes = value
+            if case .link = spec.kind, let url = URL.wiki(shown) { attributes[.link] = url }
+            line.append(NSAttributedString(string: shown, attributes: attributes))
+        }
+        return line.length > 0 ? line : nil
+    }
+
     private var focusBarRoom: CGFloat { focusBar == nil ? 0 : FocusBar.height + round(metrics.fontSize * 0.4) }
 
     /// The height the text takes at a width, without the empty line a text
@@ -482,7 +558,7 @@ package final class DayView: NSView, NSTextViewDelegate {
     /// The height the day wants at a width.
     package func desiredHeight(width: CGFloat) -> CGFloat {
         let columnWidth = min(metrics.columnWidth, width - 48)
-        var height = editorTop(columnWidth: columnWidth) + bottomPadding + focusBarRoom
+        var height = editorTop(columnWidth: columnWidth) + bottomPadding + focusBarRoom + fieldsRoom
         height += conflictView?.height(forWidth: columnWidth) ?? editorHeight(width: columnWidth)
         return max(minimumHeight, height)
     }
@@ -578,6 +654,7 @@ package final class DayView: NSView, NSTextViewDelegate {
             editor.isPrivateNote = NoteIndex.entry(path: ref.path, source: text).isPrivate
         }
         updateTitle()
+        updateGraph()
         needsLayout = true
     }
 

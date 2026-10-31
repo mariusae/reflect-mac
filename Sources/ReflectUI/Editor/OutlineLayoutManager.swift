@@ -175,7 +175,15 @@ package final class OutlineLayoutManager: NSLayoutManager {
                     label.draw(at: NSPoint(x: rect.maxX - size.width - 8, y: rect.minY + 5))
                 }
             case .quote:
-                metrics.typography.ink.tertiary.setFill()
+                // A callout's ground and bar in its kind's colour.
+                if let color = storage.attribute(Callout.key, at: paragraph.location, effectiveRange: nil) as? NSColor {
+                    color.withAlphaComponent(0.08).setFill()
+                    NSRect(x: indent - metrics.indent / 2 - 1.5, y: frame.minY, width: origin.x + width - indent + metrics.indent / 2 + 1.5,
+                           height: frame.height).fill()
+                    color.setFill()
+                } else {
+                    metrics.typography.ink.tertiary.setFill()
+                }
                 NSBezierPath(roundedRect: NSRect(x: indent - metrics.indent / 2 - 1.5, y: frame.minY, width: 3, height: frame.height),
                              xRadius: 1.5, yRadius: 1.5).fill()
             case .rule:
@@ -218,6 +226,10 @@ package final class OutlineLayoutManager: NSLayoutManager {
                 let rect = frame.offsetBy(dx: origin.x, dy: origin.y)
                 // A PDF is a view of its own, over this room.
                 if box.isPDF { continue }
+                if let block = box.block {
+                    block.draw(in: rect, ink: outlineView?.metrics.typography.ink ?? .system)
+                    continue
+                }
                 if box.carousel != nil, let view = outlineView {
                     Carousel.draw(box, index: view.carouselIndex(box), in: rect, images: store)
                     if view.hoveredPictureFrame == rect { Self.drawPictureGrip(in: rect) }

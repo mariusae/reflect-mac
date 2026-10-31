@@ -1,4 +1,5 @@
 import Foundation
+import GraphKit
 import ReflectCore
 
 /// Prism's whole shape, on the Mac and the phone alike: notes — outlines,
@@ -27,6 +28,17 @@ public enum Lens: String, CaseIterable, Codable, Sendable {
         case .tasks: "checklist"
         case .pinned: "pin"
         case .search: "magnifyingglass"
+        }
+    }
+
+    /// The pages a lens lists, asked of the graph as any page's query
+    /// block asks it: the inbox, newest first; the pinned, by number. The
+    /// days, the tasks and what is found are not pages' flags.
+    public var query: Query? {
+        switch self {
+        case .inbox: Query(text: "is: inbox\nsort: -modified")
+        case .pinned: Query(text: "is: pinned\nsort: pinned")
+        case .daily, .tasks, .search: nil
         }
     }
 

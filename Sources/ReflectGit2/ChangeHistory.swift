@@ -100,9 +100,14 @@ extension ChangeHistory {
     /// The index's notes given their last changes by the graph's history,
     /// brought up to HEAD first. Nothing, for a graph that is no repository.
     /// Reads the repository: call it off the main thread.
-    public static func apply(to index: NoteIndex) {
-        guard let git = LibGit2Backend(root: index.root), let store = ChangeHistory(graph: index.root, in: folder) else { return }
+    /// The times and the paths changed since HEAD are given back, for
+    /// other indices of the graph to take too.
+    @discardableResult
+    public static func apply(to index: NoteIndex) -> (times: [String: Date], uncommitted: Set<String>)? {
+        guard let git = LibGit2Backend(root: index.root), let store = ChangeHistory(graph: index.root, in: folder) else { return nil }
         let times = store.update(from: git)
-        index.useHistory(times, uncommitted: git.uncommittedPaths())
+        let uncommitted = git.uncommittedPaths()
+        index.useHistory(times, uncommitted: uncommitted)
+        return (times, uncommitted)
     }
 }

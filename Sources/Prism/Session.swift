@@ -3,6 +3,7 @@ import ReflectCore
 import PrismCore
 import ReflectGit2
 import ReflectUI
+import GraphKit
 
 /// A graph open in Prism: its notes, their index, the sync that keeps them
 /// in step, and what is shared by every window showing them — the type,
@@ -11,6 +12,12 @@ import ReflectUI
 final class Session {
     let graph: Graph
     let index: NoteIndex
+    /// Every page as GraphKit reads it — the index Weft looks at the graph
+    /// through — for the lenses' queries, and the outlines' queries, embeds
+    /// and typed fields. Read off the main thread as Prism opens: nil till then.
+    private(set) var pages: PageIndex?
+    /// The graph's history's times, as last read: given to the pages too.
+    private var history: (times: [String: Date], uncommitted: Set<String>)?
     let images: ImageStore
     private(set) var windows: [PrismWindow] = []
     /// The reading queue's window, when open: one — two would read the same link.
@@ -59,6 +66,7 @@ final class Session {
             ?? (ideal ? .ideal : .system)
         recent = Self.loadRecent(graph.root)
         index.scan()
+        loadPages()
         applyHistory()
         refreshReview()
         watcher = GraphWatcher(root: graph.root) { [weak self] paths in
@@ -186,6 +194,15 @@ final class Session {
     /// Notes changed on disk — written here, by a sync, by another app.
     func notesChanged(_ paths: Set<String>) {
         if paths.count > 40 { index.scan() } else { paths.forEach(index.refresh) }
+        if let pages {
+            if paths.count > 40 {
+                loadPages()
+            } else {
+                paths.filter(PageFolder.isPage).forEach(pages.reload)
+                if let history { pages.useHistory(history.times, uncommitted: history.uncommitted) }
+                OutlineGraph.pages = pages
+            }
+        }
         freshBacklinks = []
         windows.forEach { $0.notesChanged(paths) }
         readingQueue?.notesChanged(paths)
@@ -725,8 +742,38 @@ final class Session {
     private func applyHistory() {
         let index = index
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            ChangeHistory.apply(to: index)
-            DispatchQueue.main.async { self?.windows.forEach { $0.refreshList() } }
+            let history = ChangeHistory.apply(to: index)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let history {
+                    self.history = history
+                    self.pages?.useHistory(history.times, uncommitted: history.uncommitted)
+                }
+                self.windows.forEach { $0.refreshList() }
+            }
+        }
+    }
+
+    /// Reads every page into a fresh index, off the main thread, and puts
+    /// it in place of the last once read.
+    private func loadPages() {
+        let fresh = PageIndex(root: graph.root, includingPrivate: true)
+        Task { [weak self] in
+            await Task.detached(priority: .userInitiated) { try? fresh.load() }.value
+            guard let self else { return }
+            if let history { fresh.useHistory(history.times, uncommitted: history.uncommitted) }
+            pages = fresh
+            OutlineGraph.pages = fresh
+            windows.forEach { $0.refreshList() }
+        }
+    }
+
+    /// The notes a lens lists, by its query — Prism's own index's, till the
+    /// pages are read.
+    func notes(in lens: Lens) -> [NoteEntry] {
+        guard let pages, let query = lens.query else { return lens == .inbox ? index.inbox : lens == .pinned ? index.pinned : [] }
+        return query.run(in: pages, this: "").compactMap { title in
+            pages.entries[title].map { index.entry($0.path) ?? $0.note }
         }
     }
 

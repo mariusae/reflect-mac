@@ -68,6 +68,15 @@ package final class OutlineTextView: NSTextView {
             styler.styleAll(textStorage!)
         }
     }
+    /// The graph the note is in: queries show what they find, embedded
+    /// pages what they say. Set again when the graph changes.
+    package var graph: OutlineGraph? {
+        didSet {
+            styler.graph = graph
+            styler.styleAll(textStorage!)
+            onPicturesChanged?()
+        }
+    }
     /// Told when pictures arrive and the text's height may have changed.
     package var onPicturesChanged: (() -> Void)?
 
@@ -894,6 +903,17 @@ package final class OutlineTextView: NSTextView {
         if onPictureGrip(point) {
             window?.makeFirstResponder(self)
             dragPictureGrip(event)
+            return
+        }
+        // What the graph drew — a query's results, a page embedded — its titles followed.
+        if let (picture, frame) = outlineLayout.pictureFrame(at: point, origin: textContainerOrigin), let block = picture.block {
+            if let url = block.link(at: point, in: frame) {
+                navigator?.outlineView(self, open: url, inSplit: event.modifierFlags.contains(.command))
+            } else if let location = rangeOfPicture(picture)?.location {
+                window?.makeFirstResponder(self)
+                if selectedRows != nil { leaveRowSelection() }
+                setSelectedRange(NSRange(location: location + 1, length: 0))
+            }
             return
         }
         if let (picture, frame) = outlineLayout.pictureFrame(at: point, origin: textContainerOrigin) {
