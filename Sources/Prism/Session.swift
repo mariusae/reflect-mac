@@ -66,6 +66,7 @@ final class Session {
             if self?.ownsSync == true { self?.sync.noteChanged() }
         }
         LinkCompletion.sources = SearchSources(index: index)
+        TemplatesMenu.templates = { [weak self] in self?.index.templates ?? [] }
         LinkCard.noteSource = { [weak self] title in
             guard let self, let path = index.resolve(title) else { return nil }
             return (NoteRef(path: path), graph.read(path: path) ?? "")

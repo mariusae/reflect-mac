@@ -861,9 +861,14 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
     }
 
     /// A blank note, its title to be typed.
-    func compose() {
+    /// A new note: blank — or, from a template, with its rows — its title to type.
+    func compose(from template: String? = nil) {
         saveAll()
         guard let path = store.newNote() else { return }
+        if let template {
+            let rows = Templates.rows(of: store.text(template))
+            store.write(RowMove.adding(rows, to: store.text(path), path: path), path: path)
+        }
         open(PanePlace(path: path))
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
             guard let self else { return }
@@ -876,9 +881,15 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
 
     /// The app's own: a new note, the sync, notes edited on two devices, settings.
     func appMenu() -> UIMenu {
-        var sections: [UIMenuElement] = [UIMenu(options: .displayInline, children: [
+        var making: [UIMenuElement] = [
             UIAction(title: "New Note", image: UIImage(systemName: "square.and.pencil")) { [weak self] _ in self?.compose() },
-        ])]
+        ]
+        if let templates = store.index?.templates, !templates.isEmpty {
+            making.append(UIMenu(title: "New from Template", image: UIImage(systemName: "doc.on.doc"), children: templates.map { entry in
+                UIAction(title: entry.title) { [weak self] _ in self?.compose(from: entry.path) }
+            }))
+        }
+        var sections: [UIMenuElement] = [UIMenu(options: .displayInline, children: making)]
         var sync: [UIMenuElement] = store.isSyncing ? [
             UIAction(title: "Syncing…", image: UIImage(systemName: "arrow.triangle.2.circlepath"), attributes: .disabled) { _ in },
         ] : [
@@ -935,6 +946,17 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         let entry = store.index?.entry(path)
         let day = GraphPaths.day(fromDailyPath: path)
         var items: [UIMenuElement] = []
+        // A template's rows put in: a day's at its top, any other note's at its end.
+        if let templates = store.index?.templates.filter({ $0.path != path }), !templates.isEmpty {
+            items.append(UIMenu(title: "Insert Template", image: UIImage(systemName: "doc.on.doc"), children: templates.map { template in
+                UIAction(title: template.title) { [weak self, weak sheet] _ in
+                    guard let self else { return }
+                    sheet?.saveAll()
+                    let rows = Templates.rows(of: store.text(template.path))
+                    store.change(path, undoName: "Insert Template") { RowMove.adding(rows, to: $0, path: path) }
+                }
+            }))
+        }
         // A note linking to a page, or holding a PDF: that, to read.
         if !ReaderController.sources(of: path, store: store).isEmpty {
             items.append(UIAction(title: "Read Note", image: UIImage(systemName: "globe")) { [weak self, weak sheet] _ in
@@ -966,6 +988,12 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             }
             secret.subtitle = "Its words kept out of lists, its links not looked up"
             items.append(secret)
+            let isTemplate = entry?.isTemplate == true
+            let template = UIAction(title: isTemplate ? "Not a Template" : "Make a Template", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                self?.store.setFrontmatter(path, "template", isTemplate ? nil : "true", undoName: isTemplate ? "Not a Template" : "Make a Template")
+            }
+            template.subtitle = "Offered by New from Template and Insert Template"
+            items.append(template)
             if entry?.cover != nil {
                 items.append(UIAction(title: "Remove Cover", image: UIImage(systemName: "rectangle.slash")) { [weak self, weak sheet] _ in
                     sheet?.saveAll()

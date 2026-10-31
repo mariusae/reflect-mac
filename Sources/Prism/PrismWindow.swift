@@ -860,6 +860,12 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     /// ⌥⌘N: a note with no name yet, its title to type first.
     @objc func newNote(_ sender: Any?) {
         guard let path = session.newBlankNote() else { return }
+        // From a template: its rows under the title to type.
+        if let template = (sender as? NSMenuItem)?.representedObject as? String, let source = session.graph.read(path: template),
+           let blank = session.graph.read(path: path) {
+            try? session.graph.write(RowMove.adding(Templates.rows(of: source), to: blank, path: path), path: path)
+            session.index.refresh(path)
+        }
         open(path)
         if let editor = activePane.note?.editor {
             window?.makeFirstResponder(editor)
@@ -936,6 +942,19 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         session.setFrontmatter(note.path, "private", note.isPrivate ? nil : "true", undoName: "Private")
     }
 
+    /// Note ▸ Insert Template: its rows put in — a day's at its top, any other note's at its end.
+    @objc func insertTemplate(_ sender: NSMenuItem) {
+        guard let note = menuNote, let template = sender.representedObject as? String,
+              let source = session.graph.read(path: template) else { return NSSound.beep() }
+        let rows = Templates.rows(of: source)
+        session.change(note.path, undoName: "Insert Template") { RowMove.adding(rows, to: $0, path: note.path) }
+    }
+
+    @objc func toggleTemplate(_ sender: Any?) {
+        guard let note = menuNote else { return NSSound.beep() }
+        session.setFrontmatter(note.path, "template", note.isTemplate ? nil : "true", undoName: note.isTemplate ? "Not a Template" : "Make a Template")
+    }
+
     @objc func removeCover(_ sender: Any?) {
         guard let note = menuNote, note.cover != nil else { return NSSound.beep() }
         session.setFrontmatter(note.path, NoteCover.key, nil, undoName: "Remove Cover")
@@ -992,6 +1011,11 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             return note?.day == nil && note != nil
         case #selector(togglePrivate(_:)):
             item.state = note?.isPrivate == true ? .on : .off
+        case #selector(toggleTemplate(_:)):
+            item.state = note?.isTemplate == true ? .on : .off
+            return note != nil && note?.day == nil
+        case #selector(insertTemplate(_:)):
+            return note != nil
             return note != nil
         case #selector(removeCover(_:)): return note?.cover != nil
         case #selector(trashNote(_:)): return note?.day == nil && note != nil

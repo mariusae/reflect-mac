@@ -415,6 +415,15 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             return item
         }
         let left = String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!)), right = String(Character(UnicodeScalar(NSRightArrowFunctionKey)!))
+        /// The graph's templates, as a submenu filled as it opens: each sent `action`, its path with it.
+        func templatesMenu(_ title: String, _ action: Selector) -> NSMenuItem {
+            let menu = NSMenu(title: title)
+            menu.delegate = TemplatesMenu.shared
+            menu.identifier = NSUserInterfaceItemIdentifier(NSStringFromSelector(action))
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.submenu = menu
+            return item
+        }
         submenu("Prism", [
             item("About Prism", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
             .separator(),
@@ -428,6 +437,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         submenu("File", [
             item("New Row in Today", #selector(PrismWindow.writeToday(_:)), "n"),
             item("New Note", #selector(PrismWindow.newNote(_:)), "n", [.command, .option]),
+            templatesMenu("New from Template", #selector(PrismWindow.newNote(_:))),
             item("New Window", #selector(PrismApp.newWindow(_:)), "n", [.command, .shift]),
             item("Reading Queue", #selector(PrismApp.openReadingQueue(_:)), "n", [.command, .option, .shift]),
             item("Quick Note", #selector(PrismApp.showQuickNote(_:)), " ", [.control, .option]),
@@ -517,6 +527,13 @@ final class PrismApp: NSObject, NSApplicationDelegate {
                 return topic
             }(),
             {
+                let template = item("Template", #selector(PrismWindow.toggleTemplate(_:)))
+                template.subtitle = "Offered by New from Template and Insert Template"
+                template.toolTip = "A template's rows make new notes, or are put into one: {{date}}, {{day}} and {{time}} filled in."
+                return template
+            }(),
+            templatesMenu("Insert Template", #selector(PrismWindow.insertTemplate(_:))),
+            {
                 let secret = item("Private", #selector(PrismWindow.togglePrivate(_:)))
                 secret.subtitle = "Its words kept out of lists, its links not looked up"
                 secret.toolTip = "A private note keeps to itself: its words are not shown in lists or in sync messages, and its links are never looked up."
@@ -571,5 +588,30 @@ extension PrismApp: NSMenuItemValidation {
             item.state = item.representedObject as? String == session?.face.rawValue ? .on : .off
         }
         return true
+    }
+}
+
+/// The templates' submenus: filled each time one opens, from the graph's
+/// templates as they are then.
+@MainActor
+final class TemplatesMenu: NSObject, NSMenuDelegate {
+    static let shared = TemplatesMenu()
+    /// The templates there are: the session's to say.
+    static var templates: () -> [NoteEntry] = { [] }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let action = menu.identifier.map { NSSelectorFromString($0.rawValue) }
+        let templates = Self.templates()
+        if templates.isEmpty {
+            let none = NSMenuItem(title: "No Templates: Make One in Note ▸ Template", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+        }
+        for entry in templates {
+            let item = NSMenuItem(title: entry.title, action: action, keyEquivalent: "")
+            item.representedObject = entry.path
+            menu.addItem(item)
+        }
     }
 }

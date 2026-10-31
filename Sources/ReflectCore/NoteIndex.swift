@@ -29,6 +29,9 @@ public struct NoteEntry: Equatable, Sendable {
     /// Its cover picture — frontmatter `cover:` — as a picture's Markdown
     /// would give its source.
     public var cover: String? = nil
+    /// Whether it is a template — frontmatter `template: true` — new notes
+    /// made from, or put into a note.
+    public var isTemplate = false
 
     public enum Pin: Equatable, Sendable, Comparable {
         case order(Double)
@@ -241,7 +244,7 @@ public final class NoteIndex: @unchecked Sendable {
         return NoteEntry(path: path, title: title, aliases: aliases, day: day, modified: modified,
                          isPrivate: flag("private"), titleIsHeading: titleIsHeading,
                          pin: pin(frontmatter.scalar("pinned")), tags: tags(in: body), isTopic: flag("topic"),
-                         isInInbox: flag("inbox"), cover: NoteCover.source(frontmatter))
+                         isInInbox: flag("inbox"), cover: NoteCover.source(frontmatter), isTemplate: flag("template"))
     }
 
     /// Reflect's reading of `pinned:`: `true` (or yes, on, 1) pins, a
@@ -293,6 +296,11 @@ public final class NoteIndex: @unchecked Sendable {
     /// The notes in the inbox, the most lately changed first.
     public var inbox: [NoteEntry] {
         all.filter(\.isInInbox).sorted { $0.modified > $1.modified }
+    }
+
+    /// The templates, by name.
+    public var templates: [NoteEntry] {
+        all.filter(\.isTemplate).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
     /// Every tag in the graph, and how many notes have it, by name.
