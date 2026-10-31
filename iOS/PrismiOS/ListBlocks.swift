@@ -137,6 +137,8 @@ final class SliceBlock: UIView, SheetBlock {
 
     /// On a card whatever the page: what links to a note, as the Mac shows it.
     private let flat: Bool
+    /// Its words' left edge: on a card, further in — its marks clear of the card's edge.
+    private var side: CGFloat { flat ? NoteBlock.side : NoteBlock.side + 14 }
     /// At the card's top right, in place of when: what can be done with it — Link.
     private var actionButton: UIButton?
 
@@ -343,7 +345,7 @@ final class SliceBlock: UIView, SheetBlock {
 
     func height(width: CGFloat) -> CGFloat {
         guard width > NoteBlock.minimumWidth else { return 0 }
-        let inner = width - 2 * NoteBlock.side
+        let inner = width - 2 * side
         var height: CGFloat = Card.top + titleHeight + Card.gap
         guard isLive else {
             // A guess from its rows: a line each, more for long ones.
@@ -366,23 +368,23 @@ final class SliceBlock: UIView, SheetBlock {
         super.layoutSubviews()
         // Not yet as wide as it will be: text laid out at no width never ends.
         guard bounds.width > NoteBlock.minimumWidth else { return }
-        let inner = bounds.width - 2 * NoteBlock.side
+        let inner = bounds.width - 2 * side
         card.frame = Card.frame(in: bounds)
         var y: CGFloat = Card.top
         let metaSize = metaLabel.bounds.size
-        title.frame = CGRect(x: NoteBlock.side, y: y, width: min(titleSize.width, inner - metaSize.width - 12), height: titleHeight)
-        metaLabel.frame = CGRect(x: bounds.width - NoteBlock.side - metaSize.width, y: (title.frame.midY - metaSize.height / 2).rounded(),
+        title.frame = CGRect(x: side, y: y, width: min(titleSize.width, inner - metaSize.width - 12), height: titleHeight)
+        metaLabel.frame = CGRect(x: bounds.width - side - metaSize.width, y: (title.frame.midY - metaSize.height / 2).rounded(),
                                  width: metaSize.width, height: metaSize.height)
         if let actionButton {
             let size = actionButton.intrinsicContentSize
-            actionButton.frame = CGRect(x: bounds.width - NoteBlock.side - size.width + 8, y: (title.frame.midY - size.height / 2).rounded(),
+            actionButton.frame = CGRect(x: bounds.width - side - size.width + 8, y: (title.frame.midY - size.height / 2).rounded(),
                                         width: size.width, height: size.height)
             title.frame.size.width = min(title.frame.width, actionButton.frame.minX - title.frame.minX - 8)
         }
         y += titleHeight + Card.gap
         for (i, editor) in editors.enumerated() {
             if let label = crumbLabels[i], let height = crumbHeight(i, inner: inner) {
-                label.frame = CGRect(x: NoteBlock.side, y: y, width: inner, height: height)
+                label.frame = CGRect(x: side, y: y, width: inner, height: height)
                 y += height + 2
             }
             let width = inner + metrics.indent
@@ -390,7 +392,7 @@ final class SliceBlock: UIView, SheetBlock {
             // view squeezed shorter than its text lays out forever — but
             // what comes next goes right under the rows.
             let full = editor.fittingHeight(width: width)
-            editor.frame = CGRect(x: NoteBlock.side - metrics.indent, y: y, width: width, height: full)
+            editor.frame = CGRect(x: side - metrics.indent, y: y, width: width, height: full)
             y += editor.rowsHeight(width: width) + 4
         }
     }
