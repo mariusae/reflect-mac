@@ -31,6 +31,16 @@ import ReflectCore
         #expect(ReaderSource.all(in: link, root: try graph()).map(\.address) == ["https://example.com/a", "https://example.com/b"])
     }
 
+    @Test func aPDFOnTheWebIsReadAsOne() throws {
+        let text = "- [Paper](https://example.com/papers/Attention.PDF?v=2) and https://arxiv.org/pdf/1706.03762, not https://arxiv.org/abs/1706.03762"
+        let sources = ReaderSource.all(in: text, root: try graph())
+        #expect(sources.map(\.isPDF) == [true, true, false])
+        #expect(sources.map(\.isOnline) == [true, true, true])
+        #expect(sources[0].name == "Attention")
+        #expect(sources[0].asPage.isPDF == false && sources[0].asPage.address == sources[0].address)
+        #expect(ReaderSource.all(in: note, root: try graph())[1].isOnline == false)
+    }
+
     @Test func aPDFNotThereOrOutsideAssetsIsNot() throws {
         let text = "- [gone](assets/gone.pdf) [out](assets/../secret.pdf) [elsewhere](/etc/x.pdf)"
         #expect(ReaderSource.all(in: text, root: try graph()).isEmpty)

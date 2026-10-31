@@ -5,7 +5,7 @@ import ReflectCore
 import PrismCore
 
 /// What a note links to, the whole screen — its own page, a link note's,
-/// or any page it links to, or a PDF it holds, ‹ › at the foot from one to
+/// or any page or PDF it links to, or a PDF it holds, ‹ › at the foot from one to
 /// the next: a page as the site has it — or, the
 /// reader turned on, its words alone, set in Chronicle on the paper, the
 /// site's chrome, its ads, its menus left behind — a band at the top saying
@@ -18,7 +18,7 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
     /// The note it is read from: its highlights go there.
     let notePath: String
     /// Everything in the note to read, and which is read.
-    private let sources: [ReaderSource]
+    private var sources: [ReaderSource]
     private var index: Int
     private var item: ReaderSource { sources[index] }
     private var url: URL { item.url }
@@ -430,10 +430,31 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
 
     // MARK: A PDF
 
+    /// The graph's own at once; one on the web fetched first, kept to read
+    /// again — not a PDF after all, the page it is instead.
     private func showPDF() {
         web.stopLoading()
         icon.image = UIImage(systemName: "doc.richtext")
-        guard let document = PDFDocument(url: url), document.pageCount > 0 else {
+        guard item.isOnline else { return showPDF(at: url) }
+        if let file = ReaderPDF.cached(url) { return showPDF(at: file) }
+        pdf.document = nil
+        source.text = "PDF"
+        headline.text = item.name
+        spinner.startAnimating()
+        let wanted = item
+        ReaderPDF.fetch(url) { [weak self] file in
+            guard let self, item == wanted else { return }
+            spinner.stopAnimating()
+            guard let file else {
+                sources[index] = wanted.asPage
+                return load()
+            }
+            showPDF(at: file)
+        }
+    }
+
+    private func showPDF(at file: URL) {
+        guard let document = PDFDocument(url: file), document.pageCount > 0 else {
             pdf.document = nil
             source.text = "PDF"
             headline.text = item.name

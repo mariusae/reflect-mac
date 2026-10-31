@@ -83,6 +83,51 @@ public struct ReaderArticle: Codable {
     }
 }
 
+// MARK: - A PDF on the web
+
+/// A PDF a note links to, fetched to read as the graph's own are — kept on
+/// the device, to read again at once, offline too.
+public enum ReaderPDF {
+    private static var folder: URL {
+        let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Prism/Reader PDFs", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    private static func file(_ url: URL) -> URL {
+        let digest = SHA256.hash(data: Data(url.absoluteString.utf8)).map { String(format: "%02x", $0) }.joined()
+        return folder.appendingPathComponent(String(digest.prefix(32)) + ".pdf")
+    }
+
+    /// Fetched before: its file.
+    public static func cached(_ url: URL) -> URL? {
+        let file = file(url)
+        return FileManager.default.fileExists(atPath: file.path) ? file : nil
+    }
+
+    /// Fetched, and kept: its file — nil, not to be had, or not a PDF after
+    /// all, a page asking to sign in, say.
+    public static func fetch(_ url: URL, done: @escaping @MainActor (URL?) -> Void) {
+        var request = URLRequest(url: url, timeoutInterval: 60)
+        request.setValue("application/pdf,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        URLSession.shared.downloadTask(with: request) { downloaded, response, _ in
+            var kept: URL?
+            if let downloaded, (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true,
+               let handle = try? FileHandle(forReadingFrom: downloaded) {
+                // A PDF says so in its first bytes.
+                let head = (try? handle.read(upToCount: 1024)) ?? Data()
+                try? handle.close()
+                if head.range(of: Data("%PDF".utf8)) != nil {
+                    let file = file(url)
+                    try? FileManager.default.removeItem(at: file)
+                    if (try? FileManager.default.moveItem(at: downloaded, to: file)) != nil { kept = file }
+                }
+            }
+            DispatchQueue.main.async { MainActor.assumeIsolated { done(kept) } }
+        }.resume()
+    }
+}
+
 /// A page loaded in a web view no one sees, its words taken out once it
 /// has loaded — or given up on after a while.
 @MainActor

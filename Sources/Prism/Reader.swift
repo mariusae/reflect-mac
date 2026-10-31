@@ -6,7 +6,7 @@ import ReflectUI
 import PrismCore
 
 /// What a note links to, in a column at the note's right — its own page,
-/// a link note's, or any page it links to, or a PDF it holds, ‹ › from one
+/// a link note's, or any page or PDF it links to, or a PDF it holds, ‹ › from one
 /// to the next: a page as the site has
 /// it — or, the reader turned on, its words alone, set in Chronicle on the
 /// paper, the site's chrome, its ads, its menus left behind — its controls
@@ -300,9 +300,29 @@ final class ReaderPane: NSView, WKNavigationDelegate, WKScriptMessageHandler {
 
     // MARK: A PDF
 
+    /// The graph's own at once; one on the web fetched first, kept to read
+    /// again — not a PDF after all, the page it is instead.
     private func showPDF() {
         web.stopLoading()
-        guard let document = PDFDocument(url: url), document.pageCount > 0 else {
+        guard source.isOnline else { return showPDF(at: url) }
+        if let file = ReaderPDF.cached(url) { return showPDF(at: file) }
+        pdf.document = nil
+        chrome.show(source: "PDF", title: source.name, metrics: session.metrics)
+        spinner.startAnimation(nil)
+        let wanted = source
+        ReaderPDF.fetch(url) { [weak self] file in
+            guard let self, source == wanted else { return }
+            spinner.stopAnimation(nil)
+            guard let file else {
+                sources[index] = wanted.asPage
+                return load()
+            }
+            showPDF(at: file)
+        }
+    }
+
+    private func showPDF(at file: URL) {
+        guard let document = PDFDocument(url: file), document.pageCount > 0 else {
             pdf.document = nil
             chrome.show(source: "PDF", title: source.name, metrics: session.metrics)
             failure.stringValue = "This PDF could not be read."
