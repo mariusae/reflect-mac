@@ -177,6 +177,24 @@ final class BacklinkBlock: NSView, ColumnBlock {
     var onFold: ((Bool) -> Void)?
     /// Its links hidden, its name alone shown.
     private(set) var folded: Bool
+    /// At the card's top right: what can be done with it — its mentions made links.
+    private var action: NSButton?
+    private var actionRun: (() -> Void)?
+
+    func setAction(_ title: String, symbol: String, run: @escaping () -> Void) {
+        let button = NSButton(title: title, target: self, action: #selector(actionClicked))
+        button.bezelStyle = .glass
+        button.controlSize = .small
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        button.imagePosition = .imageLeading
+        action?.removeFromSuperview()
+        action = button
+        actionRun = run
+        addSubview(button)
+        needsLayout = true
+    }
+
+    @objc private func actionClicked() { actionRun?() }
 
     override var isFlipped: Bool { true }
 
@@ -285,6 +303,10 @@ final class BacklinkBlock: NSView, ColumnBlock {
         disclosure.frame = NSRect(x: x - chevron - 4, y: top + round((titleHeight - chevron) / 2), width: chevron, height: chevron)
         let detailWidth = ceil(detail.intrinsicContentSize.width) + 4
         title.frame = NSRect(x: x, y: top, width: max(40, column.maxX - x - detailWidth - 8), height: titleHeight)
+        if let action {
+            action.sizeToFit()
+            action.frame.origin = NSPoint(x: column.maxX - action.frame.width - 12, y: top + (titleHeight - action.frame.height) / 2)
+        }
         let size = title.attributedStringValue.size()
         let detailHeight = ceil(detail.intrinsicContentSize.height)
         detail.frame = NSRect(x: min(title.frame.maxX, x + ceil(size.width) + 10), y: title.frame.maxY - detailHeight - 1,

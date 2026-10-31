@@ -567,16 +567,38 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     }
 
     private var carriedShown: [String] = []
+    private var mentionsShown: [String] = []
+
+    /// A note's: the notes that name it without a link, the rows that do.
+    private func mentioned(in path: String, done: @escaping ([(path: String, slices: [NoteSlice], editable: Bool)]) -> Void) {
+        guard GraphPaths.day(fromDailyPath: path) == nil, let graph = store.graph, let index = store.index,
+              let entry = index.entry(path) else { return done([]) }
+        let names = ([entry.title] + entry.aliases).filter { $0.count >= 3 }
+        DispatchQueue.global(qos: .utility).async {
+            var runs: [(path: String, slices: [NoteSlice], editable: Bool)] = []
+            for other in index.mentions(of: path) {
+                guard let source = graph.read(path: other) else { continue }
+                let slices = NoteSlice.slices(path: other, in: source) { !Mentions.ranges(of: names, in: $0).isEmpty }
+                if !slices.isEmpty { runs.append((other, slices, OutlineMarkdown.roundTrips(source))) }
+            }
+            DispatchQueue.main.async { done(runs) }
+        }
+    }
 
     private func refreshLinked(_ path: String) {
         linked(to: path) { [weak self] sources, found in
             guard let self else { return }
-            carried(into: path) { [weak self] runs in self?.showLinked(path, sources: sources, found: found, carried: runs) }
+            carried(into: path) { [weak self] runs in
+                self?.mentioned(in: path) { [weak self] mentions in
+                    self?.showLinked(path, sources: sources, found: found, carried: runs, mentions: mentions)
+                }
+            }
         }
     }
 
     private func showLinked(_ path: String, sources: [BacklinkSource], found: [(path: String, slices: [NoteSlice], editable: Bool)],
-                            carried: [(path: String, slices: [NoteSlice], editable: Bool)]) {
+                            carried: [(path: String, slices: [NoteSlice], editable: Bool)],
+                            mentions: [(path: String, slices: [NoteSlice], editable: Bool)]) {
         guard self.kind == .note(path), !self.isTyping else { return }
         self.linkedPaths = found.map(\.path).sorted {
             (self.store.index?.entry($0)?.modified ?? .distantPast) > (self.store.index?.entry($1)?.modified ?? .distantPast)
@@ -586,14 +608,32 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             self.onLinkedCount?(found.count)
         }
         let carriedNow = carried.flatMap { run in run.slices.map { "\(run.path)#\($0.start)#\($0.rows.first?.text ?? "")" } }
-        guard sources != self.linkedShown || carriedNow != self.carriedShown || self.blocks.count == 1 else { return }
+        let mentionsNow = mentions.flatMap { run in run.slices.map { "\(run.path)#\($0.start)#\($0.rows.first?.text ?? "")" } }
+        guard sources != self.linkedShown || carriedNow != self.carriedShown || mentionsNow != self.mentionsShown || self.blocks.count == 1 else { return }
         self.linkedShown = sources
         self.carriedShown = carriedNow
+        self.mentionsShown = mentionsNow
         // Still open from the days before: a head over them, on cards as what links here is.
         let still: [SheetBlock] = carried.isEmpty ? [] : [HeadBlock(title: "Still Open", kicker: nil, metrics: self.metrics, isGroup: true)]
             + self.sliceBlocks(carried, asCard: true)
         let after: [SheetBlock] = found.isEmpty ? [] : [LinkedHead(count: found.count, metrics: self.metrics)] + self.sliceBlocks(found)
-        self.setBlocks(note: path, after: still + after)
+        // Named without a link: under a heading of their own, each card with Link.
+        var named: [SheetBlock] = []
+        if !mentions.isEmpty, let entry = store.index?.entry(path) {
+            let names = ([entry.title] + entry.aliases).filter { $0.count >= 3 }
+            named.append(HeadBlock(title: "Mentioned In", kicker: nil, metrics: self.metrics, isGroup: true))
+            for block in self.sliceBlocks(mentions, asCard: true) {
+                guard let card = block as? SliceBlock else { continue }
+                let other = card.path
+                card.setAction("Link", symbol: "link") { [weak self] in
+                    card.save()
+                    self?.store.change(other, undoName: "Link Mentions") { Mentions.linking(names, to: entry.title, in: $0) }
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                }
+                named.append(card)
+            }
+        }
+        self.setBlocks(note: path, after: still + after + named)
     }
 
     /// To what links here, at the note's end.

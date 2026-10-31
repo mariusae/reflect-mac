@@ -47,6 +47,8 @@ final class NotePane: NSView, OutlineTextViewNavigator {
     private var shownSources: [BacklinkSource]?
     /// Today's tasks still open from the days before, as last shown.
     private var shownCarried: [String] = []
+    private var shownMentions: [String] = []
+    private var mentionsHeading: ColumnHeading?
     private var carriedHeading: ColumnHeading?
     /// What links here changed while typed in there: shown once the keyboard leaves.
     private var linkedStale = false
@@ -311,7 +313,9 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         guard place.face == .outline || ref.day == nil, let note else { return }
         let carried = carriedTasks()
         let carriedNow = carried.flatMap { group in group.tasks.map { "\(group.path)#\($0.ordinal)#\($0.text)" } }
-        if sources == shownSources, carriedNow == shownCarried, !linked.isEmpty || (sources?.isEmpty != false && carried.isEmpty) { return }
+        let mentions = ref.day == nil ? session.index.mentions(of: ref.path) : []
+        if sources == shownSources, carriedNow == shownCarried, mentions == shownMentions,
+           !linked.isEmpty || (sources?.isEmpty != false && carried.isEmpty && mentions.isEmpty) { return }
         // Not while typed in there: once the keyboard leaves.
         if isTypingInLinked {
             linkedStale = true
@@ -320,11 +324,14 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         linked.forEach { $0.removeFromSuperview() }
         linkedHeader?.removeFromSuperview()
         carriedHeading?.removeFromSuperview()
+        mentionsHeading?.removeFromSuperview()
         linked = []
         linkedHeader = nil
         carriedHeading = nil
+        mentionsHeading = nil
         shownSources = sources
         shownCarried = carriedNow
+        shownMentions = mentions
         var blocks: [ColumnBlock] = [note]
         // Still open from the days before: a heading over them, on cards as what links here is.
         if !carried.isEmpty {
@@ -342,6 +349,25 @@ final class NotePane: NSView, OutlineTextViewNavigator {
             let cards = sources.map(makeLinked)
             linked += cards
             blocks += [header] + cards
+        }
+        // Named without a link: under a heading of their own, each card with Link.
+        if !mentions.isEmpty, let entry = session.index.entry(ref.path) {
+            let names = ([entry.title] + entry.aliases).filter { $0.count >= 3 }
+            let heading = ColumnHeading("Mentioned in", metrics: session.metrics)
+            document.addSubview(heading)
+            mentionsHeading = heading
+            let cards = mentions.compactMap { other -> BacklinkBlock? in
+                let text = session.graph.read(path: other) ?? ""
+                let slices = TaskSlice.slices(path: other, in: text) { !Mentions.ranges(of: names, in: $0).isEmpty }
+                guard !slices.isEmpty else { return nil }
+                let card = makeCard(other, slices: slices, text: text, unit: "mention")
+                card.setAction("Link", symbol: "link") { [weak self] in
+                    self?.session.change(other, undoName: "Link Mentions") { Mentions.linking(names, to: entry.title, in: $0) }
+                }
+                return card
+            }
+            linked += cards
+            blocks += [heading] + cards
         }
         self.blocks = blocks
         updateBar()

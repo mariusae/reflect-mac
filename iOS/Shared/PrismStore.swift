@@ -215,6 +215,17 @@ final class PrismStore {
         if let undoName { registerUndo(undoName, path: path, from: updated, back: source) }
     }
 
+    /// A note's text changed outside its editor — its mentions made links —
+    /// offered to undo for a moment.
+    func change(_ path: String, undoName: String, _ transform: (String) -> String?) {
+        let before = text(path)
+        guard let after = transform(before), after != before else { return }
+        write(after, path: path)
+        registerRevert(path, from: after, to: before, undo: undo)
+        undo.setActionName(undoName)
+        NotificationCenter.default.post(name: .prismUndoable, object: self, userInfo: ["name": undoName, "undo": undo])
+    }
+
     /// Rows put in another note — a day's top, any other's end — undone
     /// with `undo`: the note as it was, gone again if it was not there.
     func add(_ rows: [Row], to path: String, undo: UndoManager) {

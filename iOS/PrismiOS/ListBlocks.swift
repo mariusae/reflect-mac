@@ -137,6 +137,24 @@ final class SliceBlock: UIView, SheetBlock {
 
     /// On a card whatever the page: what links to a note, as the Mac shows it.
     private let flat: Bool
+    /// At the card's top right, in place of when: what can be done with it — Link.
+    private var actionButton: UIButton?
+
+    /// A button at the card's top right — a note's mentions made links.
+    func setAction(_ title: String, symbol: String, run: @escaping () -> Void) {
+        var style = UIButton.Configuration.glass()
+        style.title = title
+        style.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold))
+        style.imagePadding = 4
+        style.buttonSize = .small
+        style.baseForegroundColor = Ink.text
+        let button = UIButton(configuration: style, primaryAction: UIAction { _ in run() })
+        actionButton?.removeFromSuperview()
+        actionButton = button
+        metaLabel.isHidden = true
+        addSubview(button)
+        setNeedsLayout()
+    }
 
     init(path: String, slices: [NoteSlice], editable: Bool, store: PrismStore, metrics: PhoneMetrics, asCard: Bool = false) {
         self.editable = editable
@@ -355,6 +373,12 @@ final class SliceBlock: UIView, SheetBlock {
         title.frame = CGRect(x: NoteBlock.side, y: y, width: min(titleSize.width, inner - metaSize.width - 12), height: titleHeight)
         metaLabel.frame = CGRect(x: bounds.width - NoteBlock.side - metaSize.width, y: (title.frame.midY - metaSize.height / 2).rounded(),
                                  width: metaSize.width, height: metaSize.height)
+        if let actionButton {
+            let size = actionButton.intrinsicContentSize
+            actionButton.frame = CGRect(x: bounds.width - NoteBlock.side - size.width + 8, y: (title.frame.midY - size.height / 2).rounded(),
+                                        width: size.width, height: size.height)
+            title.frame.size.width = min(title.frame.width, actionButton.frame.minX - title.frame.minX - 8)
+        }
         y += titleHeight + Card.gap
         for (i, editor) in editors.enumerated() {
             if let label = crumbLabels[i], let height = crumbHeight(i, inner: inner) {
