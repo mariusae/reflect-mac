@@ -12,6 +12,8 @@ import ReflectGit2
 @MainActor
 final class PrismApp: NSObject, NSApplicationDelegate {
     private var session: Session?
+    /// Prism in the menu bar: Quick Note, today, its tasks.
+    private var menuBarItem: MenuBarItem?
     private var settings: SettingsWindowController?
     /// Where the Prism browser extension sends the pages it captures.
     private var captureServer: CaptureServer?
@@ -138,6 +140,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         if environment["PRISM_CAPTURE_SCRIPT"] != nil { return }
         session.restoreWindows()
         session.windows.forEach { $0.showWindow(nil) }
+        menuBarItem = MenuBarItem(session: session) { [weak self] in self?.showQuickNote(nil) }
         // The reading queue as it was left: open, if it was.
         if session.readingQueueWasOpen { session.openReadingQueue().showWindow(nil) }
         NSApp.activate()
