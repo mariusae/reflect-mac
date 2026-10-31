@@ -54,6 +54,8 @@ final class NoteBlock: UIView {
     var onOpen: (() -> Void)?
     /// Told when a link is tapped in it: the link, and the note it is in.
     var onLink: ((String, String) -> Void)?
+    /// A row's Move to…: its editor, the row, and the note it is in.
+    var onMoveRows: ((OutlineEditor, Int, String) -> Void)?
     /// Told when the caret in it moved.
     var onCaretMove: (() -> Void)?
     /// Told when typing in it stopped.
@@ -184,6 +186,10 @@ final class NoteBlock: UIView {
         editor.onOpenLink = { [weak self] link in
             guard let self else { return }
             onLink?(link, ref.path)
+        }
+        editor.onMoveRows = { [weak self] editor, index in
+            guard let self else { return }
+            onMoveRows?(editor, index, ref.path)
         }
         // A day has no cover; any other note's pictures can be one.
         if ref.day == nil {

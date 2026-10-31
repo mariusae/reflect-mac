@@ -34,6 +34,8 @@ package final class OutlineTextView: NSTextView {
     /// Whether the note is marked `private: true`: its links are then never
     /// looked up on the web.
     package var isPrivateNote = false
+    /// A row's Move to…: where to, asked for — then `moveRows(at:named:put:)`.
+    package var onMoveRows: ((OutlineTextView, Int) -> Void)?
 
     /// The day the note is, if it is one: on today's, time blocks show the
     /// time now, kept up to the minute.
@@ -1066,6 +1068,12 @@ package final class OutlineTextView: NSTextView {
             ("Heading 3", 3, row.kind == .heading(3)),
             ("Quote", 12, row.kind == .quote),
         ]
+        if let onMoveRows {
+            items.append(ClosureMenuItem(title: "Move to…") { [weak self] in
+                guard let self else { return }
+                onMoveRows(self, index)
+            })
+        }
         let turn = NSMenuItem(title: "Turn Into", action: nil, keyEquivalent: "")
         turn.submenu = NSMenu(title: "Turn Into")
         for (title, tag, current) in kinds {
@@ -1122,6 +1130,23 @@ package final class OutlineTextView: NSTextView {
         let progress = Checkboxes.underEach(all)[index]
         if row.task == nil, !progress.isEmpty { said.append("\(progress.done) of \(progress.total) done") }
         return said.isEmpty ? super.accessibilityHelp() : said.joined(separator: ". ")
+    }
+
+    /// A row and those under it moved to another note: put there by `put`,
+    /// which registers how to take them out again; taken out here. One
+    /// Undo puts them back where they were.
+    package func moveRows(at index: Int, named name: String, put: ([Row], UndoManager?) -> Void) {
+        let before = rows
+        guard before.indices.contains(index) else { return }
+        let block = OutlineEditing.block(before, index..<(index + 1))
+        undoManager?.beginUndoGrouping()
+        put(Array(before[block]), undoManager)
+        var after = before
+        let landing = OutlineEditing.delete(&after, block)
+        replace(before, with: after, actionName: "Move to " + name)
+        restoreCaret(CaretPosition(row: min(landing, after.count - 1), offset: 0))
+        undoManager?.endUndoGrouping()
+        undoManager?.setActionName("Move to " + name)
     }
 
     /// A link to a note: opened here or beside, or its link copied.

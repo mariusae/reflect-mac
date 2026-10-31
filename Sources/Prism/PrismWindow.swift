@@ -110,12 +110,15 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         list.onReadNext = { [weak self] in self?.session.openReadingQueue().showWindow(nil) }
         list.onDay = { [weak self] day in self?.showDay(day) }
         list.onWeek = { [weak self] week in self?.open(GraphPaths.weeklyPath(for: week)) }
-        commandBar.placeholder = "Go to a note or a day, find words, or # a heading"
-        commandBar.hintText = "↩ Open   ⌘↩ Beside"
+        commandBar.placeholder = Self.goToPrompt
+        commandBar.hintText = Self.goToHint
         commandBar.search = { [weak self] query in self?.commandResults(query) ?? [] }
         commandBar.onChoose = { [weak self] place, beside in
-            self?.closeCommandBar()
-            self?.go(to: place, beside: beside)
+            guard let self else { return }
+            let choice = commandChoice
+            closeCommandBar()
+            if let choice { return choice(place) }
+            go(to: place, beside: beside)
         }
         commandBar.onClose = { [weak self] in self?.closeCommandBar() }
 
@@ -517,7 +520,30 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
 
     private func closeCommandBar() {
         commandBar.removeFromSuperview()
+        if commandChoice != nil {
+            commandChoice = nil
+            commandBar.placeholder = Self.goToPrompt
+            commandBar.hintText = Self.goToHint
+        }
         activePane.focusNote()
+    }
+
+    /// The bar asked for a place, not gone to: what is done with it.
+    private var commandChoice: ((Place) -> Void)?
+    private static let goToPrompt = "Go to a note or a day, find words, or # a heading"
+    private static let goToHint = "↩ Open   ⌘↩ Beside"
+
+    /// Where a row goes, asked in the bar as Go to asks — a note, a day —
+    /// then the row and those under it moved there.
+    func chooseWhereToMove(_ editor: OutlineTextView, _ index: Int, from: String) {
+        commandBar.placeholder = "Move to a note or a day"
+        commandBar.hintText = "↩ Move here"
+        commandChoice = { [weak self, weak editor] place in
+            guard let self, let editor, place.row == nil, place.path != from else { return NSSound.beep() }
+            let name = session.name(of: place.path).title
+            editor.moveRows(at: index, named: name) { rows, undo in self.session.add(rows, to: place.path, undo: undo) }
+        }
+        openCommandBar("")
     }
 
     /// A note chosen in the list: opened where it was found — at the task,

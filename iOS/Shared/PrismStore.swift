@@ -206,6 +206,31 @@ final class PrismStore {
         if let undoName { registerUndo(undoName, path: path, from: updated, back: source) }
     }
 
+    /// Rows put in another note — a day's top, any other's end — undone
+    /// with `undo`: the note as it was, gone again if it was not there.
+    func add(_ rows: [Row], to path: String, undo: UndoManager) {
+        guard let graph else { return }
+        let existed = graph.exists(path: path)
+        let before = text(path)
+        let after = RowMove.adding(rows, to: before, path: path)
+        write(after, path: path)
+        registerRevert(path, from: after, to: existed ? before : nil, undo: undo)
+    }
+
+    private func registerRevert(_ path: String, from now: String, to then: String?, undo: UndoManager) {
+        undo.registerUndo(withTarget: self) { store in
+            // Changed since: not undone over it.
+            guard let graph = store.graph, store.text(path) == now else { return }
+            if let then {
+                store.write(then, path: path)
+            } else {
+                try? FileManager.default.removeItem(at: graph.url(for: path))
+                store.noteChanged([path])
+            }
+            store.registerRevert(path, from: then ?? "", to: now, undo: undo)
+        }
+    }
+
     /// What was done to notes outside their editors — a note out of the
     /// inbox, pinned — to undo: offered for a moment, over the page.
     let undo = UndoManager()

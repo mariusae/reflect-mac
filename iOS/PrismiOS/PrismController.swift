@@ -179,6 +179,10 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             self?.follow(link, from: from, by: sheet, open: open)
         }
         sheet.onFlag = { [weak self] path, key, value in self?.store.setFrontmatter(path, key, value) }
+        sheet.onMoveRows = { [weak self, weak sheet] editor, index, from in
+            sheet?.saveAll()
+            self?.chooseWhereToMove(editor, index, from: from)
+        }
         sheet.onChromeHidden = { [weak self] hidden in self?.setChromeHidden(hidden) }
         return sheet
     }
@@ -1077,6 +1081,33 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         store.delete(path)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         layoutChanged()
+    }
+
+    // MARK: Move to…
+
+    /// Where a row goes, asked for as Go to asks — a note, a day — then the
+    /// row and those under it moved there.
+    private func chooseWhereToMove(_ editor: OutlineEditor, _ index: Int, from: String) {
+        let finder = FinderController(store: store)
+        finder.prompt = "Move to a note or a day"
+        finder.offersSearch = false
+        finder.onChoose = { [weak self, weak editor] place in
+            guard let self, let editor else { return }
+            let path: String
+            switch place {
+            case .day(let day): path = GraphPaths.dailyPath(for: day)
+            case .note(let note): path = note
+            case .search: return
+            }
+            guard path != from else { return }
+            let name = GraphPaths.day(fromDailyPath: path).map { NoteBlock.dayTitle($0) } ?? SliceBlock.name(path, store: store)
+            editor.moveRows(at: index, named: name) { rows, undo in self.store.add(rows, to: path, undo: undo) }
+        }
+        if let sheet = finder.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+        }
+        topPresenter.present(finder, animated: true)
     }
 
     // MARK: Read Next

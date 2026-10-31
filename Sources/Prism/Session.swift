@@ -208,8 +208,9 @@ final class Session {
     }
 
     /// Writes undone: each note as it was, if it is still as they left it.
-    private func registerUndo(_ name: String, from writes: [(path: String, source: String)], back before: [(path: String, source: String?)]) {
-        guard let undo = (NSApp.keyWindow ?? NSApp.mainWindow)?.undoManager else { return }
+    func registerUndo(_ name: String, from writes: [(path: String, source: String)], back before: [(path: String, source: String?)],
+                      on manager: UndoManager? = nil) {
+        guard let undo = manager ?? (NSApp.keyWindow ?? NSApp.mainWindow)?.undoManager else { return }
         undo.registerUndo(withTarget: self) { session in
             let now = writes.map { (path: $0.path, source: session.graph.read(path: $0.path)) }
             // Changed since, elsewhere: not undone over it.
@@ -223,9 +224,32 @@ final class Session {
             }
             session.notesChanged(Set(before.map(\.path)))
             if session.ownsSync { session.sync.noteChanged() }
-            session.registerUndo(name, from: before.compactMap { old in old.source.map { (path: old.path, source: $0) } }, back: now)
+            session.registerUndo(name, from: before.compactMap { old in old.source.map { (path: old.path, source: $0) } }, back: now, on: undo)
         }
         undo.setActionName(name)
+    }
+
+    /// Rows put in another note — a day's top, any other's end — undone
+    /// with `undo`, with the rest of the move.
+    func add(_ rows: [Row], to path: String, undo: UndoManager?) {
+        save()
+        let before = graph.read(path: path)
+        let after = RowMove.adding(rows, to: before ?? "", path: path)
+        do {
+            try graph.write(after, path: path)
+        } catch {
+            NSAlert(error: error).runModal()
+            return
+        }
+        if let undo { registerUndo("Move", from: [(path, after)], back: [(path, before)], on: undo) }
+        // What shows it caught up once the move is done: a note open
+        // elsewhere, read again, clears what could be undone — not in the
+        // middle of the move's own undo.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            notesChanged([path])
+            if ownsSync { sync.noteChanged() }
+        }
     }
 
     /// A note read, changed, written — when it changed.
@@ -324,6 +348,11 @@ final class Session {
     }
 
     func noteShown(_ view: DayView) {
+        // A row's Move to…: where to, asked in the window it is in.
+        view.editor.onMoveRows = { [weak self] editor, index in
+            guard let self, let window = windows.first(where: { $0.window === editor.window }) else { return }
+            window.chooseWhereToMove(editor, index, from: view.ref.path)
+        }
         if view.ref.day == nil {
             view.editor.onMakeCover = { [weak self, weak view] source in
                 guard let self, let view else { return }

@@ -127,6 +127,8 @@ final class SliceBlock: UIView, SheetBlock {
     var onOpen: (() -> Void)?
     /// Told when a link is tapped in it: the link, and the note it is in.
     var onLink: ((String, String) -> Void)?
+    /// A row's Move to…: its editor, the row, and the note it is in.
+    var onMoveRows: ((OutlineEditor, Int, String) -> Void)?
     var onHeightChange: (() -> Void)?
     var onCaretMove: (() -> Void)?
 
@@ -190,6 +192,10 @@ final class SliceBlock: UIView, SheetBlock {
             editor.onOpenLink = { [weak self] link in
                 guard let self else { return }
                 onLink?(link, path)
+            }
+            editor.onMoveRows = { [weak self] editor, index in
+                guard let self else { return }
+                onMoveRows?(editor, index, path)
             }
             editor.onHeightChange = { [weak self] in
                 self?.setNeedsLayout()

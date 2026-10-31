@@ -26,6 +26,8 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     var onOpen: ((String, Int?) -> Void)?
     /// Told when a link is tapped: the link, and the note it is in.
     var onLink: ((String, String) -> Void)?
+    /// A row's Move to…: its editor, the row, and the note it is in.
+    var onMoveRows: ((OutlineEditor, Int, String) -> Void)?
     /// Asked to set a note's frontmatter key — `inbox` — or take it away.
     var onFlag: ((String, String, String?) -> Void)?
     /// How many notes link to the note shown, once found: its bar's count.
@@ -415,6 +417,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
                 let ref = NoteRef(path: path)
                 let block = NoteBlock(ref: ref, store: store, metrics: metrics, showsHeader: false, live: true)
                 block.onLink = { [weak self] link, from in self?.onLink?(link, from) }
+                block.onMoveRows = { [weak self] editor, index, from in self?.onMoveRows?(editor, index, from) }
                 notes = [block]
             }
         }
@@ -445,6 +448,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
                 let start = slices.slices.first?.start
                 slices.onOpen = { [weak self] in self?.onOpen?(path, start) }
                 slices.onLink = { [weak self] link, from in self?.onLink?(link, from) }
+                slices.onMoveRows = { [weak self] editor, index, from in self?.onMoveRows?(editor, index, from) }
             }
             content.addSubview(block)
         }

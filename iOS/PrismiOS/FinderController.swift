@@ -29,6 +29,10 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
     private var items: [Item] = []
     /// Told what was chosen; the finder is gone by then.
     var onChoose: ((Place) -> Void)?
+    /// What its field asks, empty.
+    var prompt = "Search notes and days"
+    /// A search of every note, last: not when a place is what is wanted — Move to….
+    var offersSearch = true
 
     init(store: PrismStore, embedded: Bool = false) {
         self.store = store
@@ -61,7 +65,7 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
             // Its field the bottom bar's.
             title = "Search"
         } else {
-            field.placeholder = "Search notes and days"
+            field.placeholder = prompt
             field.searchBarStyle = .minimal
             field.autocapitalizationType = .none
             field.returnKeyType = .go
@@ -133,7 +137,7 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
                               symbol: match.entry.isTopic ? "number" : "doc.text", cover: match.entry.cover))
         }
         // Last, the words looked for in every note.
-        if !query.isEmpty {
+        if !query.isEmpty, offersSearch {
             items.append(Item(place: .search(query), title: "Search notes for “\(query)”", detail: "", symbol: "text.magnifyingglass"))
         }
         self.items = items

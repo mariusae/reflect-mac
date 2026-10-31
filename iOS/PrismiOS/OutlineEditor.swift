@@ -2475,6 +2475,12 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             actions.append(UIAction(title: "Move Done to Bottom", image: UIImage(systemName: "arrow.down.to.line"),
                                     attributes: movable ? [] : .disabled) { [weak self] _ in self?.moveDoneToBottom(under: index) })
         }
+        if isEditable, onMoveRows != nil {
+            actions.append(UIAction(title: "Move to…", image: UIImage(systemName: "arrow.right.doc.on.clipboard")) { [weak self] _ in
+                guard let self else { return }
+                onMoveRows?(self, index)
+            })
+        }
         if isEditable {
             actions.append(UIAction(title: "Turn Into…", image: UIImage(systemName: "arrow.triangle.2.circlepath")) { [weak self] _ in
                 self?.showTurnInto(forRow: index)
@@ -2570,6 +2576,23 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             while let presented = top.presentedViewController { top = presented }
             top.present(sheet, animated: true)
         }
+    }
+
+    /// A row and those under it moved to another note: put there by
+    /// `put`, which registers how to take them out again; taken out here.
+    /// One undo puts them back where they were.
+    func moveRows(at index: Int, named name: String, put: ([Row], UndoManager) -> Void) {
+        var all = rows
+        guard all.indices.contains(index) else { return }
+        let block = OutlineEditing.block(all, index..<(index + 1))
+        let taken = Array(all[block])
+        let undo = rowUndo
+        undo.beginUndoGrouping()
+        put(taken, undo)
+        _ = OutlineEditing.delete(&all, block)
+        replace(all, caret: nil, undoName: "Move to " + name)
+        undo.endUndoGrouping()
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
     /// A row, and the rows under it, taken away.
@@ -2806,6 +2829,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// Told when a picture in the note is chosen as its cover.
     var onMakeCover: ((String) -> Void)?
+    /// A row's Move to…: where to, asked for — then `moveRows(at:to:)`.
+    var onMoveRows: ((OutlineEditor, Int) -> Void)?
 
     private func copyPicture(_ file: URL) {
         guard let data = try? Data(contentsOf: file) else { return }
