@@ -33,6 +33,12 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
         !text.contains(OutlineText.lineSeparator) && OutlineMarkdown.serialize(OutlineMarkdown.parse(text)) == text
     }
 
+    /// Where a top-level row's words start, in from the editor's edge: for
+    /// what is drawn in line with them, such as a placeholder.
+    public static func textIndent(fontSize: CGFloat = 15) -> CGFloat {
+        OutlineMetrics(fontSize: fontSize).textIndent(for: .blank)
+    }
+
     /// The notes `[[` completes from, for every outline editor.
     public static func completeLinks(from index: NoteIndex) {
         LinkCompletion.sources = SearchSources(index: index)
