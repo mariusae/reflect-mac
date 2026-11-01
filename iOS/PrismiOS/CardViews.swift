@@ -1,6 +1,7 @@
 import UIKit
 import ReflectCore
 import PrismCore
+import PhoneUI
 
 /// The sheet of paper a note's card is: lighter than the page it lies on,
 /// its corners round, a soft shadow under it.

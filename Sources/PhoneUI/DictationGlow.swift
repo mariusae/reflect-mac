@@ -1,3 +1,5 @@
+#if os(iOS)
+#if os(iOS)
 import UIKit
 import PrismCore
 
@@ -6,7 +8,7 @@ import PrismCore
 /// comes in lit behind, the light fading over a moment and a half — so it
 /// is plain what is being written, and where.
 @MainActor
-final class DictationGlow: UIView {
+public final class DictationGlow: UIView {
     private weak var text: UITextView?
     /// What has come in lately, and when — in the text's own characters.
     private var lit: [(range: NSRange, at: CFTimeInterval)] = []
@@ -24,7 +26,7 @@ final class DictationGlow: UIView {
     private let emitter: CAEmitterLayer
     private static let fade: CFTimeInterval = 1.6
 
-    init(on text: UITextView) {
+    public init(on text: UITextView) {
         self.text = text
         let accent = Ink.accent.resolvedColor(with: text.traitCollection).cgColor
         bar = Sparkles.bar(accent)
@@ -46,10 +48,10 @@ final class DictationGlow: UIView {
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
+    public required init?(coder: NSCoder) { fatalError() }
 
     /// Characters just written, to light.
-    func wrote(_ range: NSRange) {
+    public func wrote(_ range: NSRange) {
         guard range.length > 0 else { return }
         let now = CACurrentMediaTime()
         lit.append((range, now))
@@ -58,14 +60,14 @@ final class DictationGlow: UIView {
     }
 
     /// Where the words are going in: the caret before `location`; nil, none.
-    func listen(at location: Int?) {
+    public func listen(at location: Int?) {
         listening = location
         tick()
     }
 
     /// Done listening: the caret as it was, its stars and the light let
     /// go out — or, what was written taken back, put out — then this gone.
-    func end(keepingLight: Bool = true) {
+    public func end(keepingLight: Bool = true) {
         listening = nil
         endedAt = CACurrentMediaTime()
         (text as? OutlineEditor)?.hidesCaret = false
@@ -141,3 +143,5 @@ final class DictationGlow: UIView {
         removeFromSuperview()
     }
 }
+#endif
+#endif

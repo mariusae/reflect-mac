@@ -1,5 +1,6 @@
 import UIKit
 import PrismCore
+import PhoneUI
 
 /// The bar along the bottom, as a quiet browser's: one glass panel. Over,
 /// a field with the name of what is shown in it — as a browser's address —

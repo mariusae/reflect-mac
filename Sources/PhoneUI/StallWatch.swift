@@ -1,26 +1,27 @@
+#if os(iOS)
 import Foundation
 import QuartzCore
 
 /// `-PrismStalls YES`: the main thread watched from another — every time it
 /// stays busy past a frame or three, how long, printed — and marks at the
 /// phases of starting, from launch. For finding where the app stutters.
-enum StallWatch {
-    static let enabled = UserDefaults.standard.bool(forKey: "PrismStalls")
+public enum StallWatch {
+    public static let enabled = UserDefaults.standard.bool(forKey: "PrismStalls")
     /// The shortest stall told, in seconds: `-PrismStallMs 17` for a frame.
-    static let threshold = UserDefaults.standard.object(forKey: "PrismStallMs").map { ($0 as? Double ?? Double("\($0)") ?? 50) / 1000 } ?? 0.05
+    public static let threshold = UserDefaults.standard.object(forKey: "PrismStallMs").map { ($0 as? Double ?? Double("\($0)") ?? 50) / 1000 } ?? 0.05
     private static let start = CACurrentMediaTime()
     private static let lock = NSLock()
     nonisolated(unsafe) private static var lastBeat = CACurrentMediaTime()
     nonisolated(unsafe) private static var phase = "launch"
 
     /// A phase begun, its time from launch printed.
-    static func mark(_ name: String) {
+    public static func mark(_ name: String) {
         guard enabled else { return }
         lock.lock(); phase = name; lock.unlock()
         print(String(format: "PHASE %7.1f ms  %@", (CACurrentMediaTime() - start) * 1000, name))
     }
 
-    static func begin() {
+    public static func begin() {
         guard enabled else { return }
         mark("watch")
         // The main thread beats; the watcher reports the gaps.
@@ -55,3 +56,4 @@ enum StallWatch {
         }
     }
 }
+#endif

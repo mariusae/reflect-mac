@@ -1,3 +1,4 @@
+#if os(iOS)
 import UIKit
 import WebKit
 import ObjectiveC
@@ -7,7 +8,7 @@ import ObjectiveC
 /// dark. Every scroll view once it is on screen — but a web page's, which
 /// WebKit sets by the page's own colour: a white page white in the dark.
 extension UIScrollView {
-    static func followPaper() {
+    public static func followPaper() {
         let original = #selector(UIView.didMoveToWindow)
         let replacement = #selector(UIScrollView.prism_didMoveToWindow)
         guard let theirs = class_getInstanceMethod(UIScrollView.self, original),
@@ -37,3 +38,4 @@ extension UIScrollView {
 
     nonisolated(unsafe) private static var watchingKey: UInt8 = 0
 }
+#endif

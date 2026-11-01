@@ -1,6 +1,7 @@
 import UIKit
 import ReflectCore
 import PrismCore
+import PhoneUI
 
 /// What a sheet is made of: blocks one under another, each as tall as it
 /// says at the sheet's width — a day, a note, a note's slices, a heading.

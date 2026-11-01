@@ -3,6 +3,7 @@ import WebKit
 import PDFKit
 import ReflectCore
 import PrismCore
+import PhoneUI
 
 /// What a note links to, the whole screen — its own page, a link note's,
 /// or any page or PDF it links to, or a PDF it holds, ‹ › at the foot from one to
@@ -661,9 +662,6 @@ extension ReaderController {
 extension Notification.Name {
     /// The reader shown — the app's bar away — or gone.
     static let prismReader = Notification.Name("PrismReader")
-    /// A note changed while read, not typed in: its undo manager and the
-    /// change's name, to offer Undo for.
-    static let prismUndoable = Notification.Name("PrismUndoable")
     /// How syncing goes changed: syncing, failed, conflicted, fine.
     static let prismSyncChanged = Notification.Name("PrismSyncChanged")
 }

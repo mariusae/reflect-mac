@@ -1,26 +1,27 @@
+#if os(iOS)
 import UIKit
 import ReflectCore
 
 extension NSAttributedString.Key {
     /// A row a timeline draws something at, as a `PhoneTimeSlot`.
-    static let prismTimeSlot = NSAttributedString.Key("PrismTimeSlot")
+    public static let prismTimeSlot = NSAttributedString.Key("PrismTimeSlot")
 }
 
 /// What a timeline draws at a row: a block starting there — its time and
 /// length over its words, its bullet a node on the line — or blocks ending
 /// there, and the room after them. (`TimeMark`, in points.)
-final class PhoneTimeSlot: NSObject {
+public final class PhoneTimeSlot: NSObject {
     /// Of the type: a row's height, the room for a time over a row, and
     /// how far a drag goes for a minute.
-    struct Measures: Equatable {
-        var row: CGFloat
-        var header: CGFloat
-        var labelSize: CGFloat
-        var pad: CGFloat
-        var perMinute: CGFloat
-        var twelveHour: Bool
+    public struct Measures: Equatable {
+        public var row: CGFloat
+        public var header: CGFloat
+        public var labelSize: CGFloat
+        public var pad: CGFloat
+        public var perMinute: CGFloat
+        public var twelveHour: Bool
 
-        init(_ metrics: PhoneMetrics) {
+        public init(_ metrics: PhoneMetrics) {
             row = metrics.lineHeight * metrics.size + metrics.rowGap
             labelSize = round(metrics.size * 0.7)
             header = ceil(labelSize * 1.3)
@@ -31,12 +32,12 @@ final class PhoneTimeSlot: NSObject {
         }
     }
 
-    let mark: TimeMark
+    public let mark: TimeMark
     /// Whether the block's time is written out in its row: the caret is there.
-    let revealed: Bool
-    let measures: Measures
+    public let revealed: Bool
+    public let measures: Measures
 
-    init(mark: TimeMark, revealed: Bool, measures: Measures) {
+    public init(mark: TimeMark, revealed: Bool, measures: Measures) {
         self.mark = mark
         self.revealed = revealed
         self.measures = measures
@@ -44,21 +45,21 @@ final class PhoneTimeSlot: NSObject {
 
     /// The room a block ending here takes after the row: a little for its
     /// length, its free time, and, its timeline's last, a gap after.
-    func extent(_ foot: TimeMark.Foot) -> CGFloat {
+    public func extent(_ foot: TimeMark.Foot) -> CGFloat {
         ((foot.length + foot.freeLength) * measures.row).rounded() + (foot.isLast ? measures.pad : 0)
     }
 
-    var footHeight: CGFloat { mark.feet.reduce(0) { $0 + extent($1) } }
+    public var footHeight: CGFloat { mark.feet.reduce(0) { $0 + extent($1) } }
 
-    override func isEqual(_ object: Any?) -> Bool {
+    public override func isEqual(_ object: Any?) -> Bool {
         guard let other = object as? PhoneTimeSlot else { return false }
         return mark == other.mark && revealed == other.revealed && measures == other.measures
     }
 
-    override var hash: Int { var h = Hasher(); h.combine(mark.head?.index); h.combine(mark.feet.count); return h.finalize() }
+    public override var hash: Int { var h = Hasher(); h.combine(mark.head?.index); h.combine(mark.feet.count); return h.finalize() }
 
     /// The slots of a text's rows, by where their paragraphs start.
-    static func slots(_ storage: NSTextStorage, metrics: PhoneMetrics, caret: Int?) -> [Int: PhoneTimeSlot] {
+    public static func slots(_ storage: NSTextStorage, metrics: PhoneMetrics, caret: Int?) -> [Int: PhoneTimeSlot] {
         let text = storage.mutableString
         let paragraphs = OutlineText.paragraphs(text)
         guard !paragraphs.isEmpty else { return [:] }
@@ -82,7 +83,7 @@ final class PhoneTimeSlot: NSObject {
     }
 
     /// Whether any row of a text is in a timeline.
-    static func any(in storage: NSTextStorage) -> Bool {
+    public static func any(in storage: NSTextStorage) -> Bool {
         var found = false
         storage.enumerateAttribute(.prismTimeSlot, in: NSRange(location: 0, length: storage.length)) { value, _, stop in
             if value != nil { found = true; stop.pointee = true }
@@ -91,7 +92,7 @@ final class PhoneTimeSlot: NSObject {
     }
 
     /// The slot of a row that starts a block, if it does.
-    static func head(_ storage: NSTextStorage, at location: Int) -> PhoneTimeSlot? {
+    public static func head(_ storage: NSTextStorage, at location: Int) -> PhoneTimeSlot? {
         guard location < storage.length, let slot = storage.attribute(.prismTimeSlot, at: location, effectiveRange: nil) as? PhoneTimeSlot,
               slot.mark.head != nil else { return nil }
         return slot
@@ -99,25 +100,25 @@ final class PhoneTimeSlot: NSObject {
 }
 
 /// Where a time block is drawn, in the text container.
-struct PhoneTimeBlock {
-    var head: NSRange
-    var mark: TimeMark.Head
-    var measures: PhoneTimeSlot.Measures
-    var node: CGPoint
-    var drawsNode: Bool
-    var lineTop: CGFloat
-    var end: CGFloat
-    var free: ClosedRange<CGFloat>?
-    var freeRoom: ClosedRange<CGFloat>?
-    var freeLabel: String?
-    var label: CGRect
-    var revealed: Bool
+public struct PhoneTimeBlock {
+    public var head: NSRange
+    public var mark: TimeMark.Head
+    public var measures: PhoneTimeSlot.Measures
+    public var node: CGPoint
+    public var drawsNode: Bool
+    public var lineTop: CGFloat
+    public var end: CGFloat
+    public var free: ClosedRange<CGFloat>?
+    public var freeRoom: ClosedRange<CGFloat>?
+    public var freeLabel: String?
+    public var label: CGRect
+    public var revealed: Bool
 }
 
 extension PhoneLayoutManager {
     /// The first character of a paragraph shown: hidden markup is laid out
     /// on the line before.
-    func firstShown(in paragraph: NSRange) -> Int {
+    public func firstShown(in paragraph: NSRange) -> Int {
         guard let storage = textStorage else { return paragraph.location }
         var first = paragraph.location
         while first < NSMaxRange(paragraph) - 1, storage.attribute(.prismHidden, at: first, effectiveRange: nil) != nil { first += 1 }
@@ -126,7 +127,7 @@ extension PhoneLayoutManager {
 
     /// The room after a line a timeline's blocks end at, when it is such a
     /// line: their lengths, and their free time.
-    func timeBlockFoot(characters: NSRange, fragment: CGRect, line: NSRange) -> CGFloat? {
+    public func timeBlockFoot(characters: NSRange, fragment: CGRect, line: NSRange) -> CGFloat? {
         guard let storage = textStorage, characters.length > 0 else { return nil }
         let text = plainText
         // Back over the next row's hidden start, to this row's line break.
@@ -153,7 +154,7 @@ extension PhoneLayoutManager {
 
     /// The time blocks starting among some characters' rows — and those
     /// before whose lines reach into them — with where they are.
-    func timeBlocks(in characters: NSRange? = nil) -> [PhoneTimeBlock] {
+    public func timeBlocks(in characters: NSRange? = nil) -> [PhoneTimeBlock] {
         guard let storage = textStorage, storage.length > 0 else { return [] }
         let text = plainText
         let paragraphs = OutlineText.paragraphs(text)
@@ -210,7 +211,7 @@ extension PhoneLayoutManager {
 
     /// Draws the timelines: lines, nodes, times over the words, free time,
     /// and, on today's page, the time now on the line it falls on.
-    func drawTimeBlocks(_ blocks: [PhoneTimeBlock], at origin: CGPoint, today: Bool) {
+    public func drawTimeBlocks(_ blocks: [PhoneTimeBlock], at origin: CGPoint, today: Bool) {
         guard let context = UIGraphicsGetCurrentContext() else { return }
         let now = today ? Calendar.current.dateComponents([.hour, .minute], from: Date()) : nil
         let nowMinutes = now.map { ($0.hour ?? 0) * 60 + ($0.minute ?? 0) }
@@ -284,3 +285,4 @@ extension PhoneLayoutManager {
         }
     }
 }
+#endif

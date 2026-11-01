@@ -1,5 +1,6 @@
 import UIKit
 import ReflectCore
+import PhoneUI
 
 /// The app's icon held on the Home Screen: a row at the top of today, a
 /// new note, and the notes written in last, each to open.

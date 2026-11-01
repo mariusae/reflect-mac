@@ -10,10 +10,12 @@
 		BB000000000000000000000D /* ReflectCore in Frameworks */ = {isa = PBXBuildFile; productRef = BB000000000000000000000C /* ReflectCore */; };
 		BB000000000000000000000F /* ReflectGit2 in Frameworks */ = {isa = PBXBuildFile; productRef = BB000000000000000000001A /* ReflectGit2 */; };
 		BB0000000000000000000021 /* PrismCore in Frameworks */ = {isa = PBXBuildFile; productRef = BB0000000000000000000020 /* PrismCore */; };
+		BB0000000000000000000031 /* PhoneUI in Frameworks */ = {isa = PBXBuildFile; productRef = BB0000000000000000000030 /* PhoneUI */; };
 		CC0000000000000000000007 /* PrismShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000001 /* PrismShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		DD0000000000000000000001 /* ReflectCore in Frameworks */ = {isa = PBXBuildFile; productRef = DD0000000000000000000010 /* ReflectCore */; };
 		DD0000000000000000000002 /* ReflectGit2 in Frameworks */ = {isa = PBXBuildFile; productRef = DD0000000000000000000011 /* ReflectGit2 */; };
 		DD0000000000000000000003 /* PrismCore in Frameworks */ = {isa = PBXBuildFile; productRef = DD0000000000000000000012 /* PrismCore */; };
+		DD0000000000000000000031 /* PhoneUI in Frameworks */ = {isa = PBXBuildFile; productRef = DD0000000000000000000030 /* PhoneUI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -88,6 +90,7 @@
 				BB000000000000000000000D /* ReflectCore in Frameworks */,
 				BB000000000000000000000F /* ReflectGit2 in Frameworks */,
 				BB0000000000000000000021 /* PrismCore in Frameworks */,
+				BB0000000000000000000031 /* PhoneUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -105,6 +108,7 @@
 				DD0000000000000000000001 /* ReflectCore in Frameworks */,
 				DD0000000000000000000002 /* ReflectGit2 in Frameworks */,
 				DD0000000000000000000003 /* PrismCore in Frameworks */,
+				DD0000000000000000000031 /* PhoneUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -167,6 +171,7 @@
 				BB000000000000000000000C /* ReflectCore */,
 				BB000000000000000000001A /* ReflectGit2 */,
 				BB0000000000000000000020 /* PrismCore */,
+				BB0000000000000000000030 /* PhoneUI */,
 			);
 			productName = PrismiOS;
 			productReference = BB0000000000000000000005 /* Prism.app */;
@@ -216,6 +221,7 @@
 				DD0000000000000000000010 /* ReflectCore */,
 				DD0000000000000000000011 /* ReflectGit2 */,
 				DD0000000000000000000012 /* PrismCore */,
+				DD0000000000000000000030 /* PhoneUI */,
 			);
 			productName = PrismReader;
 			productReference = DD0000000000000000000004 /* PrismReader.app */;
@@ -642,6 +648,14 @@
 		DD0000000000000000000012 /* PrismCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PrismCore;
+		};
+		BB0000000000000000000030 /* PhoneUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PhoneUI;
+		};
+		DD0000000000000000000030 /* PhoneUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PhoneUI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

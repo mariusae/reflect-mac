@@ -15,6 +15,7 @@ let package = Package(
         .executable(name: "ReflectMac", targets: ["ReflectMac"]),
         .executable(name: "Prism", targets: ["Prism"]),
         .library(name: "PrismCore", targets: ["PrismCore"]),
+        .library(name: "PhoneUI", targets: ["PhoneUI"]),
     ],
     dependencies: [
         // libgit2, built from source: HTTPS through the system's TLS.
@@ -37,6 +38,9 @@ let package = Package(
         .executableTarget(name: "Prism", dependencies: ["ReflectCore", "ReflectUI", "PrismCore", "ReflectGit2", "GraphKit"]),
         // What Prism does, whatever it is shown on: the Mac's, the phone's.
         .target(name: "PrismCore", dependencies: ["ReflectCore", "GraphKit"]),
+        // The phone's outline editor, its bar over the keys, and what it
+        // draws — Prism's on the iPhone, and Weft's: as ReflectUI is the Mac's.
+        .target(name: "PhoneUI", dependencies: ["ReflectCore", "GraphKit", "PrismCore"]),
         .testTarget(name: "ReflectCoreTests", dependencies: ["ReflectCore", "ReflectGit2", "PrismCore"]),
         .testTarget(name: "GraphKitTests", dependencies: ["GraphKit"], resources: [.copy("Fixtures")]),
     ],

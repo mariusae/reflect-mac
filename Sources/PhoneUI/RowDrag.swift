@@ -1,21 +1,22 @@
+#if os(iOS)
 import UIKit
 import ReflectCore
 
 /// A row held: picked up with the rows under it, carried, and put down
 /// where the line shows — before a row, at a depth set by how far across.
 extension OutlineEditor {
-    final class RowDragState {
-        var block: Range<Int>
-        let lifted: UIView
-        let line = UIView()
-        var drop: (index: Int, depth: Int)?
-        var grab: CGPoint
-        var autoscroll: CADisplayLink?
-        var lastPoint: CGPoint = .zero
+    public final class RowDragState {
+        public var block: Range<Int>
+        public let lifted: UIView
+        public let line = UIView()
+        public var drop: (index: Int, depth: Int)?
+        public var grab: CGPoint
+        public var autoscroll: CADisplayLink?
+        public var lastPoint: CGPoint = .zero
         /// Where the finger was when the row was picked up.
-        var start: CGPoint = .zero
+        public var start: CGPoint = .zero
 
-        init(block: Range<Int>, lifted: UIView, grab: CGPoint) {
+        public init(block: Range<Int>, lifted: UIView, grab: CGPoint) {
             self.block = block
             self.lifted = lifted
             self.grab = grab
@@ -23,7 +24,7 @@ extension OutlineEditor {
     }
 
     /// The rectangle some rows take, in the editor.
-    func rowsFrame(_ block: Range<Int>) -> CGRect {
+    public func rowsFrame(_ block: Range<Int>) -> CGRect {
         let ranges = paragraphRanges
         guard !block.isEmpty, block.upperBound <= ranges.count else { return .zero }
         let characters = NSRange(location: ranges[block.lowerBound].location,
@@ -40,7 +41,7 @@ extension OutlineEditor {
     }
 
     /// The row a point is on.
-    func rowUnder(_ point: CGPoint) -> Int? {
+    public func rowUnder(_ point: CGPoint) -> Int? {
         guard textStorage.length > 0 else { return nil }
         let inContainer = CGPoint(x: point.x - textContainerInset.left, y: point.y - textContainerInset.top)
         let glyph = outlineLayout.glyphIndex(for: inContainer, in: textContainer)
@@ -50,7 +51,7 @@ extension OutlineEditor {
     }
 
     /// Where rows would go, dropped at a point: before which row, how deep.
-    func rowDrop(at point: CGPoint, left: CGFloat? = nil) -> (index: Int, depth: Int) {
+    public func rowDrop(at point: CGPoint, left: CGFloat? = nil) -> (index: Int, depth: Int) {
         let all = rows
         guard !all.isEmpty else { return (0, 0) }
         let under = rowUnder(point) ?? (point.y > rowsFrame(all.indices.suffix(1)).maxY ? all.count - 1 : 0)
@@ -66,7 +67,7 @@ extension OutlineEditor {
         return (index, min(max(pointed, shallowest), max(deepest, shallowest)))
     }
 
-    @objc func heldRow(_ gesture: UILongPressGestureRecognizer) {
+    @objc public func heldRow(_ gesture: UILongPressGestureRecognizer) {
         let point = gesture.location(in: self)
         switch gesture.state {
         case .began:
@@ -228,8 +229,9 @@ extension OutlineEditor {
 }
 
 private extension UIGestureRecognizer {
-    func cancel() {
+    public func cancel() {
         isEnabled = false
         isEnabled = true
     }
 }
+#endif

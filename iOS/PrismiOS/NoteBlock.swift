@@ -1,6 +1,7 @@
 import UIKit
 import ReflectCore
 import PrismCore
+import PhoneUI
 
 /// A note in a sheet: its name over it — a day's date, a week's number, a
 /// note's title when its first heading is not that — and its outline,
@@ -920,19 +921,7 @@ enum Formats {
 /// pinned, the tasks, what a search found — headed as a post is in Threads:
 /// its name in bold at the text's size, and beside it, in grey, when: a
 /// day's distance from today, any other note's last change.
-@MainActor
-enum Card {
-    /// The page flat, as a magazine's: no cards, the notes on the paper
-    /// itself, parted by a hairline and headed by a small line in capitals —
-    /// the one way it is set; what links to a note, alone, on cards.
-    nonisolated static let flat = true
-
-    /// The small line in spaced capitals over things, at a text's size: a
-    /// day's date, a gap's days, a card's site — one style for them all.
-    nonisolated static func label(size: CGFloat) -> [NSAttributedString.Key: Any] {
-        let small = round(size * 0.74)
-        return [.font: Typeface.current.body(small, weight: .medium), .foregroundColor: Ink.label, .kern: small * 0.09]
-    }
+extension Card {
 
     /// The flat page's header: a small line in spaced capitals — a day's
     /// date, or a note's age — and, for a note, its name in bold under it.

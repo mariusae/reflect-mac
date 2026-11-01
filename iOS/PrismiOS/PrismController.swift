@@ -5,6 +5,7 @@ import SafariServices
 import ReflectCore
 import PrismCore
 import ReflectGit2
+import PhoneUI
 
 /// Prism on the phone: the lenses — Daily, the inbox, the tasks, the
 /// pinned, search — each its own stack: its list at the foot, a note

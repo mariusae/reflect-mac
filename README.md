@@ -223,6 +223,11 @@ or given with `-GraphPath <folder>`.
 - `Sources/ReflectMac/Editor` — the outline editor: an `NSTextView` (TextKit 1)
   whose paragraphs are rows, each carrying its row as an attribute.
   `OutlineLayoutManager` draws bullets, checkboxes and selected rows.
+- `Sources/PhoneUI` — the phone's outline editor (`OutlineEditor`, a
+  `UITextView` whose paragraphs are rows), its bar of glass over the keys
+  (`OutlineToolbar`, which any text view can take, with tools of its own),
+  and what it draws: link cards, time blocks, pictures; Prism's type and
+  ink. Shared by Prism on the iPhone and by Weft, as `ReflectUI` is on the Mac.
 - `Sources/ReflectMac` — the timeline (`TimelineViewController`, which keeps
   only the days near the window as views), a day (`DayView`), sync, menus.
 - `Script.swift` drives the app from a script of keys, for trying it without a

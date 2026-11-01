@@ -1,3 +1,4 @@
+#if os(iOS)
 import CoreText
 import UIKit
 import ReflectCore
@@ -5,21 +6,21 @@ import ReflectCore
 /// What notes are set in, as on the Mac: one of a few styles — a face for
 /// the text, one for headings, one for code, and how they are set — ready
 /// made, the size alone to change.
-enum Typeface: String, CaseIterable, Identifiable {
+public enum Typeface: String, CaseIterable, Identifiable {
     case ideal, apple, system
 
     /// The styles this build has: Ideal Sans only when its fonts were there
     /// to bundle — Hoefler's, copied from the owner's own, never fetched.
-    static let available: [Typeface] = {
+    public static let available: [Typeface] = {
         let bundled = Bundle.main.resourceURL.map {
             FileManager.default.fileExists(atPath: $0.appendingPathComponent("Fonts/IdealSansSSm-Book-Pro.otf").path)
         } ?? false
         return allCases.filter { $0 != .ideal || bundled }
     }()
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
-    var title: String {
+    public var title: String {
         switch self {
         case .ideal: "Ideal Sans"
         case .apple: "New York"
@@ -28,7 +29,7 @@ enum Typeface: String, CaseIterable, Identifiable {
     }
 
     /// What it is, under its name where it is chosen.
-    var detail: String {
+    public var detail: String {
         switch self {
         case .ideal: "Hoefler’s Ideal Sans, in its Book"
         case .apple: "Apple’s New York, a serif for reading"
@@ -41,7 +42,7 @@ enum Typeface: String, CaseIterable, Identifiable {
     private var scale: CGFloat { self == .ideal ? 1.02 : 1 }
 
     /// Line height, in ems.
-    var lineHeight: CGFloat {
+    public var lineHeight: CGFloat {
         switch self {
         case .ideal: 1.38
         case .apple: 1.42
@@ -51,7 +52,7 @@ enum Typeface: String, CaseIterable, Identifiable {
 
     /// Apple's New York, as a family's name: the system's serif, which no
     /// family name reaches.
-    static let newYork = "New York"
+    public static let newYork = "New York"
 
     private var family: String? {
         switch self {
@@ -66,17 +67,17 @@ enum Typeface: String, CaseIterable, Identifiable {
     private var monoFamily: String? { self == .ideal ? "Operator Mono SSm" : nil }
 
     /// The weight bold is set in: Ideal Sans's Semibold, as on the Mac.
-    var boldWeight: UIFont.Weight { self == .ideal ? .semibold : .bold }
+    public var boldWeight: UIFont.Weight { self == .ideal ? .semibold : .bold }
 
     /// A font of a family at a weight, italic or not, picked from the
     /// family's own faces by name — not by traits, which can land on any.
-    static func font(family: String, weight: UIFont.Weight, italic: Bool, size: CGFloat) -> UIFont? {
+    public static func font(family: String, weight: UIFont.Weight, italic: Bool, size: CGFloat) -> UIFont? {
         face(in: family, weight: weight, italic: italic).flatMap { UIFont(name: $0, size: size) }.map { withFeatures($0) }
     }
 
     /// A font with the features its family is set with turned on — Ideal
     /// Sans's lining figures — and any others asked for, small capitals.
-    static func withFeatures(_ font: UIFont, adding more: [[UIFontDescriptor.FeatureKey: Int]] = []) -> UIFont {
+    public static func withFeatures(_ font: UIFont, adding more: [[UIFontDescriptor.FeatureKey: Int]] = []) -> UIFont {
         let features: [Any] = FontFeatures.settings(family: font.familyName) + more
         guard !features.isEmpty else { return font }
         return UIFont(descriptor: font.fontDescriptor.addingAttributes([.featureSettings: features]), size: font.pointSize)
@@ -94,17 +95,17 @@ enum Typeface: String, CaseIterable, Identifiable {
     }
 
     /// The size text is set at, for a size asked for.
-    func size(_ base: CGFloat) -> CGFloat { round(base * scale * 2) / 2 }
+    public func size(_ base: CGFloat) -> CGFloat { round(base * scale * 2) / 2 }
 
-    func body(_ size: CGFloat, weight: UIFont.Weight = .regular, italic: Bool = false) -> UIFont {
+    public func body(_ size: CGFloat, weight: UIFont.Weight = .regular, italic: Bool = false) -> UIFont {
         font(family, size: size, weight: textWeight(weight), italic: italic)
     }
 
-    func heading(_ size: CGFloat, weight: UIFont.Weight = .bold) -> UIFont {
+    public func heading(_ size: CGFloat, weight: UIFont.Weight = .bold) -> UIFont {
         font(headingFamily, size: size, weight: weight)
     }
 
-    func mono(_ size: CGFloat) -> UIFont {
+    public func mono(_ size: CGFloat) -> UIFont {
         // Its regular face, by name: asked for by family alone, the system
         // may give any — Operator Mono's Bold.
         guard let monoFamily, let name = Self.face(in: monoFamily, weight: .regular, italic: false),
@@ -180,7 +181,7 @@ enum Typeface: String, CaseIterable, Identifiable {
 
     /// The style chosen in Settings; else Ideal Sans, as on the Mac — the
     /// system's, where it wasn't bundled.
-    static var current: Typeface {
+    public static var current: Typeface {
         get {
             let fallback: Typeface = available.contains(.ideal) ? .ideal : .system
             return UserDefaults.standard.string(forKey: "Typeface").flatMap(Typeface.init(rawValue:))
@@ -192,9 +193,9 @@ enum Typeface: String, CaseIterable, Identifiable {
     /// Makes the bundled fonts — copied into the app at build — available.
     /// The bundled fonts, registered off the main thread: started at
     /// launch, waited on before the first note is drawn.
-    static let registration = Task.detached(priority: .userInitiated) { registerBundled() }
+    public static let registration = Task.detached(priority: .userInitiated) { registerBundled() }
 
-    nonisolated static func registerBundled() {
+    public nonisolated static func registerBundled() {
         guard let folder = Bundle.main.resourceURL?.appendingPathComponent("Fonts"),
               let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return }
         for url in files where ["otf", "ttf"].contains(url.pathExtension) {
@@ -204,62 +205,62 @@ enum Typeface: String, CaseIterable, Identifiable {
 }
 
 /// Prism's colours: warm paper and warm ink, light and dark.
-enum Ink {
+public enum Ink {
     private static func hex(_ value: UInt32, alpha: CGFloat = 1) -> UIColor {
         UIColor(red: CGFloat((value >> 16) & 0xff) / 255, green: CGFloat((value >> 8) & 0xff) / 255,
                 blue: CGFloat(value & 0xff) / 255, alpha: alpha)
     }
 
-    static func dynamic(_ light: UIColor, _ dark: UIColor) -> UIColor {
+    public static func dynamic(_ light: UIColor, _ dark: UIColor) -> UIColor {
         UIColor { $0.userInterfaceStyle == .dark ? dark : light }
     }
 
     // In the light, the Mac's: warm paper and warm ink — cream, and a
     // brown-black — greys warmed to go with them. In the dark, the phone's
     // own: near-black, for its screen, and near-white ink.
-    static let paper = dynamic(hex(0xfaf7f2), hex(0x101010))
-    static let page = paper
+    public static let paper = dynamic(hex(0xfaf7f2), hex(0x101010))
+    public static let page = paper
     /// A note's card: lighter than the paper, as the Mac's.
-    static let card = dynamic(hex(0xfdfcf9), hex(0x1a1a1a))
+    public static let card = dynamic(hex(0xfdfcf9), hex(0x1a1a1a))
     /// What links to a note, on its card: lifted off the page — white on
     /// the cream; in the dark, a grey well above the near-black.
-    static let backlinkCard = dynamic(hex(0xfefdfb), hex(0x232325))
-    static let text = dynamic(hex(0x2b2724), hex(0xf3f5f7))
-    static let secondary = dynamic(hex(0x958c83), hex(0x777777))
+    public static let backlinkCard = dynamic(hex(0xfefdfb), hex(0x232325))
+    public static let text = dynamic(hex(0x2b2724), hex(0xf3f5f7))
+    public static let secondary = dynamic(hex(0x958c83), hex(0x777777))
     /// The small lines in spaced capitals over things: quieter than the
     /// text, a shade firmer than the secondary grey, to read at their size.
-    static let label = dynamic(hex(0x7a7067), hex(0x9e9e9e))
-    static let faint = dynamic(hex(0x2b2724, alpha: 0.32), hex(0xf3f5f7, alpha: 0.3))
-    static let rule = dynamic(hex(0x2b2724, alpha: 0.13), hex(0xf3f5f7, alpha: 0.15))
-    static let hover = dynamic(hex(0x2b2724, alpha: 0.05), hex(0xf3f5f7, alpha: 0.06))
-    static let shelf = dynamic(hex(0xf2ede5), hex(0x1e1e1e))
-    static let codeBack = dynamic(hex(0x2b2724, alpha: 0.05), hex(0xf3f5f7, alpha: 0.08))
+    public static let label = dynamic(hex(0x7a7067), hex(0x9e9e9e))
+    public static let faint = dynamic(hex(0x2b2724, alpha: 0.32), hex(0xf3f5f7, alpha: 0.3))
+    public static let rule = dynamic(hex(0x2b2724, alpha: 0.13), hex(0xf3f5f7, alpha: 0.15))
+    public static let hover = dynamic(hex(0x2b2724, alpha: 0.05), hex(0xf3f5f7, alpha: 0.06))
+    public static let shelf = dynamic(hex(0xf2ede5), hex(0x1e1e1e))
+    public static let codeBack = dynamic(hex(0x2b2724, alpha: 0.05), hex(0xf3f5f7, alpha: 0.08))
     /// The floating compose button.
-    static let composeBack = dynamic(hex(0xfdfcf9), hex(0x2a2a2a))
-    static let composeInk = dynamic(hex(0x2b2724), .white)
-    static let accent = dynamic(hex(0x0095f6), hex(0x4cb5f9))
-    static let pill = dynamic(UIColor(red: 0.15, green: 0.36, blue: 0.82, alpha: 0.09), UIColor(red: 0.52, green: 0.68, blue: 1, alpha: 0.14))
-    static let week = dynamic(UIColor(red: 0.78, green: 0.52, blue: 0.12, alpha: 1), UIColor(red: 0.93, green: 0.7, blue: 0.32, alpha: 1))
+    public static let composeBack = dynamic(hex(0xfdfcf9), hex(0x2a2a2a))
+    public static let composeInk = dynamic(hex(0x2b2724), .white)
+    public static let accent = dynamic(hex(0x0095f6), hex(0x4cb5f9))
+    public static let pill = dynamic(UIColor(red: 0.15, green: 0.36, blue: 0.82, alpha: 0.09), UIColor(red: 0.52, green: 0.68, blue: 1, alpha: 0.14))
+    public static let week = dynamic(UIColor(red: 0.78, green: 0.52, blue: 0.12, alpha: 1), UIColor(red: 0.93, green: 0.7, blue: 0.32, alpha: 1))
     /// Now: the block on, its ring running down about Daily — the Mac's red too.
-    static let now = dynamic(UIColor(red: 0.88, green: 0.27, blue: 0.22, alpha: 1), UIColor(red: 1.0, green: 0.42, blue: 0.36, alpha: 1))
-    static let marked = dynamic(UIColor(red: 1, green: 0.86, blue: 0.3, alpha: 0.45), UIColor(red: 0.85, green: 0.7, blue: 0.2, alpha: 0.35))
+    public static let now = dynamic(UIColor(red: 0.88, green: 0.27, blue: 0.22, alpha: 1), UIColor(red: 1.0, green: 0.42, blue: 0.36, alpha: 1))
+    public static let marked = dynamic(UIColor(red: 1, green: 0.86, blue: 0.3, alpha: 0.45), UIColor(red: 0.85, green: 0.7, blue: 0.2, alpha: 0.35))
 }
 
 /// How a style is set, past its size: lines' height, the space between
 /// rows, the outline's indent, and how large headings are — as it comes.
-struct PhoneSpacing: Codable, Equatable {
+public struct PhoneSpacing: Codable, Equatable {
     /// Each line's height, in ems.
-    var lineHeight: Double
+    public var lineHeight: Double
     /// The space after each row, in ems.
-    var rowSpacing: Double
+    public var rowSpacing: Double
     /// Each level of the outline, in ems.
-    var indent: Double
+    public var indent: Double
     /// A first-level heading, as a multiple of the text.
-    var headingScale: Double
+    public var headingScale: Double
     /// How headings are set; nil, as they always were — larger, bold.
-    var headingCase: HeadingCase? = nil
+    public var headingCase: HeadingCase? = nil
 
-    static func of(_ face: Typeface) -> PhoneSpacing {
+    public static func of(_ face: Typeface) -> PhoneSpacing {
         switch face {
         case .ideal: PhoneSpacing(lineHeight: 1.38, rowSpacing: 0.32, indent: 1.35, headingScale: 1.55)
         case .apple: PhoneSpacing(lineHeight: 1.42, rowSpacing: 0.3, indent: 1.35, headingScale: 1.45)
@@ -267,3 +268,4 @@ struct PhoneSpacing: Codable, Equatable {
         }
     }
 }
+#endif

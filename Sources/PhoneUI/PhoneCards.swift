@@ -1,9 +1,10 @@
+#if os(iOS)
 import UIKit
 import ReflectCore
 
 /// What a link to a post or a video shows, under the row it is in: an X or
 /// Threads post, or a YouTube video.
-enum PhoneCard {
+public enum PhoneCard {
     case post(Tweet)
     case video(Video)
     /// Any other link's: a page, a podcast, a paper, a repository, a Google file.
@@ -13,7 +14,7 @@ enum PhoneCard {
 /// The cards links show: sent for off the main thread, kept on disk and in
 /// memory, and `.prismImageLoaded` told — with the link — when one, or a
 /// picture on one, comes in, so the rows showing it are drawn again.
-enum PhoneCards {
+public enum PhoneCards {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var known: [String: PhoneCard?] = [:]
     nonisolated(unsafe) private static var fetching: Set<String> = []
@@ -21,7 +22,7 @@ enum PhoneCards {
     nonisolated(unsafe) private static var picturesFetching: Set<String> = []
 
     /// Whether a link is one a card could be shown for.
-    static func isCardLink(_ source: String) -> Bool {
+    public static func isCardLink(_ source: String) -> Bool {
         Tweet.key(from: source) != nil || Video.id(from: source) != nil
     }
 
@@ -33,7 +34,7 @@ enum PhoneCards {
 
     /// The card a link alone in its row shows — a page's, a podcast's — when
     /// it is in; else nil, and sent for. `text`: what the note calls it.
-    nonisolated static func rich(_ source: String, text: String?) -> PhoneCard? {
+    public nonisolated static func rich(_ source: String, text: String?) -> PhoneCard? {
         lock.lock()
         if let text, !text.isEmpty, text != source { linkTexts[source] = text }
         if let known = richKnown[source] {
@@ -71,7 +72,7 @@ enum PhoneCards {
     }
 
     /// The card a link shows, when it is in; else nil, and sent for.
-    nonisolated static func lookup(_ source: String) -> PhoneCard? {
+    public nonisolated static func lookup(_ source: String) -> PhoneCard? {
         guard isCardLink(source) else {
             // Another link's: only once asked for, as alone in its row.
             lock.lock()
@@ -187,7 +188,7 @@ enum PhoneCards {
     }
 
     /// A picture on a card, when it is in; else sent for, the link told when it is.
-    nonisolated static func picture(_ url: String, for source: String) -> UIImage? {
+    public nonisolated static func picture(_ url: String, for source: String) -> UIImage? {
         lock.lock()
         if let image = pictures[url] {
             lock.unlock()
@@ -222,8 +223,8 @@ enum PhoneCards {
 
 /// Draws a card at a width — as wide as there is room for, no wider than a
 /// card is — its height worked out by the same measures that draw it.
-enum PhoneCardView {
-    static let widest: CGFloat = 440
+public enum PhoneCardView {
+    public static let widest: CGFloat = 440
     /// Inside a card's frame; flat, no frame, only a little room above and below.
     private static var padding: CGFloat { Card.flat ? 4 : 12 }
     private static let avatarSize: CGFloat = 36
@@ -257,7 +258,7 @@ enum PhoneCardView {
         return min(full, ceil(font.lineHeight) * 2 + 1)
     }
 
-    static func size(_ card: PhoneCard, room: CGFloat) -> CGSize {
+    public static func size(_ card: PhoneCard, room: CGFloat) -> CGSize {
         let width = min(widest, room)
         switch card {
         case .post(let post):
@@ -369,7 +370,7 @@ enum PhoneCardView {
         }
     }
 
-    static func draw(_ card: PhoneCard, in rect: CGRect, source: String) {
+    public static func draw(_ card: PhoneCard, in rect: CGRect, source: String) {
         // Flat, no frame: the card on the page as the rest of the note is.
         if !Card.flat {
             let frame = UIBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 12)
@@ -450,3 +451,4 @@ enum PhoneCardView {
                   withAttributes: [.font: UIFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: Ink.secondary])
     }
 }
+#endif

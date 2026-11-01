@@ -1,6 +1,7 @@
 import UIKit
 import ReflectCore
 import PrismCore
+import PhoneUI
 
 /// A lens's own page: its bar over what it gathers. Each is a list that
 /// leads to notes — tapped, a note opened.

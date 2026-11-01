@@ -1,5 +1,6 @@
 import UIKit
 import ReflectCore
+import PhoneUI
 
 /// A note two devices wrote at once, shown in place of its editor: what
 /// happened, each side of each conflict in its own shade — this device's

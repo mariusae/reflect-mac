@@ -4,6 +4,7 @@ import Observation
 import ReflectCore
 import ReflectGit2
 import PrismCore
+import PhoneUI
 
 /// The graph Prism shows, its index, and its sync with GitHub.
 ///

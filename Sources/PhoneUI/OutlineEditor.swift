@@ -1,3 +1,4 @@
+#if os(iOS)
 import CoreText
 import UIKit
 import UIKit.UIGestureRecognizerSubclass
@@ -8,75 +9,75 @@ import PrismCore
 
 extension NSAttributedString.Key {
     /// Markup not shown: a span's marks, while the caret is away from it.
-    static let prismHidden = NSAttributedString.Key("PrismHidden")
+    public static let prismHidden = NSAttributedString.Key("PrismHidden")
     /// A typed arrow's last character: drawn as the arrow it makes.
-    static let prismArrow = NSAttributedString.Key("PrismArrow")
+    public static let prismArrow = NSAttributedString.Key("PrismArrow")
     /// Words drawn in capitals — a heading, set so — whatever case they are written in.
-    static let prismUppercase = NSAttributedString.Key("PrismUppercase")
+    public static let prismUppercase = NSAttributedString.Key("PrismUppercase")
     /// On the first character of a picture's Markdown: the picture, drawn in its place.
-    static let prismImage = NSAttributedString.Key("PrismImage")
+    public static let prismImage = NSAttributedString.Key("PrismImage")
     /// On a link's last hidden opening character: the symbol drawn there —
     /// a page, a day, the web — in room of its own, inside the pill.
-    static let prismIcon = NSAttributedString.Key("PrismIcon")
+    public static let prismIcon = NSAttributedString.Key("PrismIcon")
     /// On a paragraph: the room above its first line.
-    static let prismSpaceBefore = NSAttributedString.Key("PrismSpaceBefore")
+    public static let prismSpaceBefore = NSAttributedString.Key("PrismSpaceBefore")
     /// On the first hidden character of a shortened address's middle: an
     /// ellipsis drawn in its place.
-    static let prismEllipsis = NSAttributedString.Key("PrismEllipsis")
+    public static let prismEllipsis = NSAttributedString.Key("PrismEllipsis")
     /// On a picture's `!`: after text, the rest of that text's line; else nothing.
-    static let prismBreak = NSAttributedString.Key("PrismBreak")
+    public static let prismBreak = NSAttributedString.Key("PrismBreak")
     /// A link drawn as a pill.
-    static let prismPill = NSAttributedString.Key("PrismPill")
+    public static let prismPill = NSAttributedString.Key("PrismPill")
     /// Inline code, and a highlight: their grounds drawn a line at a time
     /// round their words — a background colour is filled out to the edges.
-    static let prismCode = NSAttributedString.Key("PrismCode")
-    static let prismMarked = NSAttributedString.Key("PrismMarked")
+    public static let prismCode = NSAttributedString.Key("PrismCode")
+    public static let prismMarked = NSAttributedString.Key("PrismMarked")
     /// On a web link's last character, flat: a small ↗ after it, in room kerned for it.
-    static let prismExternal = NSAttributedString.Key("PrismExternal")
+    public static let prismExternal = NSAttributedString.Key("PrismExternal")
     /// Where a link goes, as tapped: a note's title, or an address.
-    static let prismLink = NSAttributedString.Key("PrismLink")
+    public static let prismLink = NSAttributedString.Key("PrismLink")
     /// On a link to a post or a video, once its card is in: the link, its
     /// card drawn under the row it is in.
-    static let prismCard = NSAttributedString.Key("PrismCard")
+    public static let prismCard = NSAttributedString.Key("PrismCard")
     /// On a row not shown at all, its line no height: a note's title row,
     /// in a card whose header says it already.
-    static let prismCollapsed = NSAttributedString.Key("PrismCollapsed")
+    public static let prismCollapsed = NSAttributedString.Key("PrismCollapsed")
 }
 
 /// The type and measures of the outline: a face at a size.
-struct PhoneMetrics: Equatable {
-    var face: Typeface = .current
-    var size: CGFloat = 17
+public struct PhoneMetrics: Equatable {
+    public var face: Typeface = .current
+    public var size: CGFloat = 17
     /// How the face is set: its own defaults, as changed in Settings.
-    var spacing: PhoneSpacing
+    public var spacing: PhoneSpacing
 
-    init(face: Typeface = .current, size: CGFloat = 17, spacing: PhoneSpacing? = nil) {
+    public init(face: Typeface = .current, size: CGFloat = 17, spacing: PhoneSpacing? = nil) {
         self.face = face
         self.size = size
         self.spacing = spacing ?? PhoneSpacing.of(face)
     }
 
-    var body: UIFont { face.body(face.size(size)) }
-    var code: UIFont { face.mono(round(face.size(size) * 0.88)) }
-    var indent: CGFloat { round(size * CGFloat(spacing.indent)) }
+    public var body: UIFont { face.body(face.size(size)) }
+    public var code: UIFont { face.mono(round(face.size(size) * 0.88)) }
+    public var indent: CGFloat { round(size * CGFloat(spacing.indent)) }
     /// Each line's height, in ems.
-    var lineHeight: CGFloat { CGFloat(spacing.lineHeight) }
+    public var lineHeight: CGFloat { CGFloat(spacing.lineHeight) }
     /// The space after each row, in points.
-    var rowGap: CGFloat { round(size * CGFloat(spacing.rowSpacing)) }
+    public var rowGap: CGFloat { round(size * CGFloat(spacing.rowSpacing)) }
 
     /// Whether headings are drawn in capitals the text does not have: all
     /// caps, or small caps made so for a face without its own.
-    var headingsInCapitals: Bool {
+    public var headingsInCapitals: Bool {
         spacing.headingCase == .caps || (spacing.headingCase == .smallCaps && !headingHasSmallCaps)
     }
 
-    var headingHasSmallCaps: Bool {
+    public var headingHasSmallCaps: Bool {
         let font = face.heading(12, weight: .bold)
         guard let table = CTFontCopyTable(font as CTFont, CTFontTableTag(kCTFontTableGSUB), []) as Data? else { return false }
         return table.range(of: Data("smcp".utf8)) != nil
     }
 
-    func heading(_ level: Int) -> UIFont {
+    public func heading(_ level: Int) -> UIFont {
         let text = face.size(size)
         switch spacing.headingCase ?? .family {
         case .family:
@@ -102,7 +103,7 @@ struct PhoneMetrics: Equatable {
         return face.heading(round(face.size(size) * scale), weight: level <= 2 ? .bold : .semibold)
     }
 
-    func font(for row: Row) -> UIFont {
+    public func font(for row: Row) -> UIFont {
         switch row.kind {
         case .heading(let level): heading(level)
         case .code: code
@@ -113,7 +114,7 @@ struct PhoneMetrics: Equatable {
     /// Where a row's text starts: one step in for each level, its marker
     /// hung in the step before it.
     /// Deep rows stop going right at eight: a line must keep room for its text.
-    func textIndent(for row: Row) -> CGFloat { indent * CGFloat(min(row.depth, 8) + 1) }
+    public func textIndent(for row: Row) -> CGFloat { indent * CGFloat(min(row.depth, 8) + 1) }
 }
 
 // MARK: - Styling
@@ -122,30 +123,30 @@ struct PhoneMetrics: Equatable {
 /// inline Markdown drawn rather than shown. Only attributes are touched, so
 /// what is on screen is what is written. It keeps each paragraph to one
 /// row: when an edit joins two, the one that was there first wins.
-final class PhoneStyler: NSObject, NSTextStorageDelegate {
-    var metrics: PhoneMetrics
+public final class PhoneStyler: NSObject, NSTextStorageDelegate {
+    public var metrics: PhoneMetrics
     /// Whether a first row that is a top heading — the note's title — is
     /// not shown: in a card, its header says it.
-    var hidesTitle = false
+    public var hidesTitle = false
     /// Where the caret is: the span it is in shows its marks.
-    var caret: Int?
+    public var caret: Int?
     /// A private note's: its links never looked up for cards.
-    var isPrivateNote = false
+    public var isPrivateNote = false
     /// Rows folded inside a row an edit swallowed, with where they belong.
-    var orphans: [(location: Int, rows: [Row])] = []
+    public var orphans: [(location: Int, rows: [Row])] = []
     /// The time blocks' slots, by where their paragraphs start: worked out
     /// before each styling.
     private var slots: [Int: PhoneTimeSlot] = [:]
 
-    init(metrics: PhoneMetrics) {
+    public init(metrics: PhoneMetrics) {
         self.metrics = metrics
     }
 
     /// While set, edits are taken as already styled: text styled elsewhere
     /// being put in whole.
-    var paused = false
+    public var paused = false
 
-    func textStorage(_ storage: NSTextStorage, didProcessEditing mask: NSTextStorage.EditActions,
+    public func textStorage(_ storage: NSTextStorage, didProcessEditing mask: NSTextStorage.EditActions,
                      range edited: NSRange, changeInLength delta: Int) {
         guard storage.length > 0, !paused else { return }
         let text = storage.mutableString
@@ -176,14 +177,14 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
         }
     }
 
-    func styleAll(_ storage: NSTextStorage) {
+    public func styleAll(_ storage: NSTextStorage) {
         slots = PhoneTimeSlot.slots(storage, metrics: metrics, caret: caret)
         storage.beginEditing()
         style(storage, in: NSRange(location: 0, length: storage.length))
         storage.endEditing()
     }
 
-    func restyle(_ storage: NSTextStorage, around location: Int) {
+    public func restyle(_ storage: NSTextStorage, around location: Int) {
         guard storage.length > 0 else { return }
         let text = storage.mutableString
         let paragraph = text.paragraphRange(for: NSRange(location: min(location, text.length - 1), length: 0))
@@ -196,7 +197,7 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
     /// The style of the row an edit under way began in: what the row stays,
     /// when all of it is what was typed — an accepted suggestion, a picture
     /// pasted — and the typed text came styled as some other row.
-    var editingRow: (location: Int, style: RowStyle)?
+    public var editingRow: (location: Int, style: RowStyle)?
 
     private func unify(_ storage: NSTextStorage, in range: NSRange, inserted: NSRange) {
         let text = storage.mutableString
@@ -293,7 +294,7 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
     /// dropped from it: read from the row's first character alone, that
     /// row became a plain one at the top — the first word corrected, the
     /// row outdented.
-    static func rowStyle(_ storage: NSTextStorage, _ paragraph: NSRange) -> RowStyle {
+    public static func rowStyle(_ storage: NSTextStorage, _ paragraph: NSRange) -> RowStyle {
         var found: RowStyle?
         storage.enumerateAttribute(.outlineRow, in: paragraph) { value, _, stop in
             if let style = value as? RowStyle {
@@ -314,7 +315,7 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
         storage.addAttribute(.prismCollapsed, value: true, range: paragraph)
     }
 
-    func attributes(for row: Row, after previous: Row?) -> [NSAttributedString.Key: Any] {
+    public func attributes(for row: Row, after previous: Row?) -> [NSAttributedString.Key: Any] {
         let font = metrics.font(for: row)
         let paragraph = NSMutableParagraphStyle()
         let indent = metrics.textIndent(for: row)
@@ -602,24 +603,24 @@ final class PhoneStyler: NSObject, NSTextStorageDelegate {
 /// Lays the outline out: hidden markup takes no room, and the margin's
 /// markers — bullets, checkboxes, numbers, the bars of quotes — and the
 /// pills behind links are drawn under the text.
-final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
-    var metrics = PhoneMetrics()
+public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
+    public var metrics = PhoneMetrics()
     /// Whether the note is today's: its time blocks show the time now.
-    var today = false
+    public var today = false
     /// For each row with children, whether all of them are done; and
     /// whether the row has any, for its bullet.
 
-    override init() {
+    public override init() {
         super.init()
         delegate = self
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
+    public required init?(coder: NSCoder) { fatalError() }
 
     /// A link icon's side, and the room before a link's words it takes.
-    static func iconSide(for font: UIFont) -> CGFloat { round(font.pointSize * 0.72) }
-    static func iconLead(for font: UIFont) -> CGFloat { 2 + iconSide(for: font) + 4 }
+    public static func iconSide(for font: UIFont) -> CGFloat { round(font.pointSize * 0.72) }
+    public static func iconLead(for font: UIFont) -> CGFloat { 2 + iconSide(for: font) + 4 }
 
     /// Each link's icon, in the room its lead was given; each shortened
     /// address's ellipsis, in its.
@@ -677,9 +678,9 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
 
     /// Whether links have a pill behind them.
     /// Links on pills, an icon in each — not on the flat page, where they are underlined.
-    static var drawsPills: Bool { !Card.flat }
+    public static var drawsPills: Bool { !Card.flat }
 
-    func layoutManager(_ layoutManager: NSLayoutManager, shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>,
+    public func layoutManager(_ layoutManager: NSLayoutManager, shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>,
                        properties: UnsafePointer<NSLayoutManager.GlyphProperty>, characterIndexes: UnsafePointer<Int>,
                        font: UIFont, forGlyphRange range: NSRange) -> Int {
         guard let storage = textStorage else { return 0 }
@@ -739,7 +740,7 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         return range.length
     }
 
-    func layoutManager(_ layoutManager: NSLayoutManager, shouldUse action: NSLayoutManager.ControlCharacterAction,
+    public func layoutManager(_ layoutManager: NSLayoutManager, shouldUse action: NSLayoutManager.ControlCharacterAction,
                        forControlCharacterAt charIndex: Int) -> NSLayoutManager.ControlCharacterAction {
         guard let storage = textStorage, charIndex < storage.length else { return action }
         guard storage.attribute(.prismImage, at: charIndex, effectiveRange: nil) != nil
@@ -758,7 +759,7 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
 
     /// A picture's character takes a whole line across, so it is on a line
     /// of its own — text before it ends its line, text after it starts the next.
-    func layoutManager(_ layoutManager: NSLayoutManager, boundingBoxForControlGlyphAt glyphIndex: Int, for textContainer: NSTextContainer,
+    public func layoutManager(_ layoutManager: NSLayoutManager, boundingBoxForControlGlyphAt glyphIndex: Int, for textContainer: NSTextContainer,
                        proposedLineFragment proposedRect: CGRect, glyphPosition: CGPoint, characterIndex charIndex: Int) -> CGRect {
         guard let storage = textStorage, charIndex < storage.length else { return .zero }
         if storage.attribute(.prismIcon, at: charIndex, effectiveRange: nil) != nil {
@@ -783,7 +784,7 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     }
 
     /// A picture's line as tall as the picture; the row's other lines as they are.
-    func layoutManager(_ layoutManager: NSLayoutManager, shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<CGRect>,
+    public func layoutManager(_ layoutManager: NSLayoutManager, shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<CGRect>,
                        lineFragmentUsedRect: UnsafeMutablePointer<CGRect>, baselineOffset: UnsafeMutablePointer<CGFloat>,
                        in textContainer: NSTextContainer, forGlyphRange glyphRange: NSRange) -> Bool {
         guard let storage = textStorage else { return false }
@@ -832,11 +833,11 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         return true
     }
 
-    static let cardGap: CGFloat = 8
+    public static let cardGap: CGFloat = 8
 
     /// Where a folded row's pill is, in the container: after the words of
     /// its last line, on the middle of their capitals.
-    func foldPill(for paragraph: NSRange) -> CGRect? {
+    public func foldPill(for paragraph: NSRange) -> CGRect? {
         guard let storage = textStorage, paragraph.length > 0 else { return nil }
         let last = glyphIndexForCharacter(at: NSMaxRange(paragraph) - 1)
         guard last < numberOfGlyphs else { return nil }
@@ -850,7 +851,7 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     }
 
     /// A pill with three dots in it, on their middle.
-    static func drawFoldPill(in rect: CGRect) {
+    public static func drawFoldPill(in rect: CGRect) {
         Ink.text.withAlphaComponent(0.07).setFill()
         UIBezierPath(roundedRect: rect, cornerRadius: rect.height / 2).fill()
         Ink.secondary.setFill()
@@ -894,7 +895,7 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     }
 
     /// Where each card of some rows is drawn, in the text container.
-    func cards(in characters: NSRange) -> [(source: String, card: PhoneCard, frame: CGRect)] {
+    public func cards(in characters: NSRange) -> [(source: String, card: PhoneCard, frame: CGRect)] {
         guard let storage = textStorage, let container = textContainers.first, storage.length > 0 else { return [] }
         let text = plainText
         var found: [(String, PhoneCard, CGRect)] = []
@@ -925,7 +926,7 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
 
     /// The pictures among some characters: each with its Markdown's range
     /// and where it is drawn, in the text container.
-    func images(in characters: NSRange) -> [(box: PhoneImageBox, span: NSRange, frame: CGRect)] {
+    public func images(in characters: NSRange) -> [(box: PhoneImageBox, span: NSRange, frame: CGRect)] {
         guard let storage = textStorage else { return [] }
         var found: [(PhoneImageBox, NSRange, CGRect)] = []
         storage.enumerateAttribute(.prismImage, in: characters) { value, range, _ in
@@ -1013,27 +1014,27 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     private var progressUnder: [Int: Checkboxes.Progress]?
     /// Set while typing within a row: the checkboxes under each row are as
     /// they were, not found again through the whole note for each key.
-    var keepsProgress = false
+    public var keepsProgress = false
 
     /// The text, as a plain string, for the layout's questions: the
     /// storage's own string reads each character through the storage, and
     /// a paragraph found in it, for each line laid out, made laying out a
     /// long note take seconds. Copied once for each change.
     private var plainCopy: NSString?
-    override var textStorage: NSTextStorage? {
+    public override var textStorage: NSTextStorage? {
         didSet {
             plainCopy = nil
             progressUnder = nil
         }
     }
-    var plainText: NSString {
+    public var plainText: NSString {
         if let plainCopy { return plainCopy }
         let copy = (textStorage?.mutableString.copy() as? NSString) ?? ""
         plainCopy = copy
         return copy
     }
 
-    override func processEditing(for textStorage: NSTextStorage, edited editMask: NSTextStorage.EditActions, range newCharRange: NSRange,
+    public override func processEditing(for textStorage: NSTextStorage, edited editMask: NSTextStorage.EditActions, range newCharRange: NSRange,
                                  changeInLength delta: Int, invalidatedRange invalidatedCharRange: NSRange) {
         if editMask.contains(.editedCharacters) { plainCopy = nil }
         if keepsProgress {
@@ -1100,7 +1101,7 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         return Array(lines.values)
     }
 
-    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
+    public override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage, storage.length > 0, let container = textContainers.first else { return }
         let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
@@ -1251,27 +1252,27 @@ final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
 /// An outline, edited: a note's rows as text, one paragraph a row. Return,
 /// Delete and the Markdown typed at a row's start do what the outline
 /// does; the margin's checkboxes tick, its bullets fold; links open.
-final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDelegate {
-    let styler: PhoneStyler
-    let outlineLayout: PhoneLayoutManager
+public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDelegate {
+    public let styler: PhoneStyler
+    public let outlineLayout: PhoneLayoutManager
     /// Told when the rows changed, by typing or otherwise.
-    var onChange: (() -> Void)?
+    public var onChange: (() -> Void)?
     /// Told when a link is tapped: a note's `[[title]]`, or an address.
-    var onOpenLink: ((String) -> Void)?
+    public var onOpenLink: ((String) -> Void)?
     /// Told when the editor wants another height.
-    var onHeightChange: (() -> Void)?
+    public var onHeightChange: (() -> Void)?
     /// Told when the caret moves in or out: the keyboard's tools follow it.
-    var onFocusChange: ((Bool) -> Void)?
+    public var onFocusChange: ((Bool) -> Void)?
     /// Told when the caret moved, or what is around it did: to keep it in sight.
-    var onCaretMove: (() -> Void)?
+    public var onCaretMove: (() -> Void)?
     /// The notes and days a name typed after `@` or `[[` could be: set for
     /// every editor by whoever has the index.
-    static var suggest: ((String) -> [LinkSuggestions.Candidate])?
+    public static var suggest: ((String) -> [LinkSuggestions.Candidate])?
     /// A row and those under it moved straight to a note — a day's, for a
     /// task brought into today or put off: the app's to do.
-    static var moveTo: ((OutlineEditor, Int, String) -> Void)?
+    public static var moveTo: ((OutlineEditor, Int, String) -> Void)?
     /// The words dictation should favour — the notes' names: the app's to say.
-    static var dictationTerms: (() -> [String])?
+    public static var dictationTerms: (() -> [String])?
     /// A link being finished: what started it, and where its name starts.
     private var completing: (trigger: LinkSuggestions.Trigger, start: Int)?
     /// Where an `@` or `[` was just typed, to see once it is in whether it starts a link.
@@ -1282,7 +1283,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// The tools over the keys, made the first time the keys come up: a
     /// sheet has dozens of editors, few ever typed in.
-    override var inputAccessoryView: UIView? {
+    public override var inputAccessoryView: UIView? {
         get {
             if madeToolbar == nil { madeToolbar = OutlineToolbar(editor: self) }
             return madeToolbar
@@ -1294,7 +1295,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// Taps on what the margin draws, and on links.
     private let markerTap = UITapGestureRecognizer()
 
-    var metrics: PhoneMetrics {
+    public var metrics: PhoneMetrics {
         get { styler.metrics }
         set {
             styler.metrics = newValue
@@ -1318,7 +1319,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// Whether its first row, a top heading — the note's title — is not
     /// shown: in a card whose header says it.
-    var hidesTitle: Bool {
+    public var hidesTitle: Bool {
         get { styler.hidesTitle }
         set {
             guard newValue != styler.hidesTitle else { return }
@@ -1331,7 +1332,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         }
     }
 
-    init(metrics: PhoneMetrics) {
+    public init(metrics: PhoneMetrics) {
         styler = PhoneStyler(metrics: metrics)
         outlineLayout = PhoneLayoutManager()
         outlineLayout.metrics = metrics
@@ -1454,11 +1455,11 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
+    public required init?(coder: NSCoder) { fatalError() }
 
     // MARK: Rows
 
-    func load(_ rows: [Row]) {
+    public func load(_ rows: [Row]) {
         adjusting = true
         let text = OutlineText.attributed(rows.isEmpty ? [.blank] : rows)
         // Styled as it goes in — the storage's edit is the styler's to style.
@@ -1477,17 +1478,25 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// A note's text, styled and measured off the main thread, to be put in
     /// at once: what makes building a note cost a frame no longer.
-    struct Prepared: @unchecked Sendable {
-        let text: NSAttributedString
-        let width: CGFloat
-        let fit: CGFloat
-        let rows: CGFloat
-        var hidesTitle = false
+    public struct Prepared: @unchecked Sendable {
+        public let text: NSAttributedString
+        public let width: CGFloat
+        public let fit: CGFloat
+        public let rows: CGFloat
+        public var hidesTitle = false
+
+        public init(text: NSAttributedString, width: CGFloat, fit: CGFloat, rows: CGFloat, hidesTitle: Bool = false) {
+            self.text = text
+            self.width = width
+            self.fit = fit
+            self.rows = rows
+            self.hidesTitle = hidesTitle
+        }
     }
 
     /// Styles rows as the editor would, and lays them out at a width, all in
     /// text objects of its own: any thread.
-    nonisolated static func prepare(_ rows: [Row], metrics: PhoneMetrics, width: CGFloat, hidesTitle: Bool = false) -> Prepared {
+    public nonisolated static func prepare(_ rows: [Row], metrics: PhoneMetrics, width: CGFloat, hidesTitle: Bool = false) -> Prepared {
         let styler = PhoneStyler(metrics: metrics)
         styler.hidesTitle = hidesTitle
         let storage = NSTextStorage()
@@ -1510,7 +1519,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     /// Text built ahead put in, unstyled again, its height taken as found.
-    func install(_ prepared: Prepared) {
+    public func install(_ prepared: Prepared) {
         adjusting = true
         styler.paused = true
         styler.hidesTitle = prepared.hidesTitle
@@ -1547,7 +1556,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         adjusting = false
     }
 
-    var rows: [Row] {
+    public var rows: [Row] {
         if let cachedRows { return cachedRows }
         let rows = OutlineText.rows(textStorage)
         cachedRows = rows
@@ -1556,10 +1565,10 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     private var cachedRows: [Row]?
 
     /// The first row's style: whether a note opens with its title.
-    var firstRow: Row? { textStorage.length > 0 ? OutlineText.style(textStorage, at: 0).row : nil }
+    public var firstRow: Row? { textStorage.length > 0 ? OutlineText.style(textStorage, at: 0).row : nil }
 
     /// Each heading's place and words, from the rows' styles alone.
-    var headings: [(location: Int, text: String)] {
+    public var headings: [(location: Int, text: String)] {
         var found: [(Int, String)] = []
         let text = textStorage.mutableString
         textStorage.enumerateAttribute(.outlineRow, in: NSRange(location: 0, length: textStorage.length)) { value, range, _ in
@@ -1576,7 +1585,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     /// Each row's characters: kept till the text changes.
-    var paragraphRanges: [NSRange] {
+    public var paragraphRanges: [NSRange] {
         if let cachedRanges { return cachedRanges }
         let ranges = OutlineText.paragraphs(textStorage.mutableString)
         cachedRanges = ranges
@@ -1588,7 +1597,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// under the accent's tint, fading, so the eye finds what came in.
     /// Where a row shown is, by its place among all the note's rows: a row
     /// folded away, the one it is folded in.
-    func row(unfolded target: Int) -> Int? {
+    public func row(unfolded target: Int) -> Int? {
         var place = 0
         for (index, row) in rows.enumerated() {
             let inside = Row.unfold(row.folded).count
@@ -1599,7 +1608,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     /// Where a row is drawn, in the editor.
-    func rowRect(_ index: Int) -> CGRect {
+    public func rowRect(_ index: Int) -> CGRect {
         let ranges = paragraphRanges
         guard ranges.indices.contains(index) else { return .zero }
         layoutIfNeeded()
@@ -1608,7 +1617,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
             .offsetBy(dx: textContainerInset.left, dy: textContainerInset.top)
     }
 
-    func flashRow(_ index: Int) {
+    public func flashRow(_ index: Int) {
         let ranges = paragraphRanges
         guard ranges.indices.contains(index), ranges[index].length > 1 else { return }
         layoutIfNeeded()
@@ -1637,7 +1646,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         didSet { if hidesCaret != oldValue { setNeedsLayout() } }
     }
 
-    override func caretRect(for position: UITextPosition) -> CGRect {
+    public override func caretRect(for position: UITextPosition) -> CGRect {
         var rect = typeCaretRect(for: position)
         if hidesCaret { rect.size.width = 0 }
         return rect
@@ -1663,7 +1672,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         return rect
     }
 
-    func rowIndex(at location: Int) -> Int {
+    public func rowIndex(at location: Int) -> Int {
         let ranges = paragraphRanges
         guard !ranges.isEmpty else { return 0 }
         // The last row starting at or before the place.
@@ -1675,14 +1684,14 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         return low
     }
 
-    var caret: OutlineKeys.Caret {
+    public var caret: OutlineKeys.Caret {
         let location = selectedRange.location
         let index = rowIndex(at: location)
         let ranges = paragraphRanges
         return OutlineKeys.Caret(row: index, offset: ranges.indices.contains(index) ? location - ranges[index].location : 0)
     }
 
-    func setCaret(_ caret: OutlineKeys.Caret) {
+    public func setCaret(_ caret: OutlineKeys.Caret) {
         let ranges = paragraphRanges
         guard !ranges.isEmpty else { return }
         let index = min(max(caret.row, 0), ranges.count - 1)
@@ -1693,7 +1702,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// Replaces the rows on screen with others — only the paragraphs that
     /// differ — as one step to undo, the caret put where it goes.
     /// `registersUndo` false: a step on the way to a change undone whole later — what is heard, as it is.
-    func replace(_ after: [Row], caret: OutlineKeys.Caret?, undoName: String? = nil, registersUndo: Bool = true) {
+    public func replace(_ after: [Row], caret: OutlineKeys.Caret?, undoName: String? = nil, registersUndo: Bool = true) {
         let before = rows
         let beforeCaret = self.caret
         guard before != after else { return }
@@ -1728,8 +1737,8 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     private var rowUndo: UndoManager { undoManager ?? readingUndo }
     private let readingUndo = UndoManager()
 
-    func beginRowUndoGroup() { rowUndo.beginUndoGrouping() }
-    func endRowUndoGroup() { rowUndo.endUndoGrouping() }
+    public func beginRowUndoGroup() { rowUndo.beginUndoGrouping() }
+    public func endRowUndoGroup() { rowUndo.endUndoGrouping() }
 
     // MARK: Never scrolled within
 
@@ -1738,22 +1747,22 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     // — while its height has yet to catch up with what was written, say —
     // and with no finger to scroll it back, the top of the note was lost
     // for good above the sheet's.
-    override var contentOffset: CGPoint {
+    public override var contentOffset: CGPoint {
         get { super.contentOffset }
         set { super.contentOffset = .zero }
     }
 
-    override func setContentOffset(_ contentOffset: CGPoint, animated: Bool) {
+    public override func setContentOffset(_ contentOffset: CGPoint, animated: Bool) {
         super.setContentOffset(.zero, animated: false)
     }
 
-    override func scrollRectToVisible(_ rect: CGRect, animated: Bool) {}
+    public override func scrollRectToVisible(_ rect: CGRect, animated: Bool) {}
 
     // MARK: Dictating at the caret
 
     /// The keyboard bar's microphone: listening — what is heard written at
     /// the caret as it comes — or, listening, stopped.
-    @objc func toggleDictation() {
+    @objc public func toggleDictation() {
         if let dictating = cursorDictation {
             cursorDictation = nil
             toolbar?.showDictating(nil)
@@ -1788,10 +1797,10 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     /// The keyboard bar's ↶ and ↷.
-    @objc func undoChange() { rowUndo.undo(); showUndoState() }
-    @objc func redoChange() { rowUndo.redo(); showUndoState() }
+    @objc public func undoChange() { rowUndo.undo(); showUndoState() }
+    @objc public func redoChange() { rowUndo.redo(); showUndoState() }
 
-    func showUndoState() {
+    public func showUndoState() {
         toolbar?.showUndo(canUndo: rowUndo.canUndo, canRedo: rowUndo.canRedo)
     }
 
@@ -1815,7 +1824,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     // MARK: Typing
 
-    func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+    public func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
         guard !adjusting else { return true }
         // A title not shown is not edited — a delete at the next row's start
         // would join that row to it.
@@ -1929,7 +1938,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// The row typed in, and its height before.
     private var typedRowBefore: (location: Int, height: CGFloat)?
 
-    func textViewDidChange(_ textView: UITextView) {
+    public func textViewDidChange(_ textView: UITextView) {
         styler.editingRow = nil
         outlineLayout.keepsProgress = false
         if let before = typedRowBefore {
@@ -1997,12 +2006,12 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     /// Where the caret is, in the editor.
-    var caretRect: CGRect? {
+    public var caretRect: CGRect? {
         guard isFirstResponder, let end = selectedTextRange?.end else { return nil }
         return caretRect(for: end)
     }
 
-    func textViewDidChangeSelection(_ textView: UITextView) {
+    public func textViewDidChangeSelection(_ textView: UITextView) {
         // Never in a row not shown: to the start of the next.
         if let title = collapsedTitle, selectedRange.location < NSMaxRange(title) {
             selectedRange = NSRange(location: NSMaxRange(title), length: 0)
@@ -2040,12 +2049,12 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         }
     }
 
-    func textViewDidBeginEditing(_ textView: UITextView) {
+    public func textViewDidBeginEditing(_ textView: UITextView) {
         StallWatch.mark("editing begun")
         onFocusChange?(true)
         showFoldState()
     }
-    func textViewDidEndEditing(_ textView: UITextView) {
+    public func textViewDidEndEditing(_ textView: UITextView) {
         // Typing over: listening too — what was heard kept.
         if cursorDictation != nil { toggleDictation() }
         endCompletion()
@@ -2079,7 +2088,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     // MARK: Outline commands
 
     /// The rows the selection covers.
-    var selectedRowRange: Range<Int> {
+    public var selectedRowRange: Range<Int> {
         let first = rowIndex(at: selectedRange.location)
         let last = rowIndex(at: max(selectedRange.location, NSMaxRange(selectedRange) - (selectedRange.length > 0 ? 1 : 0)))
         return first..<(last + 1)
@@ -2095,7 +2104,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// A time block from now, a quarter of an hour long, to name — and
     /// drag where it goes, or make longer.
-    @objc func newTimeBlock() {
+    @objc public func newTimeBlock() {
         let time = Calendar.current.dateComponents([.hour, .minute], from: Date())
         let made = Timeline.newBlock(in: rows, at: caret.row, now: (time.hour ?? 0) * 60 + (time.minute ?? 0))
         // The keyboard told: its suggestions, and where it types, follow the caret.
@@ -2108,7 +2117,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// A keyboard's keys, as the Mac's: Tab in and out, the row moved,
     /// marked, folded, made a checkbox or a task.
-    override var keyCommands: [UIKeyCommand]? {
+    public override var keyCommands: [UIKeyCommand]? {
         guard isFirstResponder else { return super.keyCommands }
         func key(_ title: String, _ input: String, _ flags: UIKeyModifierFlags, _ action: Selector) -> UIKeyCommand {
             let command = UIKeyCommand(title: title, action: action, input: input, modifierFlags: flags)
@@ -2132,32 +2141,32 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         ]
     }
 
-    @objc func foldHere() {
+    @objc public func foldHere() {
         guard rows.indices.contains(caret.row), !rows[caret.row].isFolded, OutlineEditing.hasChildren(rows, caret.row) else { return }
         toggleFoldHere()
     }
 
-    @objc func unfoldHere() {
+    @objc public func unfoldHere() {
         guard rows.indices.contains(caret.row), rows[caret.row].isFolded else { return }
         toggleFoldHere()
     }
 
-    @objc func indent() { perform("Indent") { OutlineEditing.indent(&$0, $1) } }
-    @objc func outdent() { perform("Outdent") { OutlineEditing.outdent(&$0, $1) } }
-    @objc func moveUp() {
+    @objc public func indent() { perform("Indent") { OutlineEditing.indent(&$0, $1) } }
+    @objc public func outdent() { perform("Outdent") { OutlineEditing.outdent(&$0, $1) } }
+    @objc public func moveUp() {
         // Not above a title not shown: it stays the note's first row.
         if collapsedTitle != nil, selectedRowRange.lowerBound <= 1 { return }
         perform("Move Up") { OutlineEditing.moveUp(&$0, $1) }
     }
-    @objc func moveDown() { perform("Move Down") { OutlineEditing.moveDown(&$0, $1) } }
+    @objc public func moveDown() { perform("Move Down") { OutlineEditing.moveDown(&$0, $1) } }
 
     // MARK: Formatting
 
-    @objc func makeBold() { toggleMark("**") }
-    @objc func makeItalic() { toggleMark("*") }
-    @objc func makeStruck() { toggleMark("~~") }
-    @objc func makeHighlighted() { toggleMark("==") }
-    @objc func makeCode() { toggleMark("`") }
+    @objc public func makeBold() { toggleMark("**") }
+    @objc public func makeItalic() { toggleMark("*") }
+    @objc public func makeStruck() { toggleMark("~~") }
+    @objc public func makeHighlighted() { toggleMark("==") }
+    @objc public func makeCode() { toggleMark("`") }
 
     /// Marks the words chosen — or, marked so already, unmarks them; with
     /// none chosen, the marks put in with the caret between them, to type in.
@@ -2201,7 +2210,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     /// The rows chosen a heading, one level smaller each time — then plain again.
-    @objc func cycleHeading() {
+    @objc public func cycleHeading() {
         let caret = self.caret
         var all = rows
         let selection = selectedRowRange
@@ -2219,7 +2228,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     /// The rows chosen a quote, or a quote no longer.
-    @objc func toggleQuote() {
+    @objc public func toggleQuote() {
         let caret = self.caret
         var all = rows
         let selection = selectedRowRange
@@ -2232,14 +2241,14 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         replace(all, caret: caret, undoName: "Quote")
     }
 
-    @objc func cycleChecklist() {
+    @objc public func cycleChecklist() {
         let caret = self.caret
         var all = rows
         OutlineEditing.cycle(.checklist, &all, selectedRowRange)
         replace(all, caret: caret, undoName: "Checklist Item")
     }
 
-    @objc func toggleDone() {
+    @objc public func toggleDone() {
         var all = rows
         OutlineEditing.toggleDone(&all, selectedRowRange)
         replace(all, caret: caret, undoName: "Toggle Done")
@@ -2247,7 +2256,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// A task — Reflect's round `+ [ ]`, gathered in Tasks — then done,
     /// then a plain row again.
-    @objc func cycleTask() {
+    @objc public func cycleTask() {
         let caret = self.caret
         var all = rows
         OutlineEditing.cycle(.task, &all, selectedRowRange)
@@ -2256,7 +2265,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// The keyboard bar's fold button, for the row typed in: Fold, Unfold,
     /// or nothing to fold.
-    func showFoldState() {
+    public func showFoldState() {
         guard let toolbar, isFirstResponder else { return }
         let all = rows, index = caret.row
         guard all.indices.contains(index) else { return }
@@ -2264,13 +2273,13 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     /// The row typed in, folded or opened: the keyboard bar's.
-    @objc func toggleFoldHere() {
+    @objc public func toggleFoldHere() {
         toggleFold(at: caret.row)
         showFoldState()
         UISelectionFeedbackGenerator().selectionChanged()
     }
 
-    func toggleFold(at index: Int) {
+    public func toggleFold(at index: Int) {
         var all = rows
         guard all.indices.contains(index) else { return }
         if all[index].isFolded {
@@ -2285,7 +2294,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     /// `[[`, to link a note: the brackets typed, the caret between them.
-    @objc func insertLink() {
+    @objc public func insertLink() {
         insertText("[[]]")
         selectedRange = NSRange(location: selectedRange.location - 2, length: 0)
         // The notes to link offered at once, as typing `[[` offers them.
@@ -2334,7 +2343,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         return .link(link)
     }
 
-    override func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+    public override func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
         // Choosing rows: a tap anywhere on a row takes it in, or out.
         if gesture === markerTap, isChoosingRows { return rowUnder(gesture.location(in: self)) != nil }
         if gesture === markerTap { return target(at: gesture.location(in: self)) != nil }
@@ -2349,7 +2358,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         return super.gestureRecognizerShouldBegin(gesture)
     }
 
-    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+    public func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
         // A swipe on a carousel turns it, not the sheet back to the one before.
         if let swipe = gesture as? UISwipeGestureRecognizer, carouselSwipes.contains(swipe) {
             return other is UIPanGestureRecognizer && other.view !== self && !(other.view is UIScrollView)
@@ -2360,7 +2369,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
 
 
-    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+    public func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
         gesture is UISwipeGestureRecognizer || gesture === dragScroll || other === dragScroll
     }
 
@@ -2415,14 +2424,14 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     // MARK: Pictures in and out
 
     /// Paste offered for pictures too: a text view takes only text.
-    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+    public override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(paste(_:)), isEditable, UIPasteboard.general.hasImages { return true }
         return super.canPerformAction(action, withSender: sender)
     }
 
     /// Pictures pasted — when there is no text with them — kept in the
     /// graph's `assets/`, as the Mac keeps them, and put where the caret is.
-    override func paste(_ sender: Any?) {
+    public override func paste(_ sender: Any?) {
         let board = UIPasteboard.general
         // A link pasted on words: the words link to it, as on the Mac.
         if selectedRange.length > 0, let address = board.string.flatMap(LinkPaste.address(in:)), linkSelection(to: address) { return }
@@ -2488,24 +2497,24 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     private let linkHold = PictureHold()
     private let rowHold = PictureHold()
     /// The day the note is, if one: on today's, time blocks show the time now.
-    var day: Day? {
+    public var day: Day? {
         didSet { outlineLayout.today = day == .today }
     }
-    var rowDrag: RowDragState?
+    public var rowDrag: RowDragState?
     /// Listening, what is heard written at the caret: the keyboard bar's microphone.
-    var cursorDictation: CursorDictation?
+    public var cursorDictation: CursorDictation?
     /// Rows chosen together, while they are: no typing meanwhile.
-    var rowChoice: RowChoice?
-    override var canBecomeFirstResponder: Bool { rowChoice == nil && super.canBecomeFirstResponder }
+    public var rowChoice: RowChoice?
+    public override var canBecomeFirstResponder: Bool { rowChoice == nil && super.canBecomeFirstResponder }
     /// While a row is carried: another finger scrolling the sheet under it.
-    let dragScroll = UIPanGestureRecognizer()
+    public let dragScroll = UIPanGestureRecognizer()
     private lazy var pictureMenu = UIEditMenuInteraction(delegate: self)
 
     // MARK: Done to the bottom
 
     /// Whether a row is a bullet with checkboxes among its children: the
     /// ring round its bullet.
-    func hasChecklist(under index: Int) -> Bool {
+    public func hasChecklist(under index: Int) -> Bool {
         guard rows.indices.contains(index), rows[index].kind == .bullet, rows[index].task == nil else { return false }
         let end = OutlineEditing.subtreeEnd(rows, index)
         return rows[(index + 1)..<end].contains { $0.task != nil }
@@ -2515,7 +2524,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     private var rowMenuPoint: CGPoint = .zero
 
     /// A row held and let go in place: its menu, if it has anything in it.
-    func showRowMenu(forRow index: Int, at point: CGPoint) {
+    public func showRowMenu(forRow index: Int, at point: CGPoint) {
         guard !rowActions(index).isEmpty else { return }
         rowMenuPoint = point
         // After the finger is up: shown as it lifts, the menu goes with it.
@@ -2527,7 +2536,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// What can be done to a row held: folded or opened — a checkbox's,
     /// a number's, as a bullet's — all the way down too; a checklist's
     /// done items to the bottom.
-    func rowActions(_ index: Int) -> [UIAction] {
+    public func rowActions(_ index: Int) -> [UIAction] {
         let all = rows
         guard all.indices.contains(index) else { return [] }
         let row = all[index]
@@ -2614,7 +2623,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// What can be done to the row the caret is in, as VoiceOver's actions:
     /// its box ticked, it folded — what the margin's marks do to a finger.
-    override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+    public override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
         get {
             let index = caret.row
             guard rows.indices.contains(index) else { return nil }
@@ -2642,7 +2651,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// What the row the caret is in is — a box, ticked or not; folded —
     /// which its words alone do not say.
-    override var accessibilityHint: String? {
+    public override var accessibilityHint: String? {
         get {
             let index = caret.row
             guard rows.indices.contains(index) else { return nil }
@@ -2719,7 +2728,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     /// A row and those under it moved to another note: put there by
     /// `put`, which registers how to take them out again; taken out here.
     /// One undo puts them back where they were.
-    func moveRows(at index: Int, named name: String, put: ([Row], UndoManager) -> Void) {
+    public func moveRows(at index: Int, named name: String, put: ([Row], UndoManager) -> Void) {
         var all = rows
         guard all.indices.contains(index) else { return }
         // Choosing rows: all of them, each with those under it, in order.
@@ -2744,13 +2753,13 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
-    func unfoldCompletely(at index: Int) {
+    public func unfoldCompletely(at index: Int) {
         var all = rows
         guard all.indices.contains(index), OutlineEditing.unfold(&all, at: index, completely: true) > 0 else { return }
         replace(all, caret: isFirstResponder ? caret : nil, undoName: "Unfold")
     }
 
-    func foldCompletely(at index: Int) {
+    public func foldCompletely(at index: Int) {
         var all = rows
         guard all.indices.contains(index), OutlineEditing.foldCompletely(&all, at: index) > 0 else { return }
         let caret = self.caret.row > index && self.caret.row < OutlineEditing.subtreeEnd(rows, index)
@@ -2759,7 +2768,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     /// The done items among a row's children below the rest.
-    func moveDoneToBottom(under index: Int) {
+    public func moveDoneToBottom(under index: Int) {
         var all = rows
         guard OutlineEditing.moveDoneToBottom(&all, under: index) else { return }
         replace(all, caret: isFirstResponder ? caret : nil, undoName: "Move Done to Bottom")
@@ -2768,7 +2777,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// Every list's done items below the rest. Says whether any moved.
     @discardableResult
-    func moveAllDoneToBottom() -> Bool {
+    public func moveAllDoneToBottom() -> Bool {
         var all = rows
         guard OutlineEditing.moveAllDoneToBottom(&all) else { return false }
         replace(all, caret: isFirstResponder ? caret : nil, undoName: "Move Done to Bottom")
@@ -2968,9 +2977,9 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     /// Told when a picture in the note is chosen as its cover.
-    var onMakeCover: ((String) -> Void)?
+    public var onMakeCover: ((String) -> Void)?
     /// A row's Move to…: where to, asked for — then `moveRows(at:to:)`.
-    var onMoveRows: ((OutlineEditor, Int) -> Void)?
+    public var onMoveRows: ((OutlineEditor, Int) -> Void)?
 
     /// Rows and all under them on the clipboard, as Markdown standing on
     /// its own: each block's first row at the top level.
@@ -3022,7 +3031,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     }
 
     /// Whether a carousel is at a point in the editor.
-    func hasCarousel(at point: CGPoint) -> Bool { carousel(at: point) != nil }
+    public func hasCarousel(at point: CGPoint) -> Bool { carousel(at: point) != nil }
 
     @objc private func swipedCarousel(_ gesture: UISwipeGestureRecognizer) {
         guard let carousel = carousel(at: gesture.location(in: self)) else { return }
@@ -3068,11 +3077,11 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 
     /// As tall as its rows are at a width: not the empty line after the
     /// last one's break, which the caret never goes to.
-    func rowsHeight(width: CGFloat) -> CGFloat { measure(width).rows }
+    public func rowsHeight(width: CGFloat) -> CGFloat { measure(width).rows }
 
     /// How tall it is at a width — the empty line after the last row
     /// included — as its frame wants.
-    func fittingHeight(width: CGFloat) -> CGFloat { measure(width).fit }
+    public func fittingHeight(width: CGFloat) -> CGFloat { measure(width).fit }
 
     /// The last measurement, kept till the text or its look changes: laying
     /// a note out is the dearest thing done, and a sheet asks every note
@@ -3135,11 +3144,11 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         return (fit, rows)
     }
 
-    override var intrinsicContentSize: CGSize {
+    public override var intrinsicContentSize: CGSize {
         CGSize(width: UIView.noIntrinsicMetric, height: lastHeight)
     }
 
-    override func layoutSubviews() {
+    public override func layoutSubviews() {
         super.layoutSubviews()
         heightMayHaveChanged()
     }
@@ -3149,7 +3158,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
 /// floating glass, the note showing between: Aa and away at the ends of
 /// the main capsule, and over it two small ones, to move the row typed in,
 /// in and out, up and down. Aa turns the capsule to the words' tools.
-final class OutlineToolbar: UIInputView {
+public final class OutlineToolbar: UIInputView {
     private static let small: CGFloat = 32
     private static let main: CGFloat = 46
     private static let gap: CGFloat = 8
@@ -3185,47 +3194,63 @@ final class OutlineToolbar: UIInputView {
         return view
     }
 
-    init(editor: OutlineEditor) {
+    /// A button of the bar: its symbol, what it sends its target, and what it is called.
+    public struct Tool {
+        public var symbol: String
+        public var action: Selector
+        public var label: String
+
+        public init(_ symbol: String, _ action: Selector, _ label: String) {
+            self.symbol = symbol
+            self.action = action
+            self.label = label
+        }
+    }
+
+    /// The outline's: Prism's bar.
+    public convenience init(editor: OutlineEditor) {
+        self.init(target: editor, tools: [
+            Tool("rectangle.compress.vertical", #selector(OutlineEditor.toggleFoldHere), "Fold"),
+            Tool("checkmark.square", #selector(OutlineEditor.cycleChecklist), "Checklist"),
+            Tool("checkmark.circle", #selector(OutlineEditor.cycleTask), "Task"),
+            Tool("link", #selector(OutlineEditor.insertLink), "Link"),
+            Tool("clock", #selector(OutlineEditor.newTimeBlock), "New Time Block"),
+            Tool("mic", #selector(OutlineEditor.toggleDictation), "Dictate"),
+        ])
+    }
+
+    /// A bar for any text view: undo and redo, out and in, up and down over
+    /// the main capsule — its tools, or Aa's formatting — and Done. The
+    /// target answers each tool's action, and the outline's own: `outdent`,
+    /// `indent`, `moveUp`, `moveDown`, `undoChange`, `redoChange`, and
+    /// `makeBold` and the rest of the formatting it is given.
+    public init(target: UIResponder, tools toolItems: [Tool], formatting formattingItems: [Tool] = OutlineToolbar.formatting) {
         super.init(frame: CGRect(x: 0, y: 0, width: 400, height: Self.height), inputViewStyle: .default)
         backgroundColor = .clear
         let shifts = Self.stack([
-            ("decrease.indent", #selector(OutlineEditor.outdent), "Outdent"),
-            ("increase.indent", #selector(OutlineEditor.indent), "Indent"),
-        ], editor: editor, size: 14)
+            Tool("decrease.indent", #selector(OutlineEditor.outdent), "Outdent"),
+            Tool("increase.indent", #selector(OutlineEditor.indent), "Indent"),
+        ], target: target, size: 14)
         let moves = Self.stack([
-            ("arrow.up", #selector(OutlineEditor.moveUp), "Move Up"),
-            ("arrow.down", #selector(OutlineEditor.moveDown), "Move Down"),
-        ], editor: editor, size: 14)
+            Tool("arrow.up", #selector(OutlineEditor.moveUp), "Move Up"),
+            Tool("arrow.down", #selector(OutlineEditor.moveDown), "Move Down"),
+        ], target: target, size: 14)
         let undos = Self.stack([
-            ("arrow.uturn.backward", #selector(OutlineEditor.undoChange), "Undo"),
-            ("arrow.uturn.forward", #selector(OutlineEditor.redoChange), "Redo"),
-        ], editor: editor, size: 14)
+            Tool("arrow.uturn.backward", #selector(OutlineEditor.undoChange), "Undo"),
+            Tool("arrow.uturn.forward", #selector(OutlineEditor.redoChange), "Redo"),
+        ], target: target, size: 14)
         shift.contentView.addSubview(shifts)
         move.contentView.addSubview(moves)
         history.contentView.addSubview(undos)
         undo = undos.arrangedSubviews.first as? UIButton
         redo = undos.arrangedSubviews.last as? UIButton
-        for (stack, items) in [(tools, [
-            ("rectangle.compress.vertical", #selector(OutlineEditor.toggleFoldHere), "Fold"),
-            ("checkmark.square", #selector(OutlineEditor.cycleChecklist), "Checklist"),
-            ("checkmark.circle", #selector(OutlineEditor.cycleTask), "Task"),
-            ("link", #selector(OutlineEditor.insertLink), "Link"),
-            ("clock", #selector(OutlineEditor.newTimeBlock), "New Time Block"),
-            ("mic", #selector(OutlineEditor.toggleDictation), "Dictate"),
-        ]), (formatting, [
-            ("bold", #selector(OutlineEditor.makeBold), "Bold"),
-            ("italic", #selector(OutlineEditor.makeItalic), "Italic"),
-            ("strikethrough", #selector(OutlineEditor.makeStruck), "Strikethrough"),
-            ("highlighter", #selector(OutlineEditor.makeHighlighted), "Highlight"),
-            ("chevron.left.forwardslash.chevron.right", #selector(OutlineEditor.makeCode), "Code"),
-            ("number", #selector(OutlineEditor.cycleHeading), "Heading"),
-            ("text.quote", #selector(OutlineEditor.toggleQuote), "Quote"),
-        ])] as [(UIStackView, [(String, Selector, String)])] {
-            Self.fill(stack, items, editor: editor, size: 17)
+        for (stack, items) in [(tools, toolItems), (formatting, formattingItems)] {
+            Self.fill(stack, items, target: target, size: 17)
             capsule.contentView.addSubview(stack)
         }
-        fold = tools.arrangedSubviews.first as? UIButton
-        mic = tools.arrangedSubviews.last as? UIButton
+        let buttons = tools.arrangedSubviews.compactMap { $0 as? UIButton }
+        fold = buttons.first { $0.accessibilityLabel == "Fold" }
+        mic = buttons.first { $0.accessibilityLabel == "Dictate" }
         formatting.alpha = 0
         formatting.isHidden = true
 
@@ -3234,7 +3259,7 @@ final class OutlineToolbar: UIInputView {
         wordsButton.accessibilityLabel = "Formatting"
         wordsButton.addAction(UIAction { [weak self] _ in self?.toggleWords() }, for: .touchUpInside)
         words.contentView.addSubview(wordsButton)
-        let down = Self.button("keyboard.chevron.compact.down", #selector(UIResponder.resignFirstResponder), "Done", editor: editor, size: 17)
+        let down = Self.button(Tool("keyboard.chevron.compact.down", #selector(UIResponder.resignFirstResponder), "Done"), target: target, size: 17)
         away.contentView.addSubview(down)
 
         chips.showsHorizontalScrollIndicator = false
@@ -3249,33 +3274,44 @@ final class OutlineToolbar: UIInputView {
         autoresizingMask = .flexibleHeight
     }
 
+    /// The words' tools, behind Aa.
+    public static let formatting = [
+        Tool("bold", #selector(OutlineEditor.makeBold), "Bold"),
+        Tool("italic", #selector(OutlineEditor.makeItalic), "Italic"),
+        Tool("strikethrough", #selector(OutlineEditor.makeStruck), "Strikethrough"),
+        Tool("highlighter", #selector(OutlineEditor.makeHighlighted), "Highlight"),
+        Tool("chevron.left.forwardslash.chevron.right", #selector(OutlineEditor.makeCode), "Code"),
+        Tool("number", #selector(OutlineEditor.cycleHeading), "Heading"),
+        Tool("text.quote", #selector(OutlineEditor.toggleQuote), "Quote"),
+    ]
+
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
+    public required init?(coder: NSCoder) { fatalError() }
 
-    override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: Self.height) }
+    public override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: Self.height) }
 
-    private static func button(_ symbol: String, _ action: Selector, _ label: String, editor: OutlineEditor, size: CGFloat) -> UIButton {
+    private static func button(_ tool: Tool, target: UIResponder, size: CGFloat) -> UIButton {
         let button = UIButton(type: .system)
-        button.setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: size, weight: .regular)), for: .normal)
+        button.setImage(UIImage(systemName: tool.symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: size, weight: .regular)), for: .normal)
         button.tintColor = Ink.text
-        button.accessibilityLabel = label
-        button.addTarget(editor, action: action, for: .touchUpInside)
+        button.accessibilityLabel = tool.label
+        button.addTarget(target, action: tool.action, for: .touchUpInside)
         return button
     }
 
-    private static func fill(_ stack: UIStackView, _ items: [(String, Selector, String)], editor: OutlineEditor, size: CGFloat) {
+    private static func fill(_ stack: UIStackView, _ items: [Tool], target: UIResponder, size: CGFloat) {
         stack.axis = .horizontal
         stack.distribution = .fillEqually
-        for (symbol, action, label) in items { stack.addArrangedSubview(button(symbol, action, label, editor: editor, size: size)) }
+        for tool in items { stack.addArrangedSubview(button(tool, target: target, size: size)) }
     }
 
-    private static func stack(_ items: [(String, Selector, String)], editor: OutlineEditor, size: CGFloat) -> UIStackView {
+    private static func stack(_ items: [Tool], target: UIResponder, size: CGFloat) -> UIStackView {
         let stack = UIStackView()
-        fill(stack, items, editor: editor, size: size)
+        fill(stack, items, target: target, size: size)
         return stack
     }
 
-    override func layoutSubviews() {
+    public override func layoutSubviews() {
         super.layoutSubviews()
         container.frame = bounds
         let left = max(12, safeAreaInsets.left + 8), right = bounds.width - max(12, safeAreaInsets.right + 8)
@@ -3302,7 +3338,7 @@ final class OutlineToolbar: UIInputView {
     }
 
     /// Touches between the pieces: the note's, under them, not the bar's.
-    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    public override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
         return hit === self || hit === container || hit === container.contentView ? nil : hit
     }
@@ -3328,7 +3364,7 @@ final class OutlineToolbar: UIInputView {
 
     /// The microphone: lit red while listening — faint while ElevenLabs is
     /// asked — and plain again when it stops.
-    func showDictating(_ engine: Dictation.Engine?) {
+    public func showDictating(_ engine: Dictation.Engine?) {
         guard let mic else { return }
         mic.setImage(UIImage(systemName: engine == nil ? "mic" : "mic.fill",
                              withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)), for: .normal)
@@ -3337,13 +3373,13 @@ final class OutlineToolbar: UIInputView {
     }
 
     /// ↶ and ↷, dimmed when there is nothing to undo, or redo.
-    func showUndo(canUndo: Bool, canRedo: Bool) {
+    public func showUndo(canUndo: Bool, canRedo: Bool) {
         undo?.isEnabled = canUndo
         redo?.isEnabled = canRedo
     }
 
     /// Fold, for a row with children; Unfold, for one folded; dimmed, neither.
-    func showFold(folded: Bool, foldable: Bool) {
+    public func showFold(folded: Bool, foldable: Bool) {
         guard let fold else { return }
         fold.setImage(UIImage(systemName: folded ? "rectangle.expand.vertical" : "rectangle.compress.vertical",
                               withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)), for: .normal)
@@ -3353,13 +3389,21 @@ final class OutlineToolbar: UIInputView {
 
     /// Links to choose from, in the capsule in place of its tools — the
     /// first, which Return puts in, marked — or, with none, the tools again.
-    func show(_ candidates: [LinkSuggestions.Candidate], choose: @escaping (LinkSuggestions.Candidate) -> Void) {
+    public func show(_ candidates: [LinkSuggestions.Candidate], choose: @escaping (LinkSuggestions.Candidate) -> Void) {
+        show(chips: candidates.map { candidate in
+            (candidate.title, candidate.isDay ? "calendar" : candidate.title.hasPrefix("New “") ? "plus" : candidate.isTopic ? "number" : "doc.text")
+        }) { choose(candidates[$0]) }
+    }
+
+    /// Chips to choose from, each a title and its symbol, in the capsule in
+    /// place of its tools — the first, which Return puts in, marked — or,
+    /// with none, the tools again. Told which was chosen.
+    public func show(chips candidates: [(title: String, symbol: String)], choose: @escaping (Int) -> Void) {
         chipRow.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (i, candidate) in candidates.enumerated() {
             var configuration = UIButton.Configuration.filled()
             configuration.title = candidate.title
-            configuration.image = UIImage(systemName: candidate.isDay ? "calendar" : candidate.title.hasPrefix("New “") ? "plus"
-                                          : candidate.isTopic ? "number" : "doc.text",
+            configuration.image = UIImage(systemName: candidate.symbol,
                                           withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .medium))
             configuration.imagePadding = 5
             configuration.titleLineBreakMode = .byTruncatingTail
@@ -3372,7 +3416,7 @@ final class OutlineToolbar: UIInputView {
                 attributes.font = UIFont.systemFont(ofSize: 15, weight: i == 0 ? .semibold : .regular)
                 return attributes
             }
-            let button = UIButton(configuration: configuration, primaryAction: UIAction { _ in choose(candidate) })
+            let button = UIButton(configuration: configuration, primaryAction: UIAction { _ in choose(i) })
             button.accessibilityLabel = "Link to " + candidate.title
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -3390,7 +3434,7 @@ final class OutlineToolbar: UIInputView {
 extension OutlineEditor: UIEditMenuInteractionDelegate {
     /// Copy and Share, for the picture held; for a row held, what can be
     /// done to it.
-    func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration,
+    public func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration,
                              suggestedActions: [UIMenuElement]) -> UIMenu? {
         guard let id = configuration.identifier as? NSString else { return nil }
         if id == "link" { return linkMenu() }
@@ -3412,7 +3456,7 @@ extension OutlineEditor: UIEditMenuInteractionDelegate {
         return UIMenu(children: actions)
     }
 
-    func editMenuInteraction(_ interaction: UIEditMenuInteraction, targetRectFor configuration: UIEditMenuConfiguration) -> CGRect {
+    public func editMenuInteraction(_ interaction: UIEditMenuInteraction, targetRectFor configuration: UIEditMenuConfiguration) -> CGRect {
         guard let id = configuration.identifier as? NSString else { return .null }
         if id == "link" { return heldLinkFrame ?? .null }
         if id == "notelink" { return heldNoteLink?.frame ?? .null }
@@ -3423,16 +3467,16 @@ extension OutlineEditor: UIEditMenuInteractionDelegate {
 
 /// A long press that is only ever on a picture: anywhere else it fails as
 /// the finger comes down, and what waits on it goes on as if it were not there.
-final class PictureHold: UILongPressGestureRecognizer {
-    var isOnPicture: ((CGPoint) -> Bool)?
+public final class PictureHold: UILongPressGestureRecognizer {
+    public var isOnPicture: ((CGPoint) -> Bool)?
     /// Where the finger went down, in the view.
-    private(set) var downPoint: CGPoint?
+    public private(set) var downPoint: CGPoint?
 
     /// The finger it follows: others that come down while it is held —
     /// another, scrolling — are not its.
     private weak var finger: UITouch?
 
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+    public override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         if let finger, finger.phase != .ended, finger.phase != .cancelled {
             for touch in touches where touch !== finger { ignore(touch, for: event) }
             let own = touches.filter { $0 === finger }
@@ -3445,7 +3489,7 @@ final class PictureHold: UILongPressGestureRecognizer {
         if let touch = touches.first, isOnPicture?(touch.location(in: view)) != true { state = .failed }
     }
 
-    override func reset() {
+    public override func reset() {
         super.reset()
         finger = nil
     }
@@ -3453,8 +3497,8 @@ final class PictureHold: UILongPressGestureRecognizer {
 
 /// A ring whose rim fills, clockwise from the top, with the share of some
 /// checkboxes done — all done, whole, with a tick when there is room.
-enum ProgressRing {
-    static func draw(_ progress: Checkboxes.Progress, in rect: CGRect, lineWidth width: CGFloat, tick: Bool = true) {
+public enum ProgressRing {
+    public static func draw(_ progress: Checkboxes.Progress, in rect: CGRect, lineWidth width: CGFloat, tick: Bool = true) {
         let ring = rect.insetBy(dx: width / 2, dy: width / 2)
         let center = CGPoint(x: ring.midX, y: ring.midY)
         let radius = ring.width / 2
@@ -3487,7 +3531,7 @@ enum ProgressRing {
     }
 
     /// The ring as a picture, to put among words.
-    static func image(_ progress: Checkboxes.Progress, side: CGFloat, tick: Bool = true) -> UIImage {
+    public static func image(_ progress: Checkboxes.Progress, side: CGFloat, tick: Bool = true) -> UIImage {
         UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
             draw(progress, in: CGRect(x: 0, y: 0, width: side, height: side), lineWidth: 1.8, tick: tick)
         }
@@ -3496,25 +3540,25 @@ enum ProgressRing {
 
 /// The pictures Quick Look shows, and where in the note they grow from and
 /// go back to.
-final class PictureViewer: NSObject, QLPreviewControllerDataSource, QLPreviewControllerDelegate {
-    let files: [URL]
-    let frame: CGRect
-    weak var view: UIView?
+public final class PictureViewer: NSObject, QLPreviewControllerDataSource, QLPreviewControllerDelegate {
+    public let files: [URL]
+    public let frame: CGRect
+    public weak var view: UIView?
 
-    init(files: [URL], from frame: CGRect, in view: UIView) {
+    public init(files: [URL], from frame: CGRect, in view: UIView) {
         self.files = files
         self.frame = frame
         self.view = view
     }
 
-    func numberOfPreviewItems(in controller: QLPreviewController) -> Int { files.count }
+    public func numberOfPreviewItems(in controller: QLPreviewController) -> Int { files.count }
 
-    func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+    public func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
         files[index] as NSURL
     }
 
     /// Grown from the picture in the note, and gone back into it.
-    func previewController(_ controller: QLPreviewController, frameFor item: QLPreviewItem,
+    public func previewController(_ controller: QLPreviewController, frameFor item: QLPreviewItem,
                            inSourceView view: AutoreleasingUnsafeMutablePointer<UIView?>) -> CGRect {
         view.pointee = self.view
         return frame
@@ -3522,7 +3566,8 @@ final class PictureViewer: NSObject, QLPreviewControllerDataSource, QLPreviewCon
 
     /// Not marked up here: the picture is the note's, and a copy would go
     /// nowhere. Sharing it can.
-    func previewController(_ controller: QLPreviewController, editingModeFor previewItem: QLPreviewItem) -> QLPreviewItemEditingMode {
+    public func previewController(_ controller: QLPreviewController, editingModeFor previewItem: QLPreviewItem) -> QLPreviewItemEditingMode {
         .disabled
     }
 }
+#endif

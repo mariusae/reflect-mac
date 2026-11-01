@@ -1,6 +1,7 @@
 import UIKit
 import ReflectCore
 import PrismCore
+import PhoneUI
 
 /// Go to a note: typed for by name, or a day by any way of saying it —
 /// `friday`, `3 days ago`, `march 5` — whether it has a note yet or not.

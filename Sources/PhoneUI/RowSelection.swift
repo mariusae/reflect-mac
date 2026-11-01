@@ -1,3 +1,4 @@
+#if os(iOS)
 import UIKit
 import ReflectCore
 
@@ -6,17 +7,17 @@ import ReflectCore
 /// foot, what is done to them all: done, out, in, moved, deleted. ✕, or
 /// a change made, and the choosing is over.
 extension OutlineEditor {
-    final class RowChoice {
-        var rows: Set<Int>
-        let tints = UIView()
-        let bar = UIVisualEffectView(effect: UIGlassEffect())
-        init(rows: Set<Int>) { self.rows = rows }
+    public final class RowChoice {
+        public var rows: Set<Int>
+        public let tints = UIView()
+        public let bar = UIVisualEffectView(effect: UIGlassEffect())
+        public init(rows: Set<Int>) { self.rows = rows }
     }
 
-    var isChoosingRows: Bool { rowChoice != nil }
+    public var isChoosingRows: Bool { rowChoice != nil }
 
     /// Choosing begun, with a row chosen.
-    func beginChoosingRows(with index: Int) {
+    public func beginChoosingRows(with index: Int) {
         guard rowChoice == nil, rows.indices.contains(index) else { return }
         if isFirstResponder { _ = resignFirstResponder() }
         let choice = RowChoice(rows: [index])
@@ -29,7 +30,7 @@ extension OutlineEditor {
     }
 
     /// A row tapped while choosing: in, or out.
-    func toggleChosen(_ index: Int) {
+    public func toggleChosen(_ index: Int) {
         guard let choice = rowChoice else { return }
         if choice.rows.contains(index) { choice.rows.remove(index) } else { choice.rows.insert(index) }
         UISelectionFeedbackGenerator().selectionChanged()
@@ -37,7 +38,7 @@ extension OutlineEditor {
         showChosen()
     }
 
-    func endChoosingRows() {
+    public func endChoosingRows() {
         guard let choice = rowChoice else { return }
         rowChoice = nil
         choice.tints.removeFromSuperview()
@@ -45,7 +46,7 @@ extension OutlineEditor {
     }
 
     /// The rows chosen, tinted.
-    func showChosen() {
+    public func showChosen() {
         guard let choice = rowChoice else { return }
         choice.tints.subviews.forEach { $0.removeFromSuperview() }
         choice.tints.frame = bounds
@@ -60,7 +61,7 @@ extension OutlineEditor {
 
     /// Each chosen row with those under it, top to bottom — those inside
     /// another chosen row's left to it.
-    var chosenBlocks: [Range<Int>] {
+    public var chosenBlocks: [Range<Int>] {
         guard let choice = rowChoice else { return [] }
         let all = rows
         var blocks: [Range<Int>] = []
@@ -141,3 +142,4 @@ extension OutlineEditor {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 }
+#endif

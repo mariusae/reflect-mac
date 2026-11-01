@@ -1,6 +1,7 @@
 import UIKit
 import ReflectCore
 import PrismCore
+import PhoneUI
 
 /// What a sheet shows: a note — what links to it at its end — or the
 /// tasks, or what a search found.

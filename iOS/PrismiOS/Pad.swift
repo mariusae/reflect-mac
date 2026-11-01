@@ -1,6 +1,7 @@
 import UIKit
 import ReflectCore
 import PrismCore
+import PhoneUI
 
 // The iPad's own: wide, a sidebar of the lens's list on glass at the left,
 // the note the rest of the height — the Mac's, by touch. Narrow, as the

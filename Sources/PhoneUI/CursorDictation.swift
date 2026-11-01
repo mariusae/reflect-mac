@@ -1,3 +1,4 @@
+#if os(iOS)
 import UIKit
 import PrismCore
 
@@ -6,7 +7,7 @@ import PrismCore
 /// stopped: the keyboard bar's microphone. Typed out as it comes, each
 /// word lit as it is written, a microphone beside the caret meanwhile.
 @MainActor
-final class CursorDictation {
+public final class CursorDictation {
     private weak var view: UITextView?
     private let dictation = Dictation()
     /// Where what is heard stands: at the caret, as long as what is heard so far.
@@ -16,7 +17,7 @@ final class CursorDictation {
     private var typist: DictationTypist!
     private let glow: DictationGlow
 
-    init(view: UITextView) {
+    public init(view: UITextView) {
         self.view = view
         range = view.selectedRange
         let text = view.textStorage.mutableString
@@ -27,19 +28,19 @@ final class CursorDictation {
         glow.listen(at: range.location)
     }
 
-    func start(keyterms: [String], engine: @escaping (Dictation.Engine) -> Void) throws {
+    public func start(keyterms: [String], engine: @escaping (Dictation.Engine) -> Void) throws {
         dictation.onEngine = engine
         try dictation.start(keyterms: keyterms) { [weak self] heard in self?.typist.type(heard) }
     }
 
     /// Stopped: the last of it written down, and put in its place.
-    func finish() async {
+    public func finish() async {
         typist.flush(await dictation.stop())
         glow.end()
         view?.selectedRange = NSRange(location: NSMaxRange(range), length: 0)
     }
 
-    func cancel() {
+    public func cancel() {
         dictation.cancel()
         typist.flush("")
         glow.end(keepingLight: false)
@@ -60,3 +61,4 @@ final class CursorDictation {
         glow.listen(at: NSMaxRange(range))
     }
 }
+#endif

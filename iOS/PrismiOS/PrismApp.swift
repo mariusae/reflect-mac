@@ -1,6 +1,7 @@
 import SwiftUI
 import ReflectCore
 import ReflectGit2
+import PhoneUI
 
 @main
 struct PrismApp: App {
