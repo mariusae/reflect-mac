@@ -78,6 +78,11 @@ extension OutlineEditor {
             ("checkmark.circle", "Done", { [weak self] in self?.markChosenDone() }),
             ("decrease.indent", "Outdent", { [weak self] in self?.shiftChosen(in: false) }),
             ("increase.indent", "Indent", { [weak self] in self?.shiftChosen(in: true) }),
+            ("doc.on.doc", "Copy", { [weak self] in
+                guard let self else { return }
+                copyRows(chosenBlocks)
+                endChoosingRows()
+            }),
             ("arrow.right.doc.on.clipboard", "Move to…", { [weak self] in
                 guard let self, let first = rowChoice?.rows.min() else { return }
                 onMoveRows?(self, first)

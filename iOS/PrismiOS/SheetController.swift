@@ -371,6 +371,9 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     /// While + is held: the row being said, first in the note — its words
     /// as heard so far, replaced as more comes — and the rows as they were.
     private var dictated: (row: Int, before: [Row])?
+    /// Its words typed out as they come, each lit as it is written.
+    private var dictatedTypist: DictationTypist?
+    private var dictatedGlow: DictationGlow?
 
     /// A row made first in the note, for what is about to be said.
     func beginDictatedRow() {
@@ -385,18 +388,33 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             editor.replace(rows, caret: nil, registersUndo: false)
         }
         dictated = (at, before)
+        dictatedTypist = DictationTypist { [weak self] text in self?.writeDictated(text) }
+        dictatedGlow = DictationGlow(on: editor)
         relayout()
+        let ranges = editor.paragraphRanges
+        dictatedGlow?.listen(at: ranges.indices.contains(at) ? ranges[at].location : nil)
         scroll.setContentOffset(CGPoint(x: 0, y: -scroll.adjustedContentInset.top), animated: true)
     }
 
     /// What has been heard so far, in its row.
     func showDictated(_ text: String) {
+        dictatedTypist?.type(text)
+    }
+
+    private func writeDictated(_ text: String) {
         guard let dictated, let editor = noteBlocks.first?.editor else { return }
         var rows = editor.rows
         guard rows.indices.contains(dictated.row), rows[dictated.row].text != text else { return }
+        let was = rows[dictated.row].text
         rows[dictated.row].text = text
         editor.replace(rows, caret: nil, registersUndo: false)
         relayout()
+        let ranges = editor.paragraphRanges
+        guard ranges.indices.contains(dictated.row) else { return }
+        let start = ranges[dictated.row].location
+        let same = was.commonPrefix(with: text).utf16.count
+        dictatedGlow?.wrote(NSRange(location: start + same, length: text.utf16.count - same))
+        dictatedGlow?.listen(at: start + text.utf16.count)
     }
 
     /// Let go: kept — written, undone as one — or, cancelled or nothing
@@ -404,6 +422,10 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     func endDictatedRow(_ text: String?) {
         guard let dictated, let block = noteBlocks.first else { return }
         self.dictated = nil
+        dictatedTypist?.stop()
+        dictatedTypist = nil
+        dictatedGlow?.end(keepingLight: text?.isEmpty == false)
+        dictatedGlow = nil
         let editor = block.editor
         var rows = editor.rows
         editor.replace(dictated.before, caret: nil, registersUndo: false)

@@ -265,12 +265,16 @@ final class QuickNoteController: NSObject, NSTextViewDelegate {
         atCursor = dictating
         Task { @MainActor in
             guard await Dictation.allowed(), self.atCursor === dictating else {
-                if self.atCursor === dictating { self.atCursor = nil }
+                if self.atCursor === dictating {
+                    dictating.cancel()
+                    self.atCursor = nil
+                }
                 return
             }
             do {
                 try dictating.start(keyterms: Dictation.terms(session.index))
             } catch {
+                dictating.cancel()
                 self.atCursor = nil
                 NSSound.beep()
             }

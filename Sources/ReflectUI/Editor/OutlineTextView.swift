@@ -568,20 +568,27 @@ package final class OutlineTextView: NSTextView {
     /// the descender of the type it stands in, not the height of the line,
     /// and beside hidden markup, a tail to say which side of it it is on.
     package func updateCaret() {
-        guard let layout = layoutManager, let container = textContainer, let storage = textStorage,
-              selectedRows == nil, selectedRange().length == 0, window?.firstResponder === self,
-              window?.isKeyWindow == true || Self.scripted, storage.length > 0 else {
+        guard !hidesCaret, selectedRows == nil, selectedRange().length == 0, window?.firstResponder === self,
+              window?.isKeyWindow == true || Self.scripted, let (bar, tail) = caretBar(at: selectedRange().location) else {
             caret.hide()
             return
         }
-        let location = selectedRange().location
+        caret.show(bar: bar, tail: tail)
+    }
+
+    /// While words are said into the note, the caret is another's to draw.
+    package var hidesCaret = false {
+        didSet { if hidesCaret != oldValue { updateCaret() } }
+    }
+
+    /// The caret's bar before `location`, and its tail beside hidden markup.
+    package func caretBar(at location: Int) -> (bar: NSRect, tail: NSRect?)? {
+        guard let layout = layoutManager, let container = textContainer, let storage = textStorage,
+              storage.length > 0, location <= storage.length else { return nil }
         var count = 0
         guard let rects = layout.rectArray(forCharacterRange: NSRange(location: location, length: 0),
                                            withinSelectedCharacterRange: NSRange(location: location, length: 0),
-                                           in: container, rectCount: &count), count > 0 else {
-            caret.hide()
-            return
-        }
+                                           in: container, rectCount: &count), count > 0 else { return nil }
         let x = rects[0].minX + textContainerOrigin.x
         let fragmentRect = rects[0].offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
         // The caret's line is the one its rectangle is on: at the end of a
@@ -597,7 +604,7 @@ package final class OutlineTextView: NSTextView {
             let length = max(4, (font.pointSize * 0.3).rounded())
             tail = NSRect(x: side == .right ? bar.maxX : bar.minX - length, y: bar.maxY - 2, width: length, height: 2)
         }
-        caret.show(bar: bar, tail: tail)
+        return (bar, tail)
     }
 
     /// A script drives an app that is not in front; its caret is shown all

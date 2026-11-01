@@ -1358,6 +1358,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         panGestureRecognizer.isEnabled = false
         bounces = false
         scrollsToTop = false
+        contentInsetAdjustmentBehavior = .never
         showsVerticalScrollIndicator = false
         showsHorizontalScrollIndicator = false
         backgroundColor = .clear
@@ -1630,9 +1631,21 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         }
     }
 
+    /// While words are said into the note, the caret is `DictationGlow`'s
+    /// to draw: the system's kept where it is, but no wider than nothing.
+    var hidesCaret = false {
+        didSet { if hidesCaret != oldValue { setNeedsLayout() } }
+    }
+
+    override func caretRect(for position: UITextPosition) -> CGRect {
+        var rect = typeCaretRect(for: position)
+        if hidesCaret { rect.size.width = 0 }
+        return rect
+    }
+
     /// The caret as tall as its type: a time block's last line stands as
     /// tall as the block lasts, and the caret would reach down through it.
-    override func caretRect(for position: UITextPosition) -> CGRect {
+    private func typeCaretRect(for position: UITextPosition) -> CGRect {
         var rect = super.caretRect(for: position)
         let offset = self.offset(from: beginningOfDocument, to: position)
         guard textStorage.length > 0, PhoneTimeSlot.any(in: textStorage) else { return rect }
@@ -1718,6 +1731,24 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     func beginRowUndoGroup() { rowUndo.beginUndoGrouping() }
     func endRowUndoGroup() { rowUndo.endUndoGrouping() }
 
+    // MARK: Never scrolled within
+
+    // The editor is as tall as its text and the sheet does the scrolling:
+    // left to itself, a text view scrolls its own text to show the caret
+    // — while its height has yet to catch up with what was written, say —
+    // and with no finger to scroll it back, the top of the note was lost
+    // for good above the sheet's.
+    override var contentOffset: CGPoint {
+        get { super.contentOffset }
+        set { super.contentOffset = .zero }
+    }
+
+    override func setContentOffset(_ contentOffset: CGPoint, animated: Bool) {
+        super.setContentOffset(.zero, animated: false)
+    }
+
+    override func scrollRectToVisible(_ rect: CGRect, animated: Bool) {}
+
     // MARK: Dictating at the caret
 
     /// The keyboard bar's microphone: listening — what is heard written at
@@ -1736,7 +1767,10 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         Task { @MainActor in
             guard await Dictation.allowed(), cursorDictation === dictating else {
-                if cursorDictation === dictating { cursorDictation = nil }
+                if cursorDictation === dictating {
+                    dictating.cancel()
+                    cursorDictation = nil
+                }
                 toolbar?.showDictating(nil)
                 return
             }
@@ -1746,6 +1780,7 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
                     self?.toolbar?.showDictating(engine)
                 }
             } catch {
+                dictating.cancel()
                 cursorDictation = nil
                 toolbar?.showDictating(nil)
             }
@@ -2551,6 +2586,10 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
                 self?.showLater(later, forRow: index)
             })
         }
+        actions.append(UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+            guard let self else { return }
+            copyRows([OutlineEditing.block(rows, index..<(index + 1))])
+        })
         if isEditable, onMoveRows != nil {
             actions.append(UIAction(title: "Move to…", image: UIImage(systemName: "arrow.right.doc.on.clipboard")) { [weak self] _ in
                 guard let self else { return }
@@ -2932,6 +2971,16 @@ final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecognizerDe
     var onMakeCover: ((String) -> Void)?
     /// A row's Move to…: where to, asked for — then `moveRows(at:to:)`.
     var onMoveRows: ((OutlineEditor, Int) -> Void)?
+
+    /// Rows and all under them on the clipboard, as Markdown standing on
+    /// its own: each block's first row at the top level.
+    func copyRows(_ blocks: [Range<Int>]) {
+        let all = rows
+        let taken = blocks.flatMap { RowMove.detached(Array(all[$0])) }
+        guard !taken.isEmpty else { return }
+        UIPasteboard.general.string = OutlineMarkdown.serialize(Outline(rows: taken))
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
 
     private func copyPicture(_ file: URL) {
         guard let data = try? Data(contentsOf: file) else { return }
