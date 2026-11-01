@@ -688,9 +688,13 @@ package final class OutlineTextView: NSTextView {
         // The caret is `CaretView`'s to draw.
     }
 
+    /// Told when the caret comes in, and when it leaves.
+    package var onFirstResponderChange: ((Bool) -> Void)?
+
     package override func becomeFirstResponder() -> Bool {
         needsDisplay = true
         let became = super.becomeFirstResponder()
+        if became { onFirstResponderChange?(true) }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             updateCaret()
@@ -706,6 +710,7 @@ package final class OutlineTextView: NSTextView {
         needsDisplay = true
         let resigned = super.resignFirstResponder()
         if resigned {
+            onFirstResponderChange?(false)
             caret.hide()
             endLinkCompletion()
             // Left: an address shown whole is shortened again.

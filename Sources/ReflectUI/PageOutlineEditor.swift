@@ -15,6 +15,11 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     public var onOpenURL: ((URL) -> Void)?
     /// Told when the height it needs changes.
     public var onHeightChange: (() -> Void)?
+    /// Told when the caret comes into the editor, and when it leaves.
+    public var onFocusChange: ((Bool) -> Void)? {
+        get { editor.onFirstResponderChange }
+        set { editor.onFirstResponderChange = newValue }
+    }
 
     private let editor: OutlineTextView
     /// What the editor does not show — a body's trailing gap — kept as it was.
@@ -74,6 +79,14 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     public func focus() {
         window?.makeFirstResponder(editor)
         editor.enter(from: .bottom, x: .greatestFiniteMagnitude, scrolling: false)
+    }
+
+    /// Whether the caret is in it.
+    public var isFocused: Bool { window?.firstResponder === editor }
+
+    /// The caret taken out.
+    public func unfocus() {
+        if isFocused { window?.makeFirstResponder(nil) }
     }
 
     // MARK: Size
