@@ -293,6 +293,34 @@ final class Session {
         change(path, undoName: undoName) { Frontmatter.setting(key, to: value, in: $0) }
     }
 
+    // MARK: Related notes
+
+    /// The name a relation writes for a note: its title, a day's date.
+    private func relationName(_ path: String) -> String {
+        index.entry(path)?.title ?? GraphPaths.day(fromDailyPath: path)?.description ?? name(of: path).title
+    }
+
+    /// Every name a note answers to: for unrelating it, however it was named.
+    private func names(_ path: String) -> [String] {
+        guard let entry = entry(path) else { return [relationName(path)] }
+        return [entry.title] + entry.aliases + (entry.day.map { [$0.description] } ?? [])
+    }
+
+    /// Two notes related, written in the first's frontmatter `related:`.
+    func relate(_ path: String, to other: String) {
+        guard other != path, !index.related(to: path).contains(where: { $0.path == other }) else { return }
+        change(path, undoName: "Relate") { Related.adding(relationName(other), to: $0) }
+    }
+
+    /// Two notes related no longer: taken out of whichever's frontmatter names the other.
+    func unrelate(_ path: String, from other: RelatedNote) {
+        if other.isOwn {
+            change(path, undoName: "Unrelate") { Related.removing([other.name] + (other.path.map(names) ?? []), from: $0) }
+        } else if let otherPath = other.path {
+            change(otherPath, undoName: "Unrelate") { Related.removing(names(path), from: $0) }
+        }
+    }
+
     func entry(_ path: String) -> NoteEntry? {
         index.entry(path) ?? (graph.exists(path: path) ? NoteIndex.entry(path: path, source: graph.read(path: path) ?? "") : nil)
     }

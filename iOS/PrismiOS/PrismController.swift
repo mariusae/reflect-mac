@@ -197,6 +197,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             self?.chooseWhereToMove(editor, index, from: from)
         }
         sheet.onChromeHidden = { [weak self] hidden in self?.setChromeHidden(hidden) }
+        sheet.onRelate = { [weak self] path in self?.chooseRelated(for: path) }
         return sheet
     }
 
@@ -1164,6 +1165,27 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
 
     /// Where a row goes, asked for as Go to asks — a note, a day — then the
     /// row and those under it moved there.
+    /// Another note to relate one to, asked for as Go to asks — a note, a day.
+    private func chooseRelated(for path: String) {
+        let finder = FinderController(store: store)
+        finder.prompt = "Relate to a note or a day"
+        finder.offersSearch = false
+        finder.onChoose = { [weak self] place in
+            guard let self else { return }
+            switch place {
+            case .day(let day): store.relate(path, to: GraphPaths.dailyPath(for: day))
+            case .note(let note): store.relate(path, to: note)
+            case .search: return
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        }
+        if let sheet = finder.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+        }
+        topPresenter.present(finder, animated: true)
+    }
+
     private func chooseWhereToMove(_ editor: OutlineEditor, _ index: Int, from: String) {
         let finder = FinderController(store: store)
         finder.prompt = "Move to a note or a day"

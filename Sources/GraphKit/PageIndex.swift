@@ -764,6 +764,17 @@ public final class PageIndex: @unchecked Sendable {
         Set((outgoing[title] ?? []).compactMap { self.title(for: $0) })
     }
 
+    /// The pages relating themselves to a page — naming it in their
+    /// frontmatter `related:` — by title. Those it relates itself to are
+    /// its own `note.related`.
+    public func relating(to title: String) -> [String] {
+        guard let entry = entries[title] else { return [] }
+        let keys = Set(entry.names.map(NoteIndex.foldKey))
+        return entries.values.filter { other in
+            other.page.title != title && other.note.related.contains { keys.contains(NoteIndex.foldKey($0)) }
+        }.map(\.page.title).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
     /// The pages linking to a page by any name it answers to.
     public func backlinks(to title: String) -> [String] {
         let names = entries[title]?.names ?? [title]

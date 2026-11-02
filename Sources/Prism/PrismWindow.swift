@@ -193,6 +193,7 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         pane.onGoTo = { [weak self] pane, view in self?.openCommandBar("", from: view) }
         pane.onStatus = { [weak self] view in self?.showStatusMenu(from: view) }
         pane.onRead = { [weak self] pane in self?.toggleReader(beside: pane) }
+        pane.onRelate = { [weak self] pane in self?.chooseRelated(for: pane.ref.path) }
         root.addSubview(pane, positioned: .below, relativeTo: listGlass)
         panes.append(pane)
         return pane
@@ -544,6 +545,23 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             editor.moveRows(at: index, named: name) { rows, undo in self.session.add(rows, to: place.path, undo: undo) }
         }
         openCommandBar("")
+    }
+
+    /// Another note to relate one to, asked in the bar as Go to asks.
+    func chooseRelated(for path: String) {
+        commandBar.placeholder = "Relate to a note or a day"
+        commandBar.hintText = "↩ Relate"
+        commandChoice = { [weak self] place in
+            guard let self, place.row == nil, place.path != path else { return NSSound.beep() }
+            session.relate(path, to: place.path)
+        }
+        openCommandBar("")
+    }
+
+    /// ⇧⌘L: the note in front related to another.
+    @objc func relateNote(_ sender: Any?) {
+        guard let note = menuNote else { return NSSound.beep() }
+        chooseRelated(for: note.path)
     }
 
     /// A note chosen in the list: opened where it was found — at the task,
@@ -1031,6 +1049,8 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
             return activePane.ref.day != nil || GraphPaths.week(fromWeeklyPath: activePane.place.path) != nil
         case #selector(toggleInbox(_:)):
             item.title = note?.isInInbox == true ? "Take Out of Inbox" : "Add to Inbox"
+            return note != nil
+        case #selector(relateNote(_:)):
             return note != nil
         case #selector(togglePinned(_:)):
             item.title = note?.pin != nil ? "Unpin" : "Pin"

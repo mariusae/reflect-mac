@@ -47,6 +47,14 @@ address written out bare also offers Use Title, which puts
 View, or offers to make it when there is no such note. Links in a note marked
 `private: true` are never looked up.
 
+Notes can be related without a link in their text: Note ▸ Relate To… (⌃⌘L),
+or the + under a note's **Related**, chooses another, and its name goes in the
+note's frontmatter `related:` list. A relation goes both ways — the other note
+lists this one too, with ↩ — and each shows as a pill under the note, before
+what links to it; a click opens it (⌘-click beside, a tap on the phone), its
+menu (a long press on the phone) unrelates it, from whichever note has it
+written. Weft reads and writes the same list.
+
 Typing `[[` in a note brings up the chooser's own search, under the caret, for
 the words that follow: ↑ and ↓ choose, Return or Tab puts in `[[Title]]` (or
 `[[2026-09-24]]` for a day), and Escape leaves what is typed as it is.

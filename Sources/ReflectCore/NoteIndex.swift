@@ -32,6 +32,10 @@ public struct NoteEntry: Equatable, Sendable {
     /// Whether it is a template — frontmatter `template: true` — new notes
     /// made from, or put into a note.
     public var isTemplate = false
+    /// The notes it is related to without a link in its text — frontmatter
+    /// `related:`, a list of names — as written. A relation goes both ways:
+    /// the other note is related to this one too.
+    public var related: [String] = []
 
     public enum Pin: Equatable, Sendable, Comparable {
         case order(Double)
@@ -244,7 +248,8 @@ public final class NoteIndex: @unchecked Sendable {
         return NoteEntry(path: path, title: title, aliases: aliases, day: day, modified: modified,
                          isPrivate: flag("private"), titleIsHeading: titleIsHeading,
                          pin: pin(frontmatter.scalar("pinned")), tags: tags(in: body), isTopic: flag("topic"),
-                         isInInbox: flag("inbox"), cover: NoteCover.source(frontmatter), isTemplate: flag("template"))
+                         isInInbox: flag("inbox"), cover: NoteCover.source(frontmatter), isTemplate: flag("template"),
+                         related: Related.names(in: frontmatter))
     }
 
     /// Reflect's reading of `pinned:`: `true` (or yes, on, 1) pins, a
@@ -612,8 +617,7 @@ public struct Frontmatter {
                   !line.hasPrefix(" ") else { continue }
             let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
             if value.hasPrefix("[") && value.hasSuffix("]") {
-                return value.dropFirst().dropLast().split(separator: ",")
-                    .map { Self.unquote($0.trimmingCharacters(in: .whitespaces)) }.filter { !$0.isEmpty }
+                return Self.flowItems(value.dropFirst().dropLast()).map(Self.unquote).filter { !$0.isEmpty }
             }
             if !value.isEmpty { return [Self.unquote(value)] }
             var items: [String] = []
@@ -657,9 +661,44 @@ public struct Frontmatter {
     }
 
     static func unquote(_ value: String) -> String {
-        if value.count >= 2, let first = value.first, first == "\"" || first == "'", value.last == first {
-            return String(value.dropFirst().dropLast())
+        guard value.count >= 2, let first = value.first, first == "\"" || first == "'", value.last == first else { return value }
+        let body = String(value.dropFirst().dropLast())
+        if first == "'" { return body.replacingOccurrences(of: "''", with: "'") }
+        // A double-quoted value's escapes: `\"` and `\\`, as weft writes them.
+        var result = ""
+        var escaped = false
+        for character in body {
+            if escaped {
+                result.append(character == "n" ? "\n" : character)
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else {
+                result.append(character)
+            }
         }
-        return value
+        return result
+    }
+
+    /// A flow list's items, `a, "b, c", 'd'`: split at the commas outside quotes.
+    static func flowItems(_ text: Substring) -> [String] {
+        var items: [String] = []
+        var current = ""
+        var quote: Character?
+        var escaped = false
+        for character in text {
+            if let open = quote {
+                current.append(character)
+                if escaped { escaped = false } else if character == "\\" && open == "\"" { escaped = true } else if character == open { quote = nil }
+            } else if character == "," {
+                items.append(current.trimmingCharacters(in: .whitespaces))
+                current = ""
+            } else {
+                if (character == "\"" || character == "'") && current.trimmingCharacters(in: .whitespaces).isEmpty { quote = character }
+                current.append(character)
+            }
+        }
+        items.append(current.trimmingCharacters(in: .whitespaces))
+        return items
     }
 }

@@ -534,6 +534,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
         submenu("Note", [
             item("Add to Inbox", #selector(PrismWindow.toggleInbox(_:)), "i", [.command, .shift]),
             item("Pin", #selector(PrismWindow.togglePinned(_:)), "p", [.command, .shift]),
+            item("Relate To…", #selector(PrismWindow.relateNote(_:)), "l", [.command, .control]),
             {
                 let topic = item("Topic", #selector(PrismWindow.toggleTopic(_:)))
                 topic.subtitle = "Marked #, and offered first when linking"

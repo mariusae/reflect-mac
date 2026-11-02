@@ -35,6 +35,8 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     var onFlag: ((String, String, String?) -> Void)?
     /// How many notes link to the note shown, once found: its bar's count.
     var onLinkedCount: ((Int) -> Void)?
+    /// Related's +: another note to relate this one to, asked for.
+    var onRelate: ((String) -> Void)?
     private(set) var linkedCount: Int?
     /// The notes linking here, as last found: the newest first.
     private(set) var linkedPaths: [String] = []
@@ -642,6 +644,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
 
     private var carriedShown: [String] = []
     private var mentionsShown: [String] = []
+    private var relatedShown: [RelatedNote]?
 
     /// A note's: the notes that name it without a link, the rows that do.
     private func mentioned(in path: String, done: @escaping ([(path: String, slices: [NoteSlice], editable: Bool)]) -> Void) {
@@ -683,10 +686,34 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         }
         let carriedNow = carried.flatMap { run in run.slices.map { "\(run.path)#\($0.start)#\($0.rows.first?.text ?? "")" } }
         let mentionsNow = mentions.flatMap { run in run.slices.map { "\(run.path)#\($0.start)#\($0.rows.first?.text ?? "")" } }
-        guard sources != self.linkedShown || carriedNow != self.carriedShown || mentionsNow != self.mentionsShown || self.blocks.count == 1 else { return }
+        let relatedNow = store.index?.related(to: path) ?? []
+        guard sources != self.linkedShown || carriedNow != self.carriedShown || mentionsNow != self.mentionsShown || relatedNow != self.relatedShown
+                || self.blocks.count == 1 else { return }
         self.linkedShown = sources
         self.carriedShown = carriedNow
         self.mentionsShown = mentionsNow
+        self.relatedShown = relatedNow
+        // Related without a link, under the note: always there for a note, to add one.
+        var related: [SheetBlock] = []
+        if !relatedNow.isEmpty || GraphPaths.day(fromDailyPath: path) == nil {
+            let block = RelatedSheetBlock(relatedNow, metrics: self.metrics)
+            block.onOpen = { [weak self] other in
+                guard let self, let target = other.path ?? store.note(titled: other.name) else { return }
+                saveAll()
+                onOpen?(target, nil)
+            }
+            block.onUnrelate = { [weak self] other in
+                guard let self else { return }
+                saveAll()
+                store.unrelate(path, from: other)
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+            block.onAdd = { [weak self] in
+                self?.saveAll()
+                self?.onRelate?(path)
+            }
+            related.append(block)
+        }
         // Still open from the days before: a head over them, on cards as what links here is.
         let still: [SheetBlock] = carried.isEmpty ? [] : [HeadBlock(title: "Still Open", kicker: nil, metrics: self.metrics, isGroup: true)]
             + self.sliceBlocks(carried, asCard: true)
@@ -714,7 +741,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             block.onMeeting = { [weak self] event in self?.onMeeting?(event) }
             meetings.append(block)
         }
-        self.setBlocks(note: path, after: meetings + still + after + named)
+        self.setBlocks(note: path, after: related + meetings + still + after + named)
     }
 
     /// To what links here, at the note's end.

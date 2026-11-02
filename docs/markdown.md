@@ -32,6 +32,8 @@ aliases: [Atlas]
 tags: [Projects]
 wiki: true
 status: active
+related:
+  - Ada Lovelace
 ---
 # Project Atlas
 
@@ -51,6 +53,12 @@ status: active
 - **Flags**: `private` (never shown, or named in a commit), `pinned`
   (`true`, or a number for its place), `inbox`, `topic`, `template`,
   `cover` (a picture's path), all as Prism reads them.
+- **related**: other pages this one is related to without a link in its
+  text — a list of their names (a title, an alias, a date), plain or as
+  `[[links]]`. A relation goes both ways: the other page shows it too,
+  though only this one has it written. Prism and Weft list a page's
+  relations under it, both ways, and take one away from whichever page
+  has it written. Prism writes them an item a line; either form reads.
 - **wiki**: `wiki: true` marks a page as part of the wiki — canonical, kept
   up, an evolving piece of knowledge — where other notes may be passing or
   throwaway. It changes nothing about the file; apps may show and gather

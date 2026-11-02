@@ -31,6 +31,8 @@ final class NotePane: NSView, OutlineTextViewNavigator {
     var onStatus: ((NSView) -> Void)?
     /// A link note's globe clicked: its page opened beside it, or closed.
     var onRead: ((NotePane) -> Void)?
+    /// Related's +: another note to relate this one to, asked for.
+    var onRelate: ((NotePane) -> Void)?
 
     private let chrome = PaneChrome()
     /// Under the floating controls, once anything has gone up under them: the page fading out.
@@ -48,6 +50,9 @@ final class NotePane: NSView, OutlineTextViewNavigator {
     /// Today's tasks still open from the days before, as last shown.
     private var shownCarried: [String] = []
     private var shownMentions: [String] = []
+    /// The notes related to this one, as last shown.
+    private var relatedBlock: RelatedBlock?
+    private var shownRelated: [RelatedNote]?
     private var mentionsHeading: ColumnHeading?
     /// Over today's note: its meetings.
     private var meetings: MeetingsBlock?
@@ -330,7 +335,9 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         let carriedNow = carried.flatMap { group in group.tasks.map { "\(group.path)#\($0.ordinal)#\($0.text)" } }
         let mentions = ref.day == nil ? session.index.mentions(of: ref.path) : []
         let meetingsWanted = ref.day == .today && MeetingsBlock.wanted
+        let related = session.index.related(to: ref.path)
         if sources == shownSources, carriedNow == shownCarried, mentions == shownMentions, meetingsWanted == (meetings != nil),
+           related == shownRelated,
            !linked.isEmpty || (sources?.isEmpty != false && carried.isEmpty && mentions.isEmpty) { return }
         // Not while typed in there: once the keyboard leaves.
         if isTypingInLinked {
@@ -348,7 +355,29 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         shownSources = sources
         shownCarried = carriedNow
         shownMentions = mentions
+        shownRelated = related
         var blocks: [ColumnBlock] = [note]
+        // Related without a link, under the note: always there for a note, to add one.
+        relatedBlock?.removeFromSuperview()
+        relatedBlock = nil
+        if !related.isEmpty || ref.day == nil {
+            let block = RelatedBlock(related, metrics: session.metrics)
+            block.onOpen = { [weak self] other, beside in
+                guard let self, let path = other.path ?? session.note(titled: other.name) else { return }
+                onOpenPath?(path, self, beside)
+            }
+            block.onUnrelate = { [weak self] other in
+                guard let self else { return }
+                session.unrelate(ref.path, from: other)
+            }
+            block.onAdd = { [weak self] _ in
+                guard let self else { return }
+                onRelate?(self)
+            }
+            document.addSubview(block)
+            relatedBlock = block
+            blocks.append(block)
+        }
         meetings?.removeFromSuperview()
         meetings = nil
         if meetingsWanted {
