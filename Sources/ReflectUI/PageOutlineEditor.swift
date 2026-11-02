@@ -81,6 +81,15 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     /// The folds as last told.
     private var shownFolds: [OutlineFolds.Mark] = []
 
+    /// Its rows folded as `folds` say, the words left as they are: folded
+    /// elsewhere — in another window, on another device.
+    public func refold(_ folds: [OutlineFolds.Mark]) {
+        guard folds != shownFolds else { return }
+        editor.load(OutlineFolds.apply(folds, to: Row.unfold(editor.fullRows)))
+        shownFolds = OutlineFolds.marks(editor.fullRows)
+        heightChanged()
+    }
+
     /// The graph the page is in, and its title: queries are asked of it —
     /// again, `refreshing`, when the graph changed.
     public func setGraph(_ pages: PageIndex?, title: String, refreshing: Bool = false) {

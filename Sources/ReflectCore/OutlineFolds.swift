@@ -1,15 +1,16 @@
 import Foundation
 
 /// Which rows of a note are folded, kept apart from the note: folding is
-/// how a note is shown on one device, not what it says, so it goes in
-/// neither the Markdown nor the repository.
+/// how a note is shown, not what it says, so it stays out of the note's
+/// Markdown — kept on the device, or with what shows it (Weft's saved
+/// rivers carry their cards' folds, synced).
 ///
 /// A folded row is remembered by where it is among all the note's rows,
 /// folded ones included, and by its text. Put back on a note that has
 /// changed since — on another device, say — a fold goes to the row with
 /// that text nearest where it was, and is dropped when there is none.
 public enum OutlineFolds {
-    public struct Mark: Codable, Equatable, Sendable {
+    public struct Mark: Codable, Hashable, Sendable {
         /// The row's place among all the note's rows, as written.
         public var index: Int
         public var text: String
