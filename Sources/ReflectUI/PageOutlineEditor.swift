@@ -124,6 +124,12 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
         layout.ensureLayout(for: container)
         var height = layout.usedRect(for: container).height
         if layout.extraLineFragmentTextContainer != nil { height -= layout.extraLineFragmentRect.height }
+        // Asked of another width than it has — SwiftUI asking its ideal
+        // size — the text laid out again at its own: else it is drawn
+        // wrapped as it was asked, taller or shorter than its frame.
+        if bounds.width > 0, abs(bounds.width - width) > 0.5 {
+            container.size = NSSize(width: bounds.width, height: .greatestFiniteMagnitude)
+        }
         return ceil(max(height, editor.metrics.fontSize * 1.4))
     }
 
