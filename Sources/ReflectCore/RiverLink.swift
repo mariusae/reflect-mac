@@ -27,4 +27,18 @@ public enum RiverLink {
 
     /// A river's file, in the graph.
     public static func path(_ name: String) -> String { "\(folder)/\(name).md" }
+
+    /// The graph's saved rivers, by name.
+    public static func names(in root: URL) -> [String] {
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent(folder).path)) ?? []
+        return files.filter { $0.hasSuffix(".md") && !$0.hasPrefix(".") }.map { String($0.dropLast(3)) }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    /// The saved rivers whose names have what is typed in them, to link to.
+    public static func matching(_ query: String, in root: URL, limit: Int = 4) -> [String] {
+        let query = query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return [] }
+        return Array(names(in: root).filter { $0.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil }.prefix(limit))
+    }
 }

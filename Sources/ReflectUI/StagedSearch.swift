@@ -68,7 +68,7 @@ package final class StagedSearch: @unchecked Sendable {
         var item = item
         switch item.target {
         case .day(let day): item.name = day.description
-        case .note(let path): item.name = sources.index.entry(path)?.title ?? item.title
+        case .note(let path): item.name = RiverLink.name(path).map(RiverLink.target) ?? sources.index.entry(path)?.title ?? item.title
         case .create(let title): item.name = title
         }
         items.append(item)
@@ -110,6 +110,11 @@ package final class StagedSearch: @unchecked Sendable {
         for match in named {
             let detail = match.alias.map { OpenQuickly.plain("also “\($0)”") } ?? OpenQuickly.plain(OpenQuickly.relative(match.entry.modified))
             add(Item(target: .note(match.entry.path), title: match.entry.title, detail: detail, symbol: "doc.text"), path: match.entry.path)
+        }
+        // Weft's saved rivers the query names.
+        for name in RiverLink.matching(query, in: sources.index.root) {
+            add(Item(target: .note(RiverLink.path(name)), title: name, detail: OpenQuickly.plain("Saved river"), symbol: RiverLink.symbol),
+                path: RiverLink.path(name))
         }
         let key = NoteIndex.foldKey(query)
         // A week's name is its note's, written or not: nothing new to make.

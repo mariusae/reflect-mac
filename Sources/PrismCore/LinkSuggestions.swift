@@ -21,12 +21,15 @@ public enum LinkSuggestions {
         public var isDay: Bool
         /// A topic: offered before other notes, marked `#`.
         public var isTopic: Bool
+        /// One of Weft's saved rivers: linked as `[[rivers/Name]]`.
+        public var isRiver: Bool
 
-        public init(title: String, name: String, isDay: Bool, isTopic: Bool = false) {
+        public init(title: String, name: String, isDay: Bool, isTopic: Bool = false, isRiver: Bool = false) {
             self.title = title
             self.name = name
             self.isDay = isDay
             self.isTopic = isTopic
+            self.isRiver = isRiver
         }
     }
 
@@ -86,7 +89,11 @@ public enum LinkSuggestions {
         for match in notes.filter({ $0.entry.isTopic }) + notes.filter({ !$0.entry.isTopic }) {
             found.append(Candidate(title: match.entry.title, name: match.entry.title, isDay: false, isTopic: match.entry.isTopic))
         }
-        return Array(found.prefix(limit))
+        // Saved rivers its words name, kept a place among the notes.
+        let rivers = RiverLink.matching(query, in: index.root).map {
+            Candidate(title: $0, name: RiverLink.target($0), isDay: false, isRiver: true)
+        }
+        return Array(found.prefix(limit - min(rivers.count, 2)) + rivers.prefix(2))
     }
 
     /// The text to put in for a choice, and where: over the trigger and what

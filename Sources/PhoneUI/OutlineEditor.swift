@@ -3417,7 +3417,8 @@ public final class OutlineToolbar: UIInputView {
     /// first, which Return puts in, marked — or, with none, the tools again.
     public func show(_ candidates: [LinkSuggestions.Candidate], choose: @escaping (LinkSuggestions.Candidate) -> Void) {
         show(chips: candidates.map { candidate in
-            (candidate.title, candidate.isDay ? "calendar" : candidate.title.hasPrefix("New “") ? "plus" : candidate.isTopic ? "number" : "doc.text")
+            (candidate.title, candidate.isDay ? "calendar" : candidate.isRiver ? RiverLink.symbol
+                : candidate.title.hasPrefix("New “") ? "plus" : candidate.isTopic ? "number" : "doc.text")
         }) { choose(candidates[$0]) }
     }
 

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ReflectCore
+import PrismCore
 
 @Suite struct RiverLinkTests {
     @Test func aRiversNameFromItsLink() {
@@ -17,5 +18,21 @@ import Testing
         let spans = InlineMarkup.spans(in: text, range: NSRange(location: 0, length: text.length))
         #expect(spans.map { text.substring(with: $0.content) } == ["Weft work", "the work"])
         #expect(spans.first?.markup.map { text.substring(with: $0) } == ["[[rivers/", "]]"])
+    }
+}
+
+@Suite struct RiverLinkListingTests {
+    @Test func aGraphsRiversByWhatIsTyped() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rivers-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("rivers"), withIntermediateDirectories: true)
+        for name in ["Weft work", "Taxes", ".hidden"] { try "- [[A]]\n".write(to: root.appendingPathComponent("rivers/\(name).md"), atomically: true, encoding: .utf8) }
+        #expect(RiverLink.names(in: root) == ["Taxes", "Weft work"])
+        #expect(RiverLink.matching("WORK", in: root) == ["Weft work"])
+        #expect(RiverLink.matching("", in: root).isEmpty)
+        // `[[` offers them, linked as the files they are.
+        let index = NoteIndex(root: root)
+        index.scan()
+        let offered = LinkSuggestions.candidates("weft", index: index)
+        #expect(offered.contains(LinkSuggestions.Candidate(title: "Weft work", name: "rivers/Weft work", isDay: false, isRiver: true)))
     }
 }
