@@ -591,7 +591,8 @@ package enum InlineMarkdown {
                 }
                 underline(content)
                 let name = title.components(separatedBy: "|").first?.trimmingCharacters(in: .whitespaces) ?? title
-                if pills { LinkPill.mark(storage, span.range, kind: Day(name) != nil || Week(name) != nil ? .day : .page, flat: flat) }
+                let kind: LinkPill.Kind = Day(name) != nil || Week(name) != nil ? .day : RiverLink.name(name) != nil ? .river : .page
+                if pills { LinkPill.mark(storage, span.range, kind: kind, flat: flat) }
             case .image(let reference):
                 // Pictures side by side: one carousel, drawn at the first's place.
                 if let group = carousels[span.range.location] {

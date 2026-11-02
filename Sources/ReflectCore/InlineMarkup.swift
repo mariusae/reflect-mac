@@ -137,7 +137,13 @@ public enum InlineMarkup {
         add(comment) { InlineSpan(kind: .comment, range: $0.range, content: NSRange(location: $0.range.location, length: 0)) }
         add(wiki) { match in
             let label = match.range(at: 2)
-            let content = label.location != NSNotFound && label.length > 0 ? label : match.range(at: 1)
+            var content = label.location != NSNotFound && label.length > 0 ? label : match.range(at: 1)
+            // A saved river's link shows its name: its folder is markup too.
+            if content == match.range(at: 1), let name = RiverLink.name(group(match, 1)) {
+                let target = group(match, 1) as NSString
+                let start = target.range(of: name, options: .backwards).location
+                if start != NSNotFound { content = NSRange(location: content.location + start, length: (name as NSString).length) }
+            }
             return InlineSpan(kind: .wikiLink(group(match, 1)), range: match.range, content: content)
         }
         add(link) { match in

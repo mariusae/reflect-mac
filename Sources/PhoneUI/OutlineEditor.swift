@@ -538,7 +538,9 @@ public final class PhoneStyler: NSObject, NSTextStorageDelegate {
                opening.location == span.range.location {
                 let symbol: String?
                 switch span.kind {
-                case .wikiLink(let title): symbol = Day(title.components(separatedBy: "|")[0].trimmingCharacters(in: .whitespaces)) != nil ? "calendar" : "doc.text"
+                case .wikiLink(let title):
+                    let name = title.components(separatedBy: "|")[0].trimmingCharacters(in: .whitespaces)
+                    symbol = Day(name) != nil ? "calendar" : RiverLink.name(name) != nil ? RiverLink.symbol : "doc.text"
                 case .link: symbol = "link"
                 default: symbol = nil
                 }

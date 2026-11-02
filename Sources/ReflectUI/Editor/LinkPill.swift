@@ -3,7 +3,7 @@ import ReflectCore
 
 /// Links shown as Reflect's iPhone app shows them: in the accent colour, on
 /// a pale pill of it — with, as Slack does, what kind of link it is before
-/// it: the web, a page, or a day. A bare web address is shortened to where
+/// it: the web, a page, a day, or one of Weft's saved rivers. A bare web address is shortened to where
 /// it goes: its site, always, and the last part of its path — the rest of
 /// it hidden, an ellipsis in its place — and shown whole while the caret is
 /// in it. Tags are pills too, with no kind.
@@ -12,7 +12,7 @@ import ReflectCore
 /// is shown of it changes. The icon takes the room of the link's first
 /// hidden character, as a file pill's does.
 package final class LinkPill: NSObject {
-    package enum Kind { case web, page, day, tag }
+    package enum Kind { case web, page, day, river, tag }
     package let kind: Kind
     /// Whether it has a hidden character to put its icon in: not a tag, nor
     /// an address shown whole.
@@ -32,6 +32,7 @@ package final class LinkPill: NSObject {
         case .web: return "link"
         case .page: return "doc.text"
         case .day: return "calendar"
+        case .river: return RiverLink.symbol
         case .tag: return nil
         }
     }
