@@ -108,6 +108,33 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     /// Whether the caret is in it.
     public var isFocused: Bool { window?.firstResponder === editor }
 
+    /// Whether it takes Prism's editor shortcuts — its Format, Outline and
+    /// Selection menus' — itself while the caret is in it: for an app
+    /// without those menus, and before its own that share a key.
+    public var takesEditorKeys = false
+
+    /// The editor menus' items that have a key.
+    private static let editorKeys: [NSMenuItem] = {
+        func items(_ item: NSMenuItem) -> [NSMenuItem] { [item] + (item.submenu?.items.flatMap(items) ?? []) }
+        return [EditorMenus.selection(), EditorMenus.format(), EditorMenus.outline()].flatMap(items)
+            .filter { $0.action != nil && !$0.keyEquivalent.isEmpty }
+    }()
+
+    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard takesEditorKeys, isFocused, event.type == .keyDown else { return super.performKeyEquivalent(with: event) }
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        // The key as the menus name it: an arrow as its function key, else
+        // what it types unshifted — ⌘⇧8's 8, not its *.
+        let typed = event.charactersIgnoringModifiers ?? ""
+        let isFunction = typed.unicodeScalars.first.map { (0xF700...0xF8FF).contains($0.value) } ?? false
+        let key = isFunction ? typed : event.characters(byApplyingModifiers: [])?.lowercased()
+        if let item = Self.editorKeys.first(where: { $0.keyEquivalent == key && $0.keyEquivalentModifierMask == modifiers }),
+           let action = item.action {
+            return NSApp.sendAction(action, to: editor, from: item)
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     /// The caret taken out.
     public func unfocus() {
         if isFocused { window?.makeFirstResponder(nil) }
