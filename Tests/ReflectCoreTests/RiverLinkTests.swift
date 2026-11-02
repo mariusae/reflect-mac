@@ -11,6 +11,11 @@ import PrismCore
         #expect(RiverLink.name("notes/Work") == nil)
         #expect(RiverLink.name("rivers/a/b") == nil)
         #expect(RiverLink.link("Work") == "[[rivers/Work]]")
+        #expect(RiverLink.url("Weft work").absoluteString == "weft://river/Weft%20work")
+        #expect(RiverLink.name(from: RiverLink.url("Q&A / notes?")) == "Q&A / notes?")
+        #expect(RiverLink.name(from: URL(string: "weft://river/Work")!) == "Work")
+        #expect(RiverLink.name(from: URL(string: "weft://page/Work")!) == nil)
+        #expect(RiverLink.name(from: URL(string: "https://river/Work")!) == nil)
     }
 
     @Test func aRiverLinkShowsItsNameAlone() {

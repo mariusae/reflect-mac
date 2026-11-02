@@ -28,6 +28,20 @@ public enum RiverLink {
     /// A river's file, in the graph.
     public static func path(_ name: String) -> String { "\(folder)/\(name).md" }
 
+    /// The address that opens a saved river in Weft, from anywhere — a
+    /// reminder, a message, Prism: `weft://river/Work`.
+    public static func url(_ name: String) -> URL {
+        let path = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#"))) ?? name
+        return URL(string: "weft://river/\(path)")!
+    }
+
+    /// The river an address opens, or nil for one that is no river's.
+    public static func name(from url: URL) -> String? {
+        guard url.scheme?.lowercased() == "weft", url.host()?.lowercased() == "river" else { return nil }
+        let name = url.path(percentEncoded: false).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return name.isEmpty ? nil : name
+    }
+
     /// The graph's saved rivers, by name.
     public static func names(in root: URL) -> [String] {
         let files = (try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent(folder).path)) ?? []
