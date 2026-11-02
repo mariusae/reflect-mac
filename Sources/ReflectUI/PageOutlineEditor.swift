@@ -15,6 +15,9 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     public var onOpenURL: ((URL) -> Void)?
     /// Told when the height it needs changes.
     public var onHeightChange: (() -> Void)?
+    /// Rows folded or unfolded: the folds now, to keep — as Prism keeps a
+    /// note's, apart from its text.
+    public var onFoldsChange: (([OutlineFolds.Mark]) -> Void)?
     /// Told when the caret comes into the editor, and when it leaves.
     public var onFocusChange: ((Bool) -> Void)? {
         get { editor.onFirstResponderChange }
@@ -61,17 +64,22 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
 
     public override var isFlipped: Bool { true }
 
-    /// Shows a body, forgetting what was edited before — unless it is what is shown.
-    public func load(_ text: String) {
+    /// Shows a body, forgetting what was edited before — unless it is what
+    /// is shown — its rows folded as `folds` say.
+    public func load(_ text: String, folds: [OutlineFolds.Mark] = []) {
         guard text != self.text || editor.textStorage?.length == 0 else { return }
         self.text = text
         var outline = OutlineMarkdown.parse(text)
         let rows = outline.rows
         outline.rows = []
         shell = outline
-        editor.load(rows.isEmpty ? [.blank] : rows)
+        editor.load(rows.isEmpty ? [.blank] : folds.isEmpty ? rows : OutlineFolds.apply(folds, to: rows))
+        shownFolds = OutlineFolds.marks(editor.fullRows)
         heightChanged()
     }
+
+    /// The folds as last told.
+    private var shownFolds: [OutlineFolds.Mark] = []
 
     /// The graph the page is in, and its title: queries are asked of it —
     /// again, `refreshing`, when the graph changed.
@@ -131,6 +139,12 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
         outline.rows = editor.fullRows
         text = outline.isBlank ? "" : OutlineMarkdown.serialize(outline)
         onChange?(text)
+        // Folding is an edit to the text on screen, if not to the page.
+        let folds = OutlineFolds.marks(editor.fullRows)
+        if folds != shownFolds {
+            shownFolds = folds
+            onFoldsChange?(folds)
+        }
         heightChanged()
     }
 
