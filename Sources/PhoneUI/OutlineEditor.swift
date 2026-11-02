@@ -723,7 +723,10 @@ public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate 
                 || storage.attribute(.prismEllipsis, at: index, effectiveRange: nil) != nil {
                 property = .controlCharacter
             } else if storage.attribute(.prismHidden, at: index, effectiveRange: nil) != nil {
-                property = .null
+                // A row's first character hidden — a link's `[` — nothing, but
+                // on the row's own line: a null glyph there is laid out at the
+                // end of the line before, which a tap there then lands in.
+                property = startsRow(index) ? .controlCharacter : .null
             } else {
                 continue
             }
@@ -743,11 +746,18 @@ public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate 
     public func layoutManager(_ layoutManager: NSLayoutManager, shouldUse action: NSLayoutManager.ControlCharacterAction,
                        forControlCharacterAt charIndex: Int) -> NSLayoutManager.ControlCharacterAction {
         guard let storage = textStorage, charIndex < storage.length else { return action }
+        if storage.attribute(.prismHidden, at: charIndex, effectiveRange: nil) != nil, startsRow(charIndex),
+           storage.attribute(.prismImage, at: charIndex, effectiveRange: nil) == nil { return .zeroAdvancement }
         guard storage.attribute(.prismImage, at: charIndex, effectiveRange: nil) != nil
               || storage.attribute(.prismBreak, at: charIndex, effectiveRange: nil) != nil
               || storage.attribute(.prismIcon, at: charIndex, effectiveRange: nil) != nil
               || storage.attribute(.prismEllipsis, at: charIndex, effectiveRange: nil) != nil else { return action }
         return .whitespace
+    }
+
+    /// Whether a character is a row's first.
+    private func startsRow(_ index: Int) -> Bool {
+        index == 0 || (index <= plainText.length && plainText.character(at: index - 1) == 0x0A)
     }
 
     /// How wide a line of a row is, from its text's left edge: the room a
@@ -811,12 +821,25 @@ public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate 
         // Back over hidden markup: it is laid out on the line before.
         var start = characters.location
         while start > 0, start <= storage.length, storage.attribute(.prismHidden, at: start - 1, effectiveRange: nil) != nil { start -= 1 }
+        // The room between two rows is split between them, half under the
+        // one above, half over the one below: a line owns the room laid out
+        // with it, and a tap there goes to that line — a tap just under a
+        // short row, an empty one, would otherwise land in the row below.
         if start < storage.length, start == 0 || plainText.character(at: start - 1) == 0x0A,
            let value = storage.attribute(.prismSpaceBefore, at: start, effectiveRange: nil) as? CGFloat {
-            above = value
+            above = value - floor(value / 2)
+        }
+        var below: CGFloat = 0
+        // A row's last line: the next row's room, its half. Hidden markup
+        // the next row begins with may be laid out on this line, after the break.
+        var end = NSMaxRange(characters) - 1
+        while end >= characters.location, end < plainText.length, plainText.character(at: end) != 0x0A { end -= 1 }
+        if end >= characters.location, end + 1 < storage.length,
+           let value = storage.attribute(.prismSpaceBefore, at: end + 1, effectiveRange: nil) as? CGFloat {
+            below = floor(value / 2)
         }
         let timeFoot = timeBlockFoot(characters: characters, fragment: lineFragmentRect.pointee, line: glyphRange)
-        guard height != nil || above > 0 || cardRoom > 0 || timeFoot != nil else { return false }
+        guard height != nil || above > 0 || below > 0 || cardRoom > 0 || timeFoot != nil else { return false }
         if let height {
             lineFragmentRect.pointee.size.height = height
             lineFragmentUsedRect.pointee.size.height = height
@@ -830,6 +853,7 @@ public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate 
         if timeFoot != nil, let foot = timeBlockFoot(characters: characters, fragment: lineFragmentRect.pointee, line: glyphRange) {
             lineFragmentRect.pointee.size.height += foot
         }
+        lineFragmentRect.pointee.size.height += below
         return true
     }
 
