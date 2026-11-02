@@ -183,6 +183,22 @@ package enum GraphBlocks {
     package static func embed(_ target: String, in graph: OutlineGraph, metrics: OutlineMetrics) -> OutlineBlock {
         let faces = Faces(metrics)
         let text = NSMutableAttributedString()
+        // A saved river embedded: its name, bringing it back, then its cards.
+        if let river = RiverLink.name(target) {
+            text.append(NSAttributedString(string: "RIVER\n", attributes: faces.label))
+            text.append(faces.link(target, shown: river, bold: true))
+            guard let cards = RiverLink.cards(of: river, in: graph.pages.root) else {
+                text.append(faces.plain(" isn't a saved river yet.", secondary: true))
+                return OutlineBlock(text: text)
+            }
+            for card in cards.prefix(12) {
+                text.append(faces.plain("\n• "))
+                text.append(faces.link(card, shown: shownTitle(card)))
+            }
+            if cards.count > 12 { text.append(faces.plain("\nand \(cards.count - 12) more", secondary: true)) }
+            if cards.isEmpty { text.append(faces.plain("\nNo cards.", secondary: true)) }
+            return OutlineBlock(text: text)
+        }
         guard let title = graph.pages.title(for: target), let page = graph.pages[title] else {
             text.append(NSAttributedString(string: "EMBEDDED\n", attributes: faces.label))
             text.append(faces.link(target, bold: true))

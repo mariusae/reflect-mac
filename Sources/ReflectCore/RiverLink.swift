@@ -42,6 +42,23 @@ public enum RiverLink {
         return name.isEmpty ? nil : name
     }
 
+    /// A saved river's cards, as its file has them — a link each, a row
+    /// each; what is folded of them, indented under, left out — or nil
+    /// when no river has the name.
+    public static func cards(of name: String, in root: URL) -> [String]? {
+        guard let text = try? String(contentsOf: root.appendingPathComponent(path(name)), encoding: .utf8) else { return nil }
+        var body = Substring(text)
+        if text.hasPrefix("---\n"), let end = text.range(of: "\n---\n", range: text.index(text.startIndex, offsetBy: 3)..<text.endIndex) {
+            body = text[end.upperBound...]
+        }
+        return body.split(separator: "\n").compactMap { line in
+            guard line.first != " ", line.first != "\t", let start = line.range(of: "[["),
+                  let end = line.range(of: "]]", range: start.upperBound..<line.endIndex) else { return nil }
+            let title = String(line[start.upperBound..<end.lowerBound])
+            return title.isEmpty ? nil : title
+        }
+    }
+
     /// The graph's saved rivers, by name.
     public static func names(in root: URL) -> [String] {
         let files = (try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent(folder).path)) ?? []

@@ -34,6 +34,9 @@ import PrismCore
         #expect(RiverLink.names(in: root) == ["Taxes", "Weft work"])
         #expect(RiverLink.matching("WORK", in: root) == ["Weft work"])
         #expect(RiverLink.matching("", in: root).isEmpty)
+        try "---\nfolded:\n  - B\n---\n- [[A]]\n  - 0: [[not a card]]\n- [[B]]\n".write(to: root.appendingPathComponent("rivers/Taxes.md"), atomically: true, encoding: .utf8)
+        #expect(RiverLink.cards(of: "Taxes", in: root) == ["A", "B"])
+        #expect(RiverLink.cards(of: "Nowhere", in: root) == nil)
         // `[[` offers them, linked as the files they are.
         let index = NoteIndex(root: root)
         index.scan()
