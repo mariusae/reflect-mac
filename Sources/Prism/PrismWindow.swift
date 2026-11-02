@@ -263,7 +263,14 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         if let index = panes.firstIndex(where: { $0 === pane }) { activate(index) }
         switch url.scheme {
         case "reflect-note":
-            guard let title = url.wikiTarget, let path = session.note(titled: title) else { return NSSound.beep() }
+            guard let title = url.wikiTarget else { return NSSound.beep() }
+            // One of Weft's saved rivers: brought back in Weft, where it can be.
+            if let river = RiverLink.name(title), !beside, let weft = NSWorkspace.shared.urlForApplication(toOpen: RiverLink.url(river)),
+               weft != Bundle.main.bundleURL {
+                NSWorkspace.shared.open(RiverLink.url(river))
+                return
+            }
+            guard let path = session.note(titled: title) else { return NSSound.beep() }
             open(path, beside: beside)
         case nil, "":
             let path = url.path.removingPercentEncoding ?? url.path

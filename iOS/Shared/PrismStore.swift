@@ -299,6 +299,11 @@ final class PrismStore {
     /// A note by its title, followed to by a link — made, if there is none:
     /// made so, it goes again when it is left as it was made.
     func note(titled title: String) -> String? {
+        // A link to one of Weft's saved rivers: its file, never a note made of it.
+        if let river = RiverLink.name(title) {
+            let path = RiverLink.path(river)
+            return graph?.exists(path: path) == true ? path : nil
+        }
         if let path = index?.resolve(title) { return path }
         guard let graph, !title.trimmingCharacters(in: .whitespaces).isEmpty,
               let path = try? NoteCreation.create(title: title, in: graph.root) else { return nil }

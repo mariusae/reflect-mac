@@ -79,11 +79,20 @@ written an item a line, so git merges changes to different items.
 | `[[Title\|shown]]` | the same, showing `shown` | readable |
 | `[[2026-10-31]]`, `[[2026-W44]]` | a day's or a week's page, written yet or not | a date |
 | `![[Title]]` | the page shown inside this one, live | the link, with a `!` |
+| `[[rivers/Work]]` | one of Weft's saved rivers, shown as its name; followed, the river brought back in Weft | the file's path, bracketed |
+| `![[rivers/Work]]` | the river's cards, listed inside this page | the link, with a `!` |
 | `[text](https://…)`, `<https://…>` | a web link | itself |
 | `![alt](assets/x.png)<!-- {"width":425} -->` | a picture, at a size | the picture; the comment is invisible |
 
 A link to a title no page has is a page waiting to be written: apps show it
 faded, and make it when it is followed.
+
+A saved river is a file in `rivers/` — its cards a link a row; under each,
+indented, the rows folded in it (`- 4: Row text`); in its frontmatter
+`folded:`, the cards folded to their titles. A river link is never made
+into a page: without Weft, Prism opens the river's file. Outside the
+graph, `weft://river/Work` opens it in Weft. A page names its home river
+in its frontmatter: `river: Work`.
 
 ## Inline
 

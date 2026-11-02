@@ -257,6 +257,11 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             let title = String(link.dropFirst(2).dropLast(2)).components(separatedBy: "|")[0].trimmingCharacters(in: .whitespaces)
             if let day = Day(title) {
                 open(PanePlace(path: GraphPaths.dailyPath(for: day)), nil)
+            } else if let river = RiverLink.name(title) {
+                // One of Weft's saved rivers: brought back in Weft; without Weft, its file.
+                UIApplication.shared.open(RiverLink.url(river)) { [store] opened in
+                    if !opened, let path = store.note(titled: title) { open(PanePlace(path: path), nil) }
+                }
             } else if let path = store.note(titled: title) {
                 open(PanePlace(path: path), nil)
             }
