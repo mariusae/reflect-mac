@@ -57,6 +57,7 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
         editor.onPicturesChanged = { [weak self] in self?.heightChanged() }
         addSubview(editor)
         load(text)
+        NotificationCenter.default.addObserver(self, selector: #selector(storageEdited), name: NSTextStorage.didProcessEditingNotification, object: editor.textStorage)
     }
 
     @available(*, unavailable)
@@ -132,13 +133,44 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
 
     public override func layout() {
         super.layout()
-        editor.frame = NSRect(x: 0, y: 0, width: bounds.width, height: height(forWidth: bounds.width))
+        let height = height(forWidth: bounds.width)
+        editor.frame = NSRect(x: 0, y: 0, width: bounds.width, height: height)
+        if abs(height - bounds.height) > 0.5 { checkHeight() }
     }
 
     private func heightChanged() {
         invalidateIntrinsicContentSize()
         needsLayout = true
         onHeightChange?()
+    }
+
+    /// Whatever changed the words or how they look — words dictated and
+    /// not yet taken, put in by the system without an edit told; a row
+    /// restyled — the height looked at again, once it is done.
+    @objc private func storageEdited() { checkHeight() }
+
+    private var checking = false
+    /// The height last asked for that was not yet given.
+    private var asked: CGFloat = -1
+
+    /// The height told again when the words no longer fit what was given
+    /// them — once for each height, should it not be given.
+    private func checkHeight() {
+        guard !checking else { return }
+        checking = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            checking = false
+            guard bounds.width > 0 else { return }
+            let height = height(forWidth: bounds.width)
+            guard abs(height - bounds.height) > 0.5 else {
+                asked = -1
+                return
+            }
+            guard height != asked else { return }
+            asked = height
+            heightChanged()
+        }
     }
 
     // MARK: NSTextViewDelegate
