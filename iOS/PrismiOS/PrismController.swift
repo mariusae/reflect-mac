@@ -997,6 +997,10 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             })
         }
         items += [
+            UIAction(title: "Relate To…", image: UIImage(systemName: "link.badge.plus")) { [weak self, weak sheet] _ in
+                sheet?.saveAll()
+                self?.chooseRelated(for: path)
+            },
             UIAction(title: entry?.isInInbox == true ? "Take Out of Inbox" : "Add to Inbox",
                      image: UIImage(systemName: entry?.isInInbox == true ? "tray.and.arrow.up" : "tray.and.arrow.down")) { [weak self] _ in
                 self?.store.setFrontmatter(path, "inbox", entry?.isInInbox == true ? nil : "true")

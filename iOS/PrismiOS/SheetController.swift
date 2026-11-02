@@ -132,7 +132,9 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         scroll.alwaysBounceVertical = true
         scroll.keyboardDismissMode = .interactive
         scroll.contentInsetAdjustmentBehavior = .always
-        scroll.topEdgeEffect.isHidden = true
+        // What scrolls up under the floating controls softened there, as
+        // under glass: the safe area at the top is theirs too.
+        scroll.topEdgeEffect.style = .soft
         view.addSubview(scroll)
         scroll.addSubview(content)
         // The page under a note tapped — past its end — a row there to write in.
@@ -625,11 +627,14 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
     /// Today's: the tasks still open from the days before, by their note —
     /// to tick, or bring into today, or put off. Any other note's: none.
     private func carried(into path: String, done: @escaping ([(path: String, slices: [NoteSlice], editable: Bool)]) -> Void) {
-        guard path == GraphPaths.dailyPath(for: .today), let graph = store.graph, let index = store.index else { return done([]) }
+        let week = GraphPaths.week(fromWeeklyPath: path)
+        guard path == GraphPaths.dailyPath(for: .today) || week != nil, let graph = store.graph, let index = store.index else { return done([]) }
         DispatchQueue.global(qos: .userInitiated).async {
-            let tasks = Tasks.carried(index.tasks(), today: .today)
+            // A week's: those left open in its days, Monday's first.
+            let groups = week.map { Array(Tasks.byNote(Tasks.open(index.tasks(), in: $0)).reversed()) }
+                ?? Tasks.byNote(Tasks.carried(index.tasks(), today: .today))
             var runs: [(path: String, slices: [NoteSlice], editable: Bool)] = []
-            for (note, list) in Tasks.byNote(tasks) {
+            for (note, list) in groups {
                 guard let source = graph.read(path: note) else { continue }
                 let slices = NoteSlice.slices(of: list, in: source).map { slice -> NoteSlice in
                     var slice = slice
@@ -693,9 +698,10 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         self.carriedShown = carriedNow
         self.mentionsShown = mentionsNow
         self.relatedShown = relatedNow
-        // Related without a link, under the note: always there for a note, to add one.
+        // Related without a link, under the note, once there are any: more
+        // added from the note's ⋯ menu, Relate To….
         var related: [SheetBlock] = []
-        if !relatedNow.isEmpty || GraphPaths.day(fromDailyPath: path) == nil {
+        if !relatedNow.isEmpty {
             let block = RelatedSheetBlock(relatedNow, metrics: self.metrics)
             block.onOpen = { [weak self] other in
                 guard let self, let target = other.path ?? store.note(titled: other.name) else { return }
@@ -715,7 +721,7 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
             related.append(block)
         }
         // Still open from the days before: a head over them, on cards as what links here is.
-        let still: [SheetBlock] = carried.isEmpty ? [] : [HeadBlock(title: "Still Open", kicker: nil, metrics: self.metrics, isGroup: true)]
+        let still: [SheetBlock] = carried.isEmpty ? [] : [HeadBlock(title: GraphPaths.week(fromWeeklyPath: path) != nil ? "Open This Week" : "Still Open", kicker: nil, metrics: self.metrics, isGroup: true)]
             + self.sliceBlocks(carried, asCard: true)
         let after: [SheetBlock] = found.isEmpty ? [] : [LinkedHead(count: found.count, metrics: self.metrics)] + self.sliceBlocks(found)
         // Named without a link: under a heading of their own, each card with Link.

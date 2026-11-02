@@ -324,7 +324,11 @@ final class NotePane: NSView, OutlineTextViewNavigator {
     }
 
     /// Today's: the tasks still open from the days before, by their note.
+    /// A week's: those left open in its days, Monday's first.
     private func carriedTasks() -> [(path: String, tasks: [NoteTask])] {
+        if let week = GraphPaths.week(fromWeeklyPath: ref.path) {
+            return Tasks.byNote(Tasks.open(session.index.tasks(), in: week)).reversed()
+        }
         guard ref.day == .today else { return [] }
         return Tasks.byNote(Tasks.carried(session.index.tasks(), today: .today))
     }
@@ -357,10 +361,11 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         shownMentions = mentions
         shownRelated = related
         var blocks: [ColumnBlock] = [note]
-        // Related without a link, under the note: always there for a note, to add one.
+        // Related without a link, under the note, once there are any: more
+        // added by Note ▸ Relate To….
         relatedBlock?.removeFromSuperview()
         relatedBlock = nil
-        if !related.isEmpty || ref.day == nil {
+        if !related.isEmpty {
             let block = RelatedBlock(related, metrics: session.metrics)
             block.onOpen = { [weak self] other, beside in
                 guard let self, let path = other.path ?? session.note(titled: other.name) else { return }
@@ -390,7 +395,7 @@ final class NotePane: NSView, OutlineTextViewNavigator {
         }
         // Still open from the days before: a heading over them, on cards as what links here is.
         if !carried.isEmpty {
-            let heading = ColumnHeading("Still open", metrics: session.metrics)
+            let heading = ColumnHeading(GraphPaths.week(fromWeeklyPath: ref.path) != nil ? "Open this week" : "Still open", metrics: session.metrics)
             document.addSubview(heading)
             carriedHeading = heading
             let cards = carried.map(makeCarried)

@@ -62,6 +62,13 @@ extension Tasks {
         }
     }
 
+    /// A week's: the tasks left open in its days' notes, its Monday's first.
+    public static func open(_ tasks: [NoteTask], in week: Week) -> [NoteTask] {
+        let days = Set(week.days)
+        return tasks.filter { task in !task.done && task.day.map(days.contains) == true }
+            .sorted { a, b in a.day != b.day ? a.day! < b.day! : a.ordinal < b.ordinal }
+    }
+
     /// Carried tasks by the note each is in: the latest days first, then
     /// other notes, by name.
     public static func byNote(_ carried: [NoteTask]) -> [(path: String, tasks: [NoteTask])] {

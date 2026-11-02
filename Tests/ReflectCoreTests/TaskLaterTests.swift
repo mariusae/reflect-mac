@@ -31,4 +31,21 @@ import Testing
         #expect(carried.map(\.day) == [friday.adding(-1), friday.adding(-3), nil])
         #expect(carried.last?.ordinal == 0)
     }
+
+    @Test func aWeeksOpenTasksAreItsDays() {
+        func task(_ day: Day?, _ ordinal: Int, done: Bool = false) -> NoteTask {
+            NoteTask(notePath: day.map(GraphPaths.dailyPath(for:)) ?? "notes/project.md", ordinal: ordinal, text: "t", done: done,
+                     breadcrumbs: [], dueDate: nil, day: day, noteTitle: "", pin: nil, modified: .distantPast)
+        }
+        // Week 44 of 2026: Monday the 26th of October to Sunday the 1st of November.
+        let week = Week(friday)
+        let monday = Day(year: 2026, month: 10, day: 26), sunday = Day(year: 2026, month: 11, day: 1)
+        let open = Tasks.open([
+            task(friday, 1), task(monday, 0), task(friday, 0), task(friday, 2, done: true),
+            task(sunday, 0), task(monday.adding(-1), 0), task(sunday.adding(1), 0), task(nil, 0),
+        ], in: week)
+        #expect(open.map(\.day) == [monday, friday, friday, sunday])
+        #expect(open.map(\.ordinal) == [0, 0, 1, 0])
+        #expect(Tasks.byNote(open).reversed().map(\.path) == [monday, friday, sunday].map(GraphPaths.dailyPath(for:)))
+    }
 }
