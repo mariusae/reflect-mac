@@ -14,6 +14,8 @@ public final class CursorDictation {
     private var range: NSRange
     /// A space before it, after a word.
     private let lead: String
+    /// How much of its line follows it: where it ends is found from this.
+    private let tail: Int
     private var typist: DictationTypist!
     private let glow: DictationGlow
 
@@ -23,6 +25,7 @@ public final class CursorDictation {
         let text = view.textStorage.mutableString
         let before = range.location > 0 ? text.character(at: range.location - 1) : 32
         lead = before == 32 || before == 10 || before == 9 || before == 0x2028 ? "" : " "
+        tail = DictatedSpan.tail(after: range, in: text)
         glow = DictationGlow(on: view)
         typist = DictationTypist { [weak self] heard in self?.show(heard) }
         glow.listen(at: range.location)
@@ -37,6 +40,7 @@ public final class CursorDictation {
     public func finish() async {
         typist.flush(await dictation.stop())
         glow.end()
+        settle()
         view?.selectedRange = NSRange(location: NSMaxRange(range), length: 0)
     }
 
@@ -46,7 +50,14 @@ public final class CursorDictation {
         glow.end(keepingLight: false)
     }
 
+    /// Where what was said stands now: the text system may have changed it since.
+    private func settle() {
+        guard let view else { return }
+        range = DictatedSpan.span(from: range.location, tail: tail, in: view.textStorage.mutableString)
+    }
+
     private func show(_ heard: String) {
+        settle()
         guard let view, NSMaxRange(range) <= view.textStorage.length,
               let start = view.position(from: view.beginningOfDocument, offset: range.location),
               let end = view.position(from: start, offset: range.length),
@@ -55,8 +66,8 @@ public final class CursorDictation {
         let was = view.textStorage.mutableString.substring(with: range) as NSString
         guard text != was as String else { return }
         view.replace(place, withText: text)
-        range = NSRange(location: range.location, length: (text as NSString).length)
-        let same = was.commonPrefix(with: text).utf16.count
+        settle()
+        let same = was.commonPrefix(with: view.textStorage.mutableString.substring(with: range)).utf16.count
         glow.wrote(NSRange(location: range.location + same, length: range.length - same))
         glow.listen(at: NSMaxRange(range))
     }
