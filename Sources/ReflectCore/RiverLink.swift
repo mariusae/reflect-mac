@@ -8,6 +8,8 @@ public enum RiverLink {
     public static let folder = "rivers"
     /// What a river link shows before its name.
     public static let symbol = "square.stack"
+    /// The frontmatter key naming a page's home river: `river: Work`.
+    public static let homeKey = "river"
 
     /// The river a link's target names — `rivers/Work` is `Work` — or nil
     /// for a target that is no river.
