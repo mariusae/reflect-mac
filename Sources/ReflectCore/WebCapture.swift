@@ -135,6 +135,8 @@ public enum WebCapture {
     /// The address a page's note is of — its `URL:` row — or nil for a
     /// note that is not one.
     public static func url(in source: String) -> String? {
+        // Most notes are no page's: told without reading them as an outline.
+        guard source.contains("URL:") else { return nil }
         for row in Row.unfold(OutlineMarkdown.parse(source).rows) where row.depth == 0 {
             let text = row.text.trimmingCharacters(in: .whitespaces)
             guard text.hasPrefix("URL:") else { continue }

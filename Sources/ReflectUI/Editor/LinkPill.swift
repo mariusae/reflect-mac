@@ -160,9 +160,7 @@ extension OutlineLayoutManager {
             NSRect(x: box.minX + origin.x, y: baseline - font.underlinePosition + origin.y, width: max(0, box.width - room),
                    height: max(1, font.underlineThickness)).fill()
             let side = round(font.pointSize * 0.5)
-            guard let arrow = NSImage(systemSymbolName: "arrow.up.right", accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: side, weight: .semibold).applying(.init(paletteColors: [.secondaryLabelColor])))
-            else { return }
+            guard let arrow = SymbolImages.image("arrow.up.right", pointSize: side, weight: .semibold, colors: [.secondaryLabelColor]) else { return }
             let size = arrow.size
             arrow.draw(in: NSRect(x: box.maxX - room + 2 + origin.x, y: baseline - font.capHeight - 1 + origin.y, width: size.width, height: size.height),
                        from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
@@ -191,9 +189,7 @@ extension OutlineLayoutManager {
             }
             if let first = pieces.first, let symbol = pill.symbol {
                 let side = LinkPill.iconSide(for: font)
-                let configuration = NSImage.SymbolConfiguration(pointSize: side * 0.9, weight: .medium)
-                    .applying(.init(paletteColors: [LinkPill.tint]))
-                if let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(configuration) {
+                if let icon = SymbolImages.image(symbol, pointSize: side * 0.9, weight: .medium, colors: [LinkPill.tint]) {
                     let size = icon.size
                     icon.draw(in: NSRect(x: first.minX + 4 + (side - size.width) / 2, y: first.midY - size.height / 2,
                                          width: size.width, height: size.height),

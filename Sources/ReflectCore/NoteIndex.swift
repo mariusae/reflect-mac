@@ -264,29 +264,43 @@ public final class NoteIndex: @unchecked Sendable {
     /// The `#tags` in a note's text, outside code and links: each once,
     /// regardless of case, as first written.
     public static func tags(in body: String) -> [String] {
-        guard body.contains("#") else { return [] }
-        var tags: [String] = []
-        var seen = Set<String>()
-        var fence: Substring?
-        for line in body.split(separator: "\n", omittingEmptySubsequences: false) {
-            let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
-            if let open = fence {
-                if trimmed.hasPrefix(open) { fence = nil }
-                continue
+        // Read as bytes, line by line: asked of every note as the graph is
+        // read, and of a card as it is drawn — Swift's characters, each a
+        // grapheme found, are slow to go through a long one.
+        var body = body
+        return body.withUTF8 { bytes -> [String] in
+            guard let base = bytes.baseAddress, memchr(base, 0x23, bytes.count) != nil else { return [] }
+            var tags: [String] = []
+            var seen = Set<String>()
+            // The marks of the fence a code block was opened with: ``` or ~~~.
+            var fence: (UInt8, UInt8, UInt8)?
+            let count = bytes.count
+            var start = 0
+            while start <= count {
+                let found = start < count ? memchr(base + start, 0x0A, count - start) : nil
+                let end = found.map { UnsafePointer($0.assumingMemoryBound(to: UInt8.self)) - base } ?? count
+                defer { start = end + 1 }
+                var first = start
+                while first < end, bytes[first] == 0x20 || bytes[first] == 0x09 { first += 1 }
+                let marks = end - first >= 3 ? (bytes[first], bytes[first + 1], bytes[first + 2]) : nil
+                if let open = fence {
+                    if let marks, marks == open { fence = nil }
+                    continue
+                }
+                if let marks, marks == (0x60, 0x60, 0x60) || marks == (0x7E, 0x7E, 0x7E) {
+                    fence = marks
+                    continue
+                }
+                guard end > start, memchr(base + start, 0x23, end - start) != nil else { continue }
+                let text = String(decoding: UnsafeBufferPointer(rebasing: bytes[start..<end]), as: UTF8.self) as NSString
+                for span in InlineMarkup.spans(in: text, range: NSRange(location: 0, length: text.length)) {
+                    guard case .tag = span.kind else { continue }
+                    let tag = String(text.substring(with: span.range).dropFirst())
+                    if seen.insert(tag.lowercased()).inserted { tags.append(tag) }
+                }
             }
-            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                fence = trimmed.prefix(3)
-                continue
-            }
-            guard line.contains("#") else { continue }
-            let text = String(line) as NSString
-            for span in InlineMarkup.spans(in: text, range: NSRange(location: 0, length: text.length)) {
-                guard case .tag = span.kind else { continue }
-                let tag = String(text.substring(with: span.range).dropFirst())
-                if seen.insert(tag.lowercased()).inserted { tags.append(tag) }
-            }
+            return tags
         }
-        return tags
     }
 
     /// The pinned notes, in the order Reflect's sidebar has them: numbered

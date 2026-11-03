@@ -446,8 +446,9 @@ package enum CodeBlock {
 
     /// The language a block's opening fence names, if any.
     package static func language(of text: String) -> String? {
-        guard let first = text.components(separatedBy: CharacterSet(charactersIn: "\n\u{2028}")).first,
-              OutlineTextView.isFence(first) else { return nil }
+        // Its first line alone: a long block is not split into all of its.
+        let first = String(text.prefix { $0 != "\n" && $0 != "\u{2028}" })
+        guard OutlineTextView.isFence(first) else { return nil }
         let name = first.trimmingCharacters(in: .whitespaces).drop(while: { $0 == "`" || $0 == "~" })
         return name.isEmpty ? nil : String(name)
     }

@@ -63,9 +63,16 @@ public enum OutlineText {
         let string = text.string as NSString
         return paragraphs(string).map { range in
             var row = style(text, at: range.location).row
-            var body = string.substring(with: range)
-            if body.hasSuffix("\n") { body.removeLast() }
-            row.text = body.replacingOccurrences(of: lineSeparator, with: "\n")
+            // Its words without the line break, and only those with lines
+            // of their own changed: read for each key, the whole note.
+            var words = range
+            if words.length > 0, string.character(at: NSMaxRange(words) - 1) == 10 { words.length -= 1 }
+            var body = string.substring(with: words)
+            if string.range(of: lineSeparator, options: .literal, range: words).location != NSNotFound {
+                body = body.replacingOccurrences(of: lineSeparator, with: "\n")
+            }
+            body.makeContiguousUTF8()
+            row.text = body
             return row
         }
     }

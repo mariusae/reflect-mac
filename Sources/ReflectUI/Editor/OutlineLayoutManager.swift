@@ -17,6 +17,8 @@ package final class OutlineLayoutManager: NSLayoutManager {
         case none
     }
 
+    private static let lineBreaks = CharacterSet(charactersIn: "\n\u{2028}")
+
     package static func handle(for row: Row) -> Handle {
         if let task = row.task { return .task(done: task.isDone, round: row.marker == "+") }
         switch row.kind {
@@ -167,7 +169,11 @@ package final class OutlineLayoutManager: NSLayoutManager {
                 let rect = NSRect(x: indent - 6, y: frame.minY - 2, width: origin.x + width - indent + 6, height: frame.height + 4)
                 NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
                 // Its language, in its corner.
-                if let language = CodeBlock.language(of: (storage.string as NSString).substring(with: paragraph)) {
+                // Read from its first line: drawn for each key, a long block is not copied whole.
+                let text = storage.string as NSString
+                let lineEnd = text.rangeOfCharacter(from: Self.lineBreaks, options: .literal, range: paragraph).location
+                let firstLine = NSRange(location: paragraph.location, length: (lineEnd == NSNotFound ? NSMaxRange(paragraph) : lineEnd) - paragraph.location)
+                if let language = CodeBlock.language(of: text.substring(with: firstLine)) {
                     let label = NSAttributedString(string: language, attributes: [
                         .font: NSFont.systemFont(ofSize: round(metrics.fontSize * 0.72), weight: .medium),
                         .foregroundColor: metrics.typography.ink.tertiary])
@@ -332,13 +338,12 @@ package final class OutlineLayoutManager: NSLayoutManager {
             }
         case .task(let done, let round):
             let name = round ? (done ? "checkmark.circle.fill" : "circle") : (done ? "checkmark.square.fill" : "square")
-            let configuration = NSImage.SymbolConfiguration(pointSize: font.pointSize * 0.95, weight: .regular)
-                // Checked: a white tick on the accent colour — flat, the page's on the text's ink.
-                .applying(.init(paletteColors: done ? (view.metrics.typography.flat ? [.textBackgroundColor, view.metrics.typography.ink.text]
-                                                                                      : [.white, .controlAccentColor])
-                                                    : [view.metrics.typography.ink.secondary]))
-            guard let image = NSImage(systemSymbolName: name, accessibilityDescription: done ? "Done" : "To do")?
-                .withSymbolConfiguration(configuration) else { return }
+            // Checked: a white tick on the accent colour — flat, the page's on the text's ink.
+            let colors: [NSColor] = done ? (view.metrics.typography.flat ? [.textBackgroundColor, view.metrics.typography.ink.text]
+                                                                          : [.white, .controlAccentColor])
+                                         : [view.metrics.typography.ink.secondary]
+            guard let image = SymbolImages.image(name, pointSize: font.pointSize * 0.95, weight: .regular, colors: colors,
+                                                 description: done ? "Done" : "To do") else { return }
             let size = image.size
             // A box as tall as a capital: centred on the capitals, as a
             // symbol sits beside words, not on the small letters as a dot.

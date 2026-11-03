@@ -69,6 +69,9 @@ public enum OutlineMarkdown {
         var fence: (marker: String, indent: Int)?
         /// The column continuation lines of the last row are measured from.
         var lastContentColumn = 0
+        /// The lines the last row's text takes: kept, not counted again for
+        /// each line added — a long code block would take its square.
+        var lastLineCount = 1
 
         mutating func read(_ line: String) {
             if let fence {
@@ -137,6 +140,7 @@ public enum OutlineMarkdown {
                 lastContentColumn = indent
             }
             rows.append(row)
+            lastLineCount = 1
         }
 
         private mutating func readFenced(_ line: String, fence: (marker: String, indent: Int)) {
@@ -161,38 +165,42 @@ public enum OutlineMarkdown {
         /// no space after, `quoteBare` — and a line without one, lazily
         /// going on, by its indent, as `appendContinuation` keeps it.
         private mutating func appendQuoteLine(_ content: String) {
-            var row = rows.removeLast()
-            var indents = row.continuationIndents ?? Array(repeating: nil, count: row.lineCount - 1)
             let rest = content.dropFirst()
             if rest.hasPrefix(" ") {
-                row.text += "\n" + rest.dropFirst()
-                indents.append(nil)
+                appendLine(rest.dropFirst(), indent: nil)
             } else {
-                row.text += "\n" + rest
-                indents.append(OutlineMarkdown.quoteBare)
+                appendLine(rest, indent: OutlineMarkdown.quoteBare)
             }
-            row.continuationIndents = indents.allSatisfy({ $0 == nil }) ? nil : indents
-            rows.append(row)
         }
 
         private mutating func appendContinuation(_ line: String, indent: Int) {
-            var row = rows.removeLast()
-            var indents = row.continuationIndents ?? Array(repeating: nil, count: row.lineCount - 1)
             let isBlank = line.allSatisfy { $0 == " " || $0 == "\t" }
             if isBlank {
                 // A blank line is kept as it was, spaces and all.
-                row.text += "\n" + line
-                indents.append(line.isEmpty ? nil : 0)
+                appendLine(line[...], indent: line.isEmpty ? nil : 0)
             } else {
                 let strip = min(indent, lastContentColumn)
-                row.text += "\n" + line.dropFirst(OutlineMarkdown.prefixLength(line, columns: strip))
                 // Indented less than usual (a lazy continuation) is recorded;
                 // more than usual keeps the extra in the text. A quote's line
                 // without its `>` is always recorded: its usual has one.
-                indents.append(indent < lastContentColumn || row.kind == .quote ? strip : nil)
+                appendLine(line.dropFirst(OutlineMarkdown.prefixLength(line, columns: strip)),
+                           indent: indent < lastContentColumn || rows[rows.count - 1].kind == .quote ? strip : nil)
             }
-            row.continuationIndents = indents.allSatisfy({ $0 == nil }) ? nil : indents
-            rows.append(row)
+        }
+
+        /// A line added to the last row's text, and how it was indented:
+        /// the indents kept only once one is not the usual — in place, the
+        /// row not copied out and back for each line.
+        private mutating func appendLine(_ line: Substring, indent: Int?) {
+            let last = rows.count - 1
+            rows[last].text += "\n"
+            rows[last].text += line
+            if rows[last].continuationIndents != nil {
+                rows[last].continuationIndents!.append(indent)
+            } else if indent != nil {
+                rows[last].continuationIndents = Array(repeating: nil, count: lastLineCount - 1) + [indent]
+            }
+            lastLineCount += 1
         }
     }
 
@@ -408,9 +416,4 @@ private extension Row {
         case .heading, .code, .rule: false
         }
     }
-}
-
-extension Row {
-    /// The number of lines the row's text takes.
-    var lineCount: Int { text.reduce(1) { $1 == "\n" ? $0 + 1 : $0 } }
 }

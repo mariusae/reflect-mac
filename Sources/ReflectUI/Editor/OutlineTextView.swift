@@ -126,6 +126,7 @@ package final class OutlineTextView: NSTextView {
         layout.delegate = hiddenGlyphs
         storage.delegate = styler
         styler.onCharactersEdited = { [weak self] in self?.paragraphCache = nil }
+        NotificationCenter.default.addObserver(self, selector: #selector(storageWillEdit), name: NSTextStorage.willProcessEditingNotification, object: storage)
         NotificationCenter.default.addObserver(self, selector: #selector(pictureArrived(_:)), name: ImageStore.didLoad, object: nil)
         addSubview(caret)
         // The caret is drawn here, not by the text system.
@@ -174,8 +175,22 @@ package final class OutlineTextView: NSTextView {
         undoManager?.removeAllActions()
     }
 
-    /// The rows as they stand, folded rows folded.
-    package var rows: [Row] { OutlineText.rows(textStorage!) }
+    /// The rows as they stand, folded rows folded: read again only once the
+    /// text, or how a row is styled, has changed — an edit asks for them
+    /// several times, each reading the whole note.
+    package var rows: [Row] {
+        let storage = textStorage!
+        // In the middle of an edit, they are as the text is now.
+        guard storage.editedMask.isEmpty else { return OutlineText.rows(storage) }
+        if let rowCache { return rowCache }
+        let rows = OutlineText.rows(storage)
+        rowCache = rows
+        return rows
+    }
+
+    private var rowCache: [Row]?
+
+    @objc private func storageWillEdit(_ notification: Notification) { rowCache = nil }
 
     fileprivate var paragraphCache: [NSRange]?
 

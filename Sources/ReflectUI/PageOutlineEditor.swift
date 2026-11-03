@@ -68,7 +68,7 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     /// Shows a body, forgetting what was edited before — unless it is what
     /// is shown — its rows folded as `folds` say.
     public func load(_ text: String, folds: [OutlineFolds.Mark] = []) {
-        guard text != self.text || editor.textStorage?.length == 0 else { return }
+        guard !text.isSameText(as: self.text) || editor.textStorage?.length == 0 else { return }
         self.text = text
         var outline = OutlineMarkdown.parse(text)
         let rows = outline.rows
