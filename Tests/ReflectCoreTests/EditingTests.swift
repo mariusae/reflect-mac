@@ -62,6 +62,24 @@ private func shape(_ rows: [Row]) -> String {
         #expect(OutlineEditing.moveDown(&outline, 4..<5) == nil)
     }
 
+    @Test func moveToTopAndBottomStayAmongSiblings() {
+        var outline = rows("p\n  a\n  b\n    b1\n  c\nq")
+        #expect(OutlineEditing.moveToTop(&outline, 4..<5) == 1..<2)
+        #expect(shape(outline) == "p\n  c\n  a\n  b\n    b1\nq")
+        #expect(OutlineEditing.moveToTop(&outline, 1..<2) == nil)
+        #expect(OutlineEditing.moveToBottom(&outline, 1..<2) == 4..<5)
+        #expect(shape(outline) == "p\n  a\n  b\n    b1\n  c\nq")
+        #expect(OutlineEditing.moveToBottom(&outline, 4..<5) == nil)
+    }
+
+    @Test func moveToTopKeepsAFloor() {
+        var outline = rows("t\na\nb")
+        #expect(OutlineEditing.moveToTop(&outline, 2..<3, floor: 1) == 1..<2)
+        #expect(shape(outline) == "t\nb\na")
+        #expect(OutlineEditing.moveToTop(&outline, 1..<2, floor: 1) == nil)
+        #expect(shape(outline) == "t\nb\na")
+    }
+
     @Test func foldAndUnfold() {
         var outline = rows("a\n  b\n    c\nd")
         OutlineEditing.foldCompletely(&outline, at: 0)

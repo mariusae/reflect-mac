@@ -541,17 +541,16 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
     private static let goToPrompt = "Go to a note or a day, find words, or # a heading"
     private static let goToHint = "↩ Open   ⌘↩ Beside"
 
-    /// Where a row goes, asked in the bar as Go to asks — a note, a day —
-    /// then the row and those under it moved there.
+    /// Where a row goes, asked under its Move to… — a day, a note pinned,
+    /// or one searched for — then the row and those under it moved there.
     func chooseWhereToMove(_ editor: OutlineTextView, _ index: Int, from: String) {
-        commandBar.placeholder = "Move to a note or a day"
-        commandBar.hintText = "↩ Move here"
-        commandChoice = { [weak self, weak editor] place in
-            guard let self, let editor, place.row == nil, place.path != from else { return NSSound.beep() }
-            let name = session.name(of: place.path).title
-            editor.moveRows(at: index, named: name) { rows, undo in self.session.add(rows, to: place.path, undo: undo) }
-        }
-        openCommandBar("")
+        let picker = MovePicker(session: session, source: from, chosen: { [weak self, weak editor] path in
+            guard let self, let editor else { return }
+            let name = session.name(of: path).title
+            editor.moveRows(at: index, named: name) { rows, undo in self.session.add(rows, to: path, undo: undo) }
+        }, closed: { [weak editor] in editor?.settleRowButtons() })
+        let anchor = editor.moveAnchor(forRow: index)
+        picker.show(relativeTo: anchor.rect, of: anchor.view)
     }
 
     /// Another note to relate one to, asked in the bar as Go to asks.

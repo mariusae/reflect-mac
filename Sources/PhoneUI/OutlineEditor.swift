@@ -2625,6 +2625,13 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
             guard let self else { return }
             copyRows([OutlineEditing.block(rows, index..<(index + 1))])
         })
+        if isEditable {
+            actions.append(UIAction(title: "Cut", image: UIImage(systemName: "scissors")) { [weak self] _ in
+                guard let self else { return }
+                copyRows([OutlineEditing.block(rows, index..<(index + 1))])
+                deleteRow(at: index)
+            })
+        }
         if isEditable, onMoveRows != nil {
             actions.append(UIAction(title: "Move to…", image: UIImage(systemName: "arrow.right.doc.on.clipboard")) { [weak self] _ in
                 guard let self else { return }
@@ -2645,6 +2652,40 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
         return actions
     }
 
+    /// A row held: moved among the rows beside it — to the top or bottom
+    /// of them, or one place — with all under it.
+    public func reorderActions(_ index: Int) -> [UIAction] {
+        guard isEditable, rows.indices.contains(index) else { return [] }
+        // Not above a title not shown: it stays the note's first row.
+        let floor = collapsedTitle == nil ? 0 : 1
+        let moves: [(String, String, (inout [Row], Range<Int>) -> Range<Int>?)] = [
+            ("Move to Top", "arrow.up.to.line", { OutlineEditing.moveToTop(&$0, $1, floor: floor) }),
+            ("Move Up", "arrow.up", { rows, one in
+                OutlineEditing.moveUp(&rows, one).flatMap { $0.lowerBound >= floor ? $0 : nil } }),
+            ("Move Down", "arrow.down", { OutlineEditing.moveDown(&$0, $1) }),
+            ("Move to Bottom", "arrow.down.to.line", { OutlineEditing.moveToBottom(&$0, $1) }),
+        ]
+        return moves.map { title, symbol, change in
+            var probe = rows
+            let possible = change(&probe, index..<(index + 1)) != nil
+            return UIAction(title: title, image: UIImage(systemName: symbol), attributes: possible ? [] : .disabled) { [weak self] _ in
+                self?.reorder(title, at: index, change)
+            }
+        }
+    }
+
+    private func reorder(_ name: String, at index: Int, _ change: (inout [Row], Range<Int>) -> Range<Int>?) {
+        var all = rows
+        let one = index..<(index + 1)
+        let block = OutlineEditing.block(all, one)
+        guard let moved = change(&all, one) else { return }
+        // Typing in the row moved, the caret goes with it.
+        var kept = isFirstResponder ? caret : nil
+        if let row = kept?.row, block.contains(row) { kept?.row = moved.lowerBound + row - index }
+        replace(all, caret: kept, undoName: name)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
     // MARK: VoiceOver
 
     /// What can be done to the row the caret is in, as VoiceOver's actions:
@@ -2662,7 +2703,8 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
                     return true
                 })
             }
-            for action in rowActions(index) where !action.title.hasPrefix("Mark ") && action.title != "Turn Into…" {
+            for action in rowActions(index) + reorderActions(index).filter({ !$0.attributes.contains(.disabled) })
+            where !action.title.hasPrefix("Mark ") && action.title != "Turn Into…" {
                 actions.append(UIAccessibilityCustomAction(name: action.title) { [weak self] _ in
                     guard let self else { return false }
                     action.performWithSender(nil, target: nil)
@@ -3467,8 +3509,14 @@ extension OutlineEditor: UIEditMenuInteractionDelegate {
         if id == "link" { return linkMenu() }
         if id == "notelink" { return noteLinkMenu() }
         if id.hasPrefix("row:"), let index = Int(id.substring(from: 4)) {
-            let actions = rowActions(index)
-            return actions.isEmpty ? nil : UIMenu(children: actions)
+            var children: [UIMenuElement] = rowActions(index)
+            let reorder = reorderActions(index)
+            if !reorder.isEmpty {
+                // Beside Move to…: where among its own rows, or elsewhere.
+                let at = children.firstIndex { ($0 as? UIAction)?.title == "Move to…" }.map { $0 + 1 } ?? children.count
+                children.insert(UIMenu(title: "Reorder", image: UIImage(systemName: "arrow.up.arrow.down"), children: reorder), at: at)
+            }
+            return children.isEmpty ? nil : UIMenu(children: children)
         }
         let span = NSRangeFromString(id as String)
         guard let file = pictureFile(span) else { return nil }

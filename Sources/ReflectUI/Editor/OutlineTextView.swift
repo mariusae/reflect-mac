@@ -212,6 +212,7 @@ package final class OutlineTextView: NSTextView {
         if !adjusting { tidy() }
         super.didChangeText()
         updateCaret()
+        if rowButtons?.isHidden == false { placeRowButtons() }
         // A box ticked, or a row moved, changes the rings of the bullets
         // above it too, not only its own line.
         needsDisplay = true
@@ -627,6 +628,7 @@ package final class OutlineTextView: NSTextView {
 
     package override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if window == nil { rowButtons?.removeFromSuperview() }
         NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: nil)
         NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
         guard let window else { return }
@@ -739,6 +741,8 @@ package final class OutlineTextView: NSTextView {
     /// The link's card under the pointer — a post, a video, a page — whose
     /// "–" shows, to hide it.
     package var hoveredCardFrame: NSRect?
+    /// A task's Move to… and ⋯, at the end of its line while it is hovered.
+    package var rowButtons: RowButtons?
 
     package override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -791,7 +795,8 @@ package final class OutlineTextView: NSTextView {
 
     package override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
-        hover(at: nil)
+        // Off to the task's buttons, out in the margin: they stay.
+        if rowButtons?.contains(event) == true { leaveRowButtons() } else { hover(at: nil) }
         hoverPicture(at: nil)
         LinkCard.shared.scheduleHide()
     }
@@ -875,6 +880,7 @@ package final class OutlineTextView: NSTextView {
         guard row != hoveredRow else { return }
         hoveredRow = row
         needsDisplay = true
+        placeRowButtons()
     }
 
     package override func mouseDown(with event: NSEvent) {
@@ -1103,32 +1109,7 @@ package final class OutlineTextView: NSTextView {
             ("Heading 3", 3, row.kind == .heading(3)),
             ("Quote", 12, row.kind == .quote),
         ]
-        // A task: into today, or put off to a day — moved into that day's note.
-        if let move = onMoveRowsTo, Tasks.isTask(row), row.task?.isDone != true {
-            let today = Day.today
-            if day != today {
-                items.append(ClosureMenuItem(title: "Do Today") { [weak self] in
-                    guard let self else { return }
-                    move(self, index, GraphPaths.dailyPath(for: today))
-                })
-            }
-            let later = NSMenuItem(title: "Later", action: nil, keyEquivalent: "")
-            later.submenu = NSMenu(title: "Later")
-            for option in TaskLater.allCases where option.day(from: today) != day {
-                later.submenu?.addItem(ClosureMenuItem(title: option.title) { [weak self] in
-                    guard let self else { return }
-                    move(self, index, GraphPaths.dailyPath(for: option.day(from: today)))
-                })
-            }
-            if let onMoveRows {
-                later.submenu?.addItem(.separator())
-                later.submenu?.addItem(ClosureMenuItem(title: "Another Day…") { [weak self] in
-                    guard let self else { return }
-                    onMoveRows(self, index)
-                })
-            }
-            items.append(later)
-        }
+        items += dayItems(forRow: index)
         if let onMoveRows {
             items.append(ClosureMenuItem(title: "Move to…") { [weak self] in
                 guard let self else { return }
@@ -1147,6 +1128,37 @@ package final class OutlineTextView: NSTextView {
         items.append(.separator())
         for (i, item) in items.enumerated() { menu.insertItem(item, at: i) }
         return menu
+    }
+
+    /// A task: into today, or put off to a day — moved into that day's note.
+    package func dayItems(forRow index: Int) -> [NSMenuItem] {
+        let all = rows
+        guard let move = onMoveRowsTo, all.indices.contains(index), Tasks.isTask(all[index]), all[index].task?.isDone != true else { return [] }
+        var items: [NSMenuItem] = []
+        let today = Day.today
+        if day != today {
+            items.append(ClosureMenuItem(title: "Do Today") { [weak self] in
+                guard let self else { return }
+                move(self, index, GraphPaths.dailyPath(for: today))
+            })
+        }
+        let later = NSMenuItem(title: "Later", action: nil, keyEquivalent: "")
+        later.submenu = NSMenu(title: "Later")
+        for option in TaskLater.allCases where option.day(from: today) != day {
+            later.submenu?.addItem(ClosureMenuItem(title: option.title) { [weak self] in
+                guard let self else { return }
+                move(self, index, GraphPaths.dailyPath(for: option.day(from: today)))
+            })
+        }
+        if let onMoveRows {
+            later.submenu?.addItem(.separator())
+            later.submenu?.addItem(ClosureMenuItem(title: "Another Day…") { [weak self] in
+                guard let self else { return }
+                onMoveRows(self, index)
+            })
+        }
+        items.append(later)
+        return items
     }
 
     // MARK: To VoiceOver

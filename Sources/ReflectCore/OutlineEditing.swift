@@ -148,6 +148,26 @@ public enum OutlineEditing {
         return (selection.lowerBound + below.count)..<(selection.upperBound + below.count)
     }
 
+    /// Moves the rows up past every sibling before them — but not above
+    /// `floor`, a row kept first. Nil when they are first already.
+    public static func moveToTop(_ rows: inout [Row], _ selection: Range<Int>, floor: Int = 0) -> Range<Int>? {
+        var moved: Range<Int>?
+        var probe = rows
+        while let next = moveUp(&probe, moved ?? selection), next.lowerBound >= floor {
+            rows = probe
+            moved = next
+        }
+        return moved
+    }
+
+    /// Moves the rows down past every sibling after them. Nil when they
+    /// are last already.
+    public static func moveToBottom(_ rows: inout [Row], _ selection: Range<Int>) -> Range<Int>? {
+        var moved: Range<Int>?
+        while let next = moveDown(&rows, moved ?? selection) { moved = next }
+        return moved
+    }
+
     /// Two runs of rows, the second now first. The blank lines between
     /// them are where the text had them, not with the rows that moved.
     private static func swappingGaps(_ first: [Row], _ second: [Row]) -> [Row] {
