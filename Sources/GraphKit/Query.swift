@@ -56,6 +56,24 @@ public struct Query: Equatable, Sendable {
     /// A flag a page has, or a kind it is.
     public enum Flag: String, CaseIterable, Sendable {
         case inbox, pinned, topic, template, wiki, day, week, note
+        /// A page that is itself a thing to do, still to do; one done.
+        case todo, done
+
+        /// What it says of a page, in a query's summary.
+        var phrase: String {
+            switch self {
+            case .inbox: "in the inbox"
+            case .pinned: "pinned"
+            case .topic: "topics"
+            case .template: "templates"
+            case .wiki: "wiki pages"
+            case .day: "days"
+            case .week: "weeks"
+            case .note: "notes"
+            case .todo: "still to do"
+            case .done: "done"
+            }
+        }
 
         func holds(for entry: PageIndex.Entry) -> Bool {
             switch self {
@@ -67,6 +85,8 @@ public struct Query: Equatable, Sendable {
             case .day: if case .day = entry.kind { true } else { false }
             case .week: if case .week = entry.kind { true } else { false }
             case .note: entry.kind == .note
+            case .todo: entry.page.taskState == .todo
+            case .done: entry.page.taskState == .done
             }
         }
     }
@@ -153,10 +173,12 @@ public struct Query: Equatable, Sendable {
         if !textContains.isEmpty { parts.append("mentioning “\(textContains)”") }
         if !hasFields.isEmpty { parts.append("with \(hasFields.joined(separator: ", "))") }
         if let wiki { parts.append(wiki ? "in the wiki" : "outside the wiki") }
+        if !flags.isEmpty { parts.append(flags.map(\.phrase).joined(separator: " and ")) }
         if parts.isEmpty { parts.append("Every page") }
         if sort != .automatic { parts.append("by \(sort.rawValue)\(descending ? ", newest first" : "")") }
         if let limit { parts.append("first \(limit)") }
-        return parts.joined(separator: ", ").replacingOccurrences(of: Self.this, with: "this page")
+        let said = parts.joined(separator: ", ").replacingOccurrences(of: Self.this, with: "this page")
+        return said.prefix(1).uppercased() + said.dropFirst()
     }
 
     // MARK: Asking

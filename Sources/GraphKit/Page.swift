@@ -58,6 +58,19 @@ public struct Page: Equatable, Sendable {
     /// The fields the page's own properties stand for, not kept in `fields`.
     public static let reservedFields: Set<String> = ["title", "id", "tags", "created", "modified"]
 
+    /// A page that is itself a thing to do, open or done: `task: todo`, and
+    /// once done `task: done` — the day it was done in `done:`, set by
+    /// whoever checks it off. Nil, a page that is not one.
+    public enum TaskState: String, CaseIterable, Sendable { case todo, done }
+
+    public var taskState: TaskState? {
+        get { self[field: "task"]?.text.flatMap { TaskState(rawValue: $0.trimmingCharacters(in: .whitespaces).lowercased()) } }
+        set {
+            self[field: "task"] = newValue.map { .text($0.rawValue) }
+            if newValue != .done { self[field: "done"] = nil }
+        }
+    }
+
     /// Whether the page is part of the wiki — canonical, kept up — rather
     /// than a passing note: `wiki: true`.
     public var isWiki: Bool {
