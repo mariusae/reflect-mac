@@ -89,3 +89,26 @@ import Testing
         #expect(Query(text: "linked from: Manifold").run(in: wiki, this: "") == ["Kin", "Relater"])
     }
 }
+
+@Suite struct SeedingTests {
+    @Test func aNewPageIsFilledInToBeFound() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("seed-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wiki = PageIndex(root: root)
+        try wiki.load()
+        try wiki.save(Page(title: "Manifold", text: "The project.\n"))
+        let query = Query(text: "tag: Work\nany tag: Ideas, Notes\nnot tag: Old\nlinks to: Manifold\nis: todo\nsort: -modified")
+        let page = query.seeded(Page(title: "Jot", text: "x\n"))
+        #expect(page.tags == ["Work", "Ideas"])
+        #expect(page[field: "related"]?.list == ["Manifold"])
+        #expect(page.taskState == .todo)
+        // Written, it is what the query finds.
+        try wiki.save(page)
+        #expect(query.run(in: wiki, this: "").contains("Jot"))
+        // A tag it has already of those it may have any of: none more.
+        #expect(Query(text: "any tag: Ideas, Notes").seeded(Page(title: "Y", tags: ["notes"])).tags == ["notes"])
+        // Nothing asked: nothing given.
+        #expect(Query(text: "sort: -modified").seeded(Page(title: "Z")) == Page(title: "Z"))
+    }
+}

@@ -104,3 +104,33 @@ extension Query {
 
     static func date(_ key: String) -> Date? { try? dateStyle.parse(key) }
 }
+
+/// A page made where a query is asked — a new card in a query river —
+/// filled in to be found by it: tagged as it asks; related to the page it
+/// asks for pages linking to, or linked from; a thing to do, or the
+/// wiki's, when it asks only for those. What it leaves out, or only
+/// sorts by, it is not given.
+extension Query {
+    public func seeded(_ page: Page) -> Page {
+        var page = page
+        func tag(_ tag: String) {
+            guard tag != Self.this, !page.tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) else { return }
+            page.tags.append(tag)
+        }
+        tags.forEach(tag)
+        // Any of these: the first.
+        if !anyTags.contains(where: { want in page.tags.contains { $0.caseInsensitiveCompare(want) == .orderedSame } }),
+           let first = anyTags.first {
+            tag(first)
+        }
+        var related = page[field: "related"]?.list ?? []
+        for target in [linksTo, linkedFrom] where !target.isEmpty && target != Self.this && !related.contains(target) {
+            related.append(target)
+        }
+        if !related.isEmpty { page[field: "related"] = .list(related) }
+        if flags.contains(.todo) { page.taskState = .todo }
+        if flags.contains(.wiki) || wiki == true { page.isWiki = true }
+        if wiki == false { page.isWiki = false }
+        return page
+    }
+}
