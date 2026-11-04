@@ -66,3 +66,26 @@ import Testing
         #expect(query.precedes(first, order[0].place))
     }
 }
+
+@Suite struct RelatedQueryTests {
+    @Test func relatedCountsAsLinking() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("related-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wiki = PageIndex(root: root)
+        try wiki.load()
+        try wiki.save(Page(title: "Manifold", text: "The project.\n"))
+        try wiki.save(Page(title: "Linker", text: "See [[Manifold]].\n"))
+        try wiki.save(Page(title: "Relater", fields: [.init("related", .list(["Manifold"]))], text: "x\n"))
+        try wiki.save(Page(title: "Kin", text: "y\n"))
+        try wiki.save(Page(title: "Elsewhere", text: "z\n"))
+        // Manifold names Kin as related.
+        var manifold = wiki["Manifold"]!
+        manifold.fields = [.init("related", .list(["Kin"]))]
+        try wiki.save(manifold)
+        #expect(Query(text: "links to: Manifold").run(in: wiki, this: "") == ["Kin", "Linker", "Relater"])
+        #expect(Query(text: "tag: x\nlinks to: Manifold").run(in: wiki, this: "").isEmpty)
+        #expect(Query(text: "linked from: Relater").run(in: wiki, this: "") == ["Manifold"])
+        #expect(Query(text: "linked from: Manifold").run(in: wiki, this: "") == ["Kin", "Relater"])
+    }
+}

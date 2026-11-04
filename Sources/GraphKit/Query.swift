@@ -32,7 +32,8 @@ public struct Query: Equatable, Sendable {
     /// Words in the title, and in the body.
     public var titleContains = ""
     public var textContains = ""
-    /// Pages linking to this one, and those this one links to.
+    /// Pages linking to this one, and those this one links to — a page
+    /// related to another, in its frontmatter's `related:`, as linking to it.
     public var linksTo = ""
     public var linkedFrom = ""
     /// The titles in this page's `list` field, in their order.
@@ -239,17 +240,17 @@ public struct Query: Equatable, Sendable {
             titles = anyTags.map(resolve).flatMap(index.tagged).filter { seen.insert($0).inserted }
             ordered = false
         } else if !linksTo.isEmpty {
-            titles = index.backlinks(to: resolve(linksTo))
+            titles = Self.linking(to: resolve(linksTo), in: index).sorted()
             ordered = false
         } else if !linkedFrom.isEmpty {
-            titles = index.links(from: resolve(linkedFrom)).filter { index[$0] != nil }.sorted()
+            titles = Self.linked(from: resolve(linkedFrom), in: index).sorted()
             ordered = false
         } else {
             titles = index.titles
             ordered = false
         }
-        let linkingTo = linksTo.isEmpty ? nil : Set(index.backlinks(to: resolve(linksTo)))
-        let linkedFromSet = linkedFrom.isEmpty ? nil : index.links(from: resolve(linkedFrom))
+        let linkingTo = linksTo.isEmpty ? nil : Self.linking(to: resolve(linksTo), in: index)
+        let linkedFromSet = linkedFrom.isEmpty ? nil : Self.linked(from: resolve(linkedFrom), in: index)
         titles = titles.filter { title in
             guard let page = index[title] else { return false }
             let own = Set(index.tags(of: title).map { $0.lowercased() })
@@ -297,6 +298,30 @@ public struct Query: Equatable, Sendable {
             }
         }
         if descending { titles.reverse() }
+    }
+
+    /// The pages related to a page either way: those it names in its
+    /// `related:`, and those naming it in theirs.
+    private static func related(to name: String, in index: PageIndex) -> Set<String> {
+        guard let title = index.title(for: name) else { return [] }
+        var found = Set(index.relating(to: title))
+        for other in index.entries[title]?.note.related ?? [] {
+            if let other = index.title(for: other), index[other] != nil { found.insert(other) }
+        }
+        found.remove(title)
+        return found
+    }
+
+    /// The pages linking to a page, or related to it.
+    static func linking(to name: String, in index: PageIndex) -> Set<String> {
+        let title = index.title(for: name) ?? name
+        return Set(index.backlinks(to: title)).union(related(to: name, in: index))
+    }
+
+    /// The pages a page links to, or is related to.
+    static func linked(from name: String, in index: PageIndex) -> Set<String> {
+        let title = index.title(for: name) ?? name
+        return index.links(from: title).filter { index[$0] != nil }.union(related(to: name, in: index))
     }
 
     private static func has(_ page: Page, _ field: String) -> Bool {
