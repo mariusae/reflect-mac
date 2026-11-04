@@ -19,6 +19,14 @@ import ReflectCore
 public struct Query: Equatable, Sendable {
     /// Tagged with every one of these.
     public var tags: [String] = []
+    /// Tagged with any one of these, when there are any.
+    public var anyTags: [String] = []
+    /// Pages tagged with these come first, and those with these last — as
+    /// a podcast app's playlist puts its high- and low-priority podcasts —
+    /// each tag after the one before it, or all as one, as `priorityMode` says.
+    public var highPriority: [String] = []
+    public var lowPriority: [String] = []
+    public var priorityMode: PriorityMode = .ranked
     /// Tagged with none of these.
     public var excludedTags: [String] = []
     /// Words in the title, and in the body.
@@ -45,6 +53,13 @@ public struct Query: Equatable, Sendable {
     public var unknown: [String] = []
 
     public init() {}
+
+    public enum PriorityMode: String, CaseIterable, Sendable {
+        /// Each priority tag ahead of the ones after it.
+        case ranked
+        /// High priority, then the rest, then low — no further ranked.
+        case grouped
+    }
 
     public enum Sort: String, CaseIterable, Sendable {
         /// In the order the source gives — a tag's or a list's — else by title.
@@ -111,6 +126,10 @@ public struct Query: Equatable, Sendable {
             let value = trimmed[trimmed.index(after: colon)...].trimmingCharacters(in: .whitespaces)
             switch key {
             case "tag": tags.append(value)
+            case "any tag": anyTags += Self.items(value)
+            case "high priority": highPriority += Self.items(value)
+            case "low priority": lowPriority += Self.items(value)
+            case "priority": priorityMode = PriorityMode(rawValue: value.lowercased()) ?? .ranked
             case "not tag": excludedTags.append(value)
             case "title": titleContains = value
             case "text": textContains = value
@@ -141,6 +160,7 @@ public struct Query: Equatable, Sendable {
     public var text: String {
         var lines: [String] = []
         lines += tags.map { "tag: \($0)" }
+        if !anyTags.isEmpty { lines.append("any tag: \(anyTags.joined(separator: ", "))") }
         lines += excludedTags.map { "not tag: \($0)" }
         if !titleContains.isEmpty { lines.append("title: \(titleContains)") }
         if !textContains.isEmpty { lines.append("text: \(textContains)") }
@@ -151,6 +171,9 @@ public struct Query: Equatable, Sendable {
         if let wiki { lines.append("wiki: \(wiki ? "yes" : "no")") }
         if !flags.isEmpty { lines.append("is: \(flags.map(\.rawValue).joined(separator: ", "))") }
         if sort != .automatic || descending { lines.append("sort: \(descending ? "-" : "")\(sort.rawValue)") }
+        if !highPriority.isEmpty { lines.append("high priority: \(highPriority.joined(separator: ", "))") }
+        if !lowPriority.isEmpty { lines.append("low priority: \(lowPriority.joined(separator: ", "))") }
+        if priorityMode != .ranked { lines.append("priority: \(priorityMode.rawValue)") }
         if let limit { lines.append("limit: \(limit)") }
         if show != .list { lines.append("show: \(show.rawValue)") }
         if !columns.isEmpty { lines.append("columns: \(columns.joined(separator: ", "))") }
@@ -166,6 +189,7 @@ public struct Query: Equatable, Sendable {
         var parts: [String] = []
         if !listedIn.isEmpty { parts.append("Listed in \(listedIn)") }
         if !tags.isEmpty { parts.append("Tagged \(tags.joined(separator: " and "))") }
+        if !anyTags.isEmpty { parts.append("Tagged \(anyTags.joined(separator: " or "))") }
         if !excludedTags.isEmpty { parts.append("not \(excludedTags.joined(separator: " or "))") }
         if !linksTo.isEmpty { parts.append("Linking to \(linksTo)") }
         if !linkedFrom.isEmpty { parts.append("Linked from \(linkedFrom)") }
@@ -186,6 +210,20 @@ public struct Query: Equatable, Sendable {
     /// The pages the query finds in a wiki, in order. `this` is the
     /// page it is asked from.
     public func run(in index: PageIndex, this: String) -> [String] {
+        let found = matched(in: index, this: this)
+        var titles = found.titles
+        sortTitles(&titles, ordered: found.ordered, in: index)
+        if let limit { titles = Array(titles.prefix(max(0, limit))) }
+        return titles
+    }
+
+    /// The pages the query finds, in the order their source gives — a
+    /// tag's, a list's — or none in particular.
+    func matching(in index: PageIndex, this: String) -> [String] {
+        matched(in: index, this: this).titles
+    }
+
+    private func matched(in index: PageIndex, this: String) -> (titles: [String], ordered: Bool) {
         func resolve(_ value: String) -> String { value == Self.this ? this : value }
         let tags = tags.map(resolve), excludedTags = excludedTags.map(resolve)
         let ordered: Bool
@@ -196,6 +234,10 @@ public struct Query: Equatable, Sendable {
         } else if let first = tags.first {
             titles = index.tagged(first)
             ordered = true
+        } else if !anyTags.isEmpty {
+            var seen = Set<String>()
+            titles = anyTags.map(resolve).flatMap(index.tagged).filter { seen.insert($0).inserted }
+            ordered = false
         } else if !linksTo.isEmpty {
             titles = index.backlinks(to: resolve(linksTo))
             ordered = false
@@ -212,6 +254,7 @@ public struct Query: Equatable, Sendable {
             guard let page = index[title] else { return false }
             let own = Set(index.tags(of: title).map { $0.lowercased() })
             if !tags.allSatisfy({ own.contains($0.lowercased()) }) { return false }
+            if !anyTags.isEmpty, !anyTags.contains(where: { own.contains(resolve($0).lowercased()) }) { return false }
             if excludedTags.contains(where: { own.contains($0.lowercased()) }) { return false }
             if let wanted = self.wiki, page.isWiki != wanted { return false }
             if !flags.isEmpty, let entry = index.entries[title], !flags.allSatisfy({ $0.holds(for: entry) }) { return false }
@@ -226,6 +269,11 @@ public struct Query: Equatable, Sendable {
             if !hasFields.allSatisfy({ field in Self.has(page, field) }) { return false }
             return true
         }
+        return (titles, ordered)
+    }
+
+    /// Titles in the order the query sorts them by.
+    private func sortTitles(_ titles: inout [String], ordered: Bool, in index: PageIndex) {
         switch sort {
         case .automatic:
             if !ordered { titles.sort { $0.localizedStandardCompare($1) == .orderedAscending } }
@@ -249,8 +297,6 @@ public struct Query: Equatable, Sendable {
             }
         }
         if descending { titles.reverse() }
-        if let limit { titles = Array(titles.prefix(max(0, limit))) }
-        return titles
     }
 
     private static func has(_ page: Page, _ field: String) -> Bool {
