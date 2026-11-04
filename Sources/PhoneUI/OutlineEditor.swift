@@ -1394,6 +1394,10 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
         autocorrectionType = .default
         smartDashesType = .no
         smartQuotesType = .no
+        // No grey words ahead of the caret: wrapped below its line, they
+        // ran over the next row, and the rows' height, measured with them
+        // there and then without, shrank a line at each key.
+        inlinePredictionType = .no
         keyboardDismissMode = .interactive
         markerTap.addTarget(self, action: #selector(tapped(_:)))
         markerTap.delegate = self
@@ -1678,16 +1682,18 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
         return rect
     }
 
-    /// The caret as tall as its type: a time block's last line stands as
-    /// tall as the block lasts, and the caret would reach down through it.
+    /// The caret as tall as its type: UIKit's reaches down through the
+    /// line's leading — and a row's last line, through the gap after it,
+    /// and a time block's, as far as the block lasts.
     private func typeCaretRect(for position: UITextPosition) -> CGRect {
         var rect = super.caretRect(for: position)
         let offset = self.offset(from: beginningOfDocument, to: position)
-        guard textStorage.length > 0, PhoneTimeSlot.any(in: textStorage) else { return rect }
+        guard textStorage.length > 0 else { return rect }
+        // Past a last, empty row, there is no type to be as tall as.
+        if offset >= textStorage.length, (textStorage.string as NSString).character(at: textStorage.length - 1) == 10 { return rect }
         let at = min(max(0, offset - 1), textStorage.length - 1)
         let font = textStorage.attribute(.font, at: at, effectiveRange: nil) as? UIFont ?? metrics.body
-        let line = ceil(font.lineHeight * max(1, metrics.lineHeight * metrics.size / max(font.lineHeight, 1)))
-        guard rect.height > line + 2 else { return rect }
+        guard rect.height > ceil(font.ascender - font.descender + 2) else { return rect }
         // On the words' baseline, as tall as they stand.
         let glyph = outlineLayout.glyphIndexForCharacter(at: min(offset, textStorage.length - 1))
         guard glyph < outlineLayout.numberOfGlyphs else { return rect }
@@ -1975,6 +1981,7 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
                 measured.fit += delta
                 measured.rows += delta
                 self.measured = measured
+                remeasureSoon()
             }
         }
         if !plainEdit || !styler.orphans.isEmpty { tidy() }
@@ -3196,6 +3203,23 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
         measured.fit += after - before
         measured.rows += after - before
         self.measured = measured
+        remeasureSoon()
+    }
+
+    private var remeasure: DispatchWorkItem?
+
+    /// The height kept by what each change did to its rows, taken whole
+    /// again once the typing pauses: whatever the keyboard did meanwhile
+    /// that the rows' difference missed, it does not last.
+    private func remeasureSoon() {
+        remeasure?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.localChanges == 0, self.measured != nil else { return }
+            self.measured = nil
+            self.heightMayHaveChanged()
+        }
+        remeasure = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
     }
 
     private func measure(_ width: CGFloat) -> (fit: CGFloat, rows: CGFloat) {

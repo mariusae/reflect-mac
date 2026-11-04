@@ -42,6 +42,7 @@ let package = Package(
         // draws — Prism's on the iPhone, and Weft's: as ReflectUI is the Mac's.
         .target(name: "PhoneUI", dependencies: ["ReflectCore", "GraphKit", "PrismCore"]),
         .testTarget(name: "ReflectCoreTests", dependencies: ["ReflectCore", "ReflectGit2", "PrismCore"]),
+        .testTarget(name: "PhoneUITests", dependencies: ["PhoneUI", "ReflectCore"]),
         .testTarget(name: "GraphKitTests", dependencies: ["GraphKit"], resources: [.copy("Fixtures")]),
     ],
     swiftLanguageModes: [.v5]

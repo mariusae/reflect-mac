@@ -22,27 +22,38 @@ const instructions: Record<Task, string> = {
 /// The lines Claude gives for a note: its summary's, or its tasks'.
 export async function ask(apiKey: string, task: Task, title: string, text: string): Promise<string[]> {
   const client = new Anthropic({ apiKey });
-  const response = await client.beta.messages.create({
-    model: "claude-opus-5-5",
-    max_tokens: 16000,
-    // A refusal tried again on another model, chosen by what was refused.
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
-    system: instructions[task],
-    output_config: {
-      effort: "low",
-      format: {
-        type: "json_schema",
-        schema: {
-          type: "object",
-          properties: { lines: { type: "array", items: { type: "string" } } },
-          required: ["lines"],
-          additionalProperties: false,
+  const response = await client.beta.messages
+    .create({
+      model: "claude-opus-5-5",
+      max_tokens: 16000,
+      // A refusal tried again on another model, chosen by what was refused.
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default",
+      system: instructions[task],
+      output_config: {
+        effort: "low",
+        format: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            properties: { lines: { type: "array", items: { type: "string" } } },
+            required: ["lines"],
+            additionalProperties: false,
+          },
         },
       },
-    },
-    messages: [{ role: "user", content: `# ${title}\n\n${text}` }],
-  });
+      messages: [{ role: "user", content: `# ${title}\n\n${text}` }],
+    })
+    .catch((error: unknown) => {
+      // Anthropic's own complaint — no credit, a bad key, too busy — said
+      // to the app, not a bare "Something went wrong".
+      if (error instanceof Anthropic.APIError) {
+        console.error(error);
+        const message = (error.error as { error?: { message?: string } } | undefined)?.error?.message ?? error.message;
+        throw new Response(`Anthropic answered ${error.status ?? "nothing"}: ${message}\n`, { status: 502 });
+      }
+      throw error;
+    });
   if (response.stop_reason === "refusal") throw new Response("Claude declined to read this note\n", { status: 422 });
   const json = response.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
   const lines = (JSON.parse(json) as { lines?: unknown }).lines;
