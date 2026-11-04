@@ -777,7 +777,14 @@ package final class OutlineTextView: NSTextView {
     }
 
     package override func mouseMoved(with event: NSEvent) {
-        if isCovered(event) { return }
+        if isCovered(event) {
+            // Over something else — in an app with many notes in one column,
+            // another's words: what this one showed under the pointer goes,
+            // as it would on leaving. Its task's buttons, out in the margin, stay.
+            if rowButtons?.contains(event) != true { hover(at: nil) }
+            hoverPicture(at: nil)
+            return
+        }
         super.mouseMoved(with: event)
         let point = convert(event.locationInWindow, from: nil)
         hover(at: point)

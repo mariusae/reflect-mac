@@ -47,13 +47,79 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
         LinkCompletion.sources = SearchSources(index: index)
     }
 
+    /// Where a `[[link]]`'s card finds the note it is to, for every outline
+    /// editor: its file in the graph, and what it says — nil, a note not
+    /// written yet. Unset, every link's card says there is no such note.
+    public static func findNotes(_ find: @escaping @MainActor (String) -> (path: String, source: String)?) {
+        LinkCard.noteSource = { title in find(title).map { (NoteRef(path: $0.path), $0.source) } }
+    }
+
+    /// Where what is kept of how notes are shown — a picture's size, a PDF's
+    /// page, a carousel's place — is kept: the app's own folder in
+    /// Application Support, each app's apart. Said before any editor is made;
+    /// `taking`, a folder whose state is taken, the first time, as it was.
+    public static func keepState(in folder: String, taking earlier: String? = nil) {
+        SessionState.folder = folder
+        guard let earlier else { return }
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let mine = support.appendingPathComponent(folder).appendingPathComponent("State.json")
+        let theirs = support.appendingPathComponent(earlier).appendingPathComponent("State.json")
+        guard !FileManager.default.fileExists(atPath: mine.path), FileManager.default.fileExists(atPath: theirs.path) else { return }
+        try? FileManager.default.createDirectory(at: mine.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? FileManager.default.copyItem(at: theirs, to: mine)
+    }
+
+    /// What is kept written now, not a moment later: as the app quits.
+    public static func saveState() { SessionState.shared.writeNow() }
+
+    /// Each graph's pictures, read and fetched once for every editor of it.
+    private static var pictureStores: [URL: ImageStore] = [:]
+
+    private static func pictures(of root: URL) -> ImageStore {
+        let key = root.standardizedFileURL
+        if let known = pictureStores[key] { return known }
+        let made = ImageStore(root: root)
+        pictureStores[key] = made
+        return made
+    }
+
+    /// The day the page is, if it is one: today's time blocks show the time
+    /// now, and a task on it is not offered Do Today.
+    public var day: Day? {
+        get { editor.day }
+        set { if editor.day != newValue { editor.day = newValue } }
+    }
+
+    /// Whether the page is private: its links are not looked up on the web.
+    public var isPrivate: Bool {
+        get { editor.isPrivateNote }
+        set { editor.isPrivateNote = newValue }
+    }
+
+    /// A task moved to a day — Do Today, Later — told the rows and the day,
+    /// to put at the top of that day's page, undone with the move. Unset,
+    /// a task's menu has neither.
+    public var onMoveToDay: ((_ rows: [Row], _ day: Day, _ undo: UndoManager?) -> Void)? {
+        didSet {
+            guard let onMoveToDay else { editor.onMoveRowsTo = nil; return }
+            editor.onMoveRowsTo = { [weak self] editor, index, path in
+                guard let day = GraphPaths.day(fromDailyPath: path) else { return }
+                let name = day == .today ? "Today" : day == Day.today.adding(1) ? "Tomorrow" : self?.dayName(day) ?? day.description
+                editor.moveRows(at: index, named: name) { rows, undo in onMoveToDay(rows, day, undo) }
+            }
+        }
+    }
+
+    /// What a day is called, in an undo's name: a later one's.
+    public var dayName: (Day) -> String = { $0.description }
+
     /// `root`: the graph's folder, where its pictures are.
     public init(text: String, fontSize: CGFloat = 15, root: URL? = nil) {
         editor = OutlineTextView(metrics: OutlineMetrics(fontSize: fontSize))
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 40))
         editor.delegate = self
         editor.navigator = self
-        if let root { editor.images = ImageStore(root: root) }
+        if let root { editor.images = Self.pictures(of: root) }
         editor.onPicturesChanged = { [weak self] in self?.heightChanged() }
         addSubview(editor)
         load(text)
@@ -64,6 +130,40 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     public required init?(coder: NSCoder) { fatalError() }
 
     public override var isFlipped: Bool { true }
+
+    // MARK: Scrolling
+
+    /// Where the pointer is, as the editor follows it, is worked out from
+    /// what of it is in view; scrolled by a column it is not the document
+    /// of — another app's, with many of these in it — that is not worked
+    /// out again: what is under the pointer, a picture's grip, the cursor,
+    /// would be told only of part of it. Told again as the column scrolls.
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+        scrollObserver = nil
+        guard window != nil, let clip = enclosingScrollView?.contentView else { return }
+        clip.postsBoundsChangedNotifications = true
+        scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scrolled() }
+        }
+        scrolled()
+    }
+
+    private var scrollObserver: NSObjectProtocol?
+    private var trackingStale = false
+
+    /// The editor's tracking worked out again, once a turn however much it scrolled.
+    private func scrolled() {
+        guard !trackingStale else { return }
+        trackingStale = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            trackingStale = false
+            editor.updateTrackingAreas()
+            window?.invalidateCursorRects(for: editor)
+        }
+    }
 
     /// Shows a body, forgetting what was edited before — unless it is what
     /// is shown — its rows folded as `folds` say.
@@ -226,7 +326,10 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
 
     // MARK: OutlineTextViewNavigator
 
-    package func outlineView(_ view: OutlineTextView, leaveThrough edge: OutlineTextView.Edge, x: CGFloat) {}
+    /// ↑ on its first line, ↓ on its last: to its start, or its end, as Prism's.
+    package func outlineView(_ view: OutlineTextView, leaveThrough edge: OutlineTextView.Edge, x: CGFloat) {
+        view.enter(from: edge, x: edge == .top ? 0 : .greatestFiniteMagnitude)
+    }
 
     package func outlineView(_ view: OutlineTextView, open url: URL, inSplit: Bool) {
         if let title = url.wikiTarget { onOpenTitle?(title) } else { onOpenURL?(url) }
