@@ -1691,14 +1691,21 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
         guard textStorage.length > 0 else { return rect }
         // Past a last, empty row, there is no type to be as tall as.
         if offset >= textStorage.length, (textStorage.string as NSString).character(at: textStorage.length - 1) == 10 { return rect }
-        let at = min(max(0, offset - 1), textStorage.length - 1)
+        let text = textStorage.string as NSString
+        let here = min(offset, textStorage.length - 1)
+        // An empty row: its line break alone, which is laid out at the foot
+        // of the line, not on the words' baseline.
+        let empty = text.character(at: here) == 10 && (here == 0 || text.character(at: here - 1) == 10)
+        let at = empty ? here : min(max(0, offset - 1), textStorage.length - 1)
         let font = textStorage.attribute(.font, at: at, effectiveRange: nil) as? UIFont ?? metrics.body
         guard rect.height > ceil(font.ascender - font.descender + 2) else { return rect }
-        // On the words' baseline, as tall as they stand.
-        let glyph = outlineLayout.glyphIndexForCharacter(at: min(offset, textStorage.length - 1))
+        // On the words' baseline, as tall as they stand — an empty row's
+        // where its first letter will put it, as its mark is drawn.
+        let glyph = outlineLayout.glyphIndexForCharacter(at: here)
         guard glyph < outlineLayout.numberOfGlyphs else { return rect }
         let fragment = outlineLayout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-        let baseline = fragment.minY + outlineLayout.location(forGlyphAt: glyph).y + textContainerInset.top
+        let used = outlineLayout.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
+        let baseline = (empty ? used.maxY + font.descender : fragment.minY + outlineLayout.location(forGlyphAt: glyph).y) + textContainerInset.top
         rect.origin.y = (baseline - font.ascender - 1).rounded()
         rect.size.height = ceil(font.ascender - font.descender + 2)
         return rect

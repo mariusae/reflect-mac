@@ -43,6 +43,9 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     public var onAskTitle: (() -> Void)?
     /// At the end of the first row: Title.
     lazy var titleChip = makeTitleChip()
+    /// Whether Title is offered at the end of an untitled page's first row;
+    /// else it is titled by the app's own command alone.
+    public var offersTitleChip = true
     /// What the editor does not show — a body's trailing gap — kept as it was.
     private var shell = Outline(rows: [])
     public private(set) var text = ""

@@ -49,7 +49,7 @@ extension PageOutlineEditor {
     /// The chip at the end of the first row while the caret is on it: an
     /// untitled page's, with words to be titled by.
     func placeTitleChip() {
-        guard let text = editor.textStorage?.string as NSString?, window?.firstResponder === editor, isUntitled(),
+        guard offersTitleChip, let text = editor.textStorage?.string as NSString?, window?.firstResponder === editor, isUntitled(),
               let row = firstRow, case let words = words(of: row, in: text), words.length > 0,
               case let caret = editor.selectedRange(), caret.location >= row.location, NSMaxRange(caret) <= NSMaxRange(words),
               !Untitled.title(from: text.substring(with: words)).isEmpty,
