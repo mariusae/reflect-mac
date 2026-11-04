@@ -593,7 +593,10 @@ package enum InlineMarkdown {
                 underline(content)
                 let name = title.components(separatedBy: "|").first?.trimmingCharacters(in: .whitespaces) ?? title
                 let kind: LinkPill.Kind = Day(name) != nil || Week(name) != nil ? .day : RiverLink.name(name) != nil ? .river : .page
-                if pills { LinkPill.mark(storage, span.range, kind: kind, flat: flat) }
+                if pills {
+                    let icon = MainActor.assumeIsolated { LinkPill.targetIcon(name) }
+                    LinkPill.mark(storage, span.range, kind: kind, flat: flat, icon: icon)
+                }
                 // To an untitled page, by its made-up name: what the page
                 // begins with shown instead — but while the caret is in it.
                 if content.length > 0, Untitled.isName(text.substring(with: content)),

@@ -540,7 +540,8 @@ public final class PhoneStyler: NSObject, NSTextStorageDelegate {
                 switch span.kind {
                 case .wikiLink(let title):
                     let name = title.components(separatedBy: "|")[0].trimmingCharacters(in: .whitespaces)
-                    symbol = Day(name) != nil ? "calendar" : RiverLink.name(name) != nil ? RiverLink.symbol : "doc.text"
+                    symbol = MainActor.assumeIsolated { PhoneLayoutManager.targetIcon(name) }
+                        ?? (Day(name) != nil ? "calendar" : RiverLink.name(name) != nil ? RiverLink.symbol : "doc.text")
                 case .link: symbol = "link"
                 default: symbol = nil
                 }
@@ -681,6 +682,10 @@ public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate 
     /// Whether links have a pill behind them.
     /// Links on pills, an icon in each — not on the flat page, where they are underlined.
     public static var drawsPills: Bool { !Card.flat }
+
+    /// A link's target's own icon — a page's, a saved river's — by its name,
+    /// shown in its pill instead of its kind's. Told by the app.
+    @MainActor public static var targetIcon: (String) -> String? = { _ in nil }
 
     public func layoutManager(_ layoutManager: NSLayoutManager, shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>,
                        properties: UnsafePointer<NSLayoutManager.GlyphProperty>, characterIndexes: UnsafePointer<Int>,

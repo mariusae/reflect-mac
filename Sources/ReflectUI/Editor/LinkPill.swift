@@ -19,15 +19,19 @@ package final class LinkPill: NSObject {
     package let hasLead: Bool
     /// On the flat page: no pill, no icon — the link underlined, as words are.
     package let flat: Bool
+    /// What it is to's own icon, shown instead of its kind's.
+    package let icon: String?
 
-    package init(_ kind: Kind, hasLead: Bool = true, flat: Bool = false) {
+    package init(_ kind: Kind, hasLead: Bool = true, flat: Bool = false, icon: String? = nil) {
         self.kind = kind
         self.flat = flat
+        self.icon = icon
         self.hasLead = hasLead && kind != .tag && !flat
     }
 
     package var symbol: String? {
         guard hasLead else { return nil }
+        if let icon { return icon }
         switch kind {
         case .web: return "link"
         case .page: return "doc.text"
@@ -58,6 +62,10 @@ package final class LinkPill: NSObject {
     /// is in it. Told by the app, from its index.
     @MainActor package static var untitledName: (String) -> String? = { _ in nil }
 
+    /// A link's target's own icon — a page's, a saved river's — by its name.
+    /// Told by the app, from its index.
+    @MainActor package static var targetIcon: (String) -> String? = { _ in nil }
+
     /// No word marked misspelled where what is written is not shown: hidden
     /// markup, a link shown as an untitled page's name.
     @MainActor package static func spellingState(_ value: Int, in range: NSRange, of view: NSTextView) -> Int {
@@ -78,9 +86,9 @@ package final class LinkPill: NSObject {
     /// Marks a span as a pill: its lead, where the icon goes, on its first
     /// character, and its tail on its last — both hidden markup, laid out
     /// with room of their own.
-    package static func mark(_ storage: NSTextStorage, _ range: NSRange, kind: Kind, flat: Bool = false) {
+    package static func mark(_ storage: NSTextStorage, _ range: NSRange, kind: Kind, flat: Bool = false, icon: String? = nil) {
         guard range.length >= 2 else { return }
-        let pill = LinkPill(kind, flat: flat)
+        let pill = LinkPill(kind, flat: flat, icon: icon)
         storage.addAttribute(.outlineLink, value: pill, range: range)
         // A tag's characters are all shown: no room of its own to take.
         guard pill.hasLead else { return }

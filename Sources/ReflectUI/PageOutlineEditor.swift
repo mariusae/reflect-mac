@@ -81,6 +81,12 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
         LinkPill.untitledName = find
     }
 
+    /// A link's target's own icon, by its name — shown in its pill instead
+    /// of its kind's — for every outline editor's links.
+    public static func iconTargets(_ find: @escaping @MainActor (String) -> String?) {
+        LinkPill.targetIcon = find
+    }
+
     /// Where what is kept of how notes are shown — a picture's size, a PDF's
     /// page, a carousel's place — is kept: the app's own folder in
     /// Application Support, each app's apart. Said before any editor is made;
