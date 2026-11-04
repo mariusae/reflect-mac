@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		AA000000000000000000000D /* ReflectCore in Frameworks */ = {isa = PBXBuildFile; productRef = AA000000000000000000000C /* ReflectCore */; };
 		AA000000000000000000000F /* ReflectGit2 in Frameworks */ = {isa = PBXBuildFile; productRef = AA000000000000000000001A /* ReflectGit2 */; };
+		AA0000000000000000000021 /* PhoneUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA000000000000000000001F /* PhoneUI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -16,6 +17,19 @@
 		AA000000000000000000001B /* GitHub.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = GitHub.xcconfig; sourceTree = "<group>"; };
 		AA000000000000000000001C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		AA0000000000000000000022 /* Exceptions for "Shared" folder in "ReflectiOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				PrismStore.swift,
+				PushRelay.swift,
+				QueueController.swift,
+				Reader.swift,
+			);
+			target = AA0000000000000000000006 /* ReflectiOS */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		AA0000000000000000000003 /* ReflectiOS */ = {
@@ -25,6 +39,9 @@
 		};
 		AA000000000000000000001D /* Shared */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				AA0000000000000000000022 /* Exceptions for "Shared" folder in "ReflectiOS" target */,
+			);
 			path = Shared;
 			sourceTree = "<group>";
 		};
@@ -37,6 +54,7 @@
 			files = (
 				AA000000000000000000000D /* ReflectCore in Frameworks */,
 				AA000000000000000000000F /* ReflectGit2 in Frameworks */,
+				AA0000000000000000000021 /* PhoneUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -85,6 +103,7 @@
 			packageProductDependencies = (
 				AA000000000000000000000C /* ReflectCore */,
 				AA000000000000000000001A /* ReflectGit2 */,
+				AA000000000000000000001F /* PhoneUI */,
 			);
 			productName = ReflectiOS;
 			productReference = AA0000000000000000000005 /* Reflect.app */;
@@ -284,6 +303,10 @@
 		AA000000000000000000001A /* ReflectGit2 */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ReflectGit2;
+		};
+		AA000000000000000000001F /* PhoneUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PhoneUI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

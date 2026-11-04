@@ -141,7 +141,7 @@ public final class SyncRelayListener {
         guard task == nil, let host = SyncRelay.host,
               let name = repository.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return }
         state = .connecting
-        Task {
+        Task { [self] in
             let token: String
             do {
                 token = try await accessToken()
