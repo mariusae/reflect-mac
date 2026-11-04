@@ -87,7 +87,8 @@ public enum LinkSuggestions {
         // Topics first — what a link most often means to reach — each kind as the index ranks it.
         let notes = index.matches(query, limit: limit).filter { !$0.entry.title.isEmpty }
         for match in notes.filter({ $0.entry.isTopic }) + notes.filter({ !$0.entry.isTopic }) {
-            found.append(Candidate(title: match.entry.title, name: match.entry.title, isDay: false, isTopic: match.entry.isTopic))
+            // Shown as it is shown — an untitled note as it begins — linked by its title.
+            found.append(Candidate(title: match.entry.shown, name: match.entry.title, isDay: false, isTopic: match.entry.isTopic))
         }
         // Saved rivers its words name, kept a place among the notes.
         let rivers = RiverLink.matching(query, in: index.root).map {

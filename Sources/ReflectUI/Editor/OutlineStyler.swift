@@ -594,6 +594,15 @@ package enum InlineMarkdown {
                 let name = title.components(separatedBy: "|").first?.trimmingCharacters(in: .whitespaces) ?? title
                 let kind: LinkPill.Kind = Day(name) != nil || Week(name) != nil ? .day : RiverLink.name(name) != nil ? .river : .page
                 if pills { LinkPill.mark(storage, span.range, kind: kind, flat: flat) }
+                // To an untitled page, by its made-up name: what the page
+                // begins with shown instead — but while the caret is in it.
+                if content.length > 0, Untitled.isName(text.substring(with: content)),
+                   caret.map({ NSLocationInRange($0, span.range) || $0 == NSMaxRange(span.range) }) != true,
+                   let label = MainActor.assumeIsolated({ LinkPill.untitledName(name) }) {
+                    let shown = label.count > 48 ? String(label.prefix(47)) + "…" : label
+                    storage.addAttribute(.outlineHidden, value: true, range: content)
+                    storage.addAttribute(.outlineLinkLabel, value: shown, range: NSRange(location: content.location, length: 1))
+                }
             case .image(let reference):
                 // Pictures side by side: one carousel, drawn at the first's place.
                 if let group = carousels[span.range.location] {
@@ -618,7 +627,7 @@ package enum InlineMarkdown {
             }
             // A link shown as its site: the rest of it hidden, the site small and grey.
             if let site {
-                for key: NSAttributedString.Key in [.outlineLink, .outlineLinkLead, .outlineLinkTail, .outlineLinkEllipsis, .underlineStyle] {
+                for key: NSAttributedString.Key in [.outlineLink, .outlineLinkLead, .outlineLinkTail, .outlineLinkEllipsis, .outlineLinkLabel, .underlineStyle] {
                     storage.removeAttribute(key, range: span.range)
                 }
                 storage.addAttribute(.outlineHidden, value: true, range: span.range)
@@ -772,7 +781,8 @@ package final class HiddenMarkupGlyphs: NSObject, NSLayoutManagerDelegate {
             || storage.attribute(.outlineFileTail, at: index, effectiveRange: nil) != nil
             || storage.attribute(.outlineLinkLead, at: index, effectiveRange: nil) != nil
             || storage.attribute(.outlineLinkTail, at: index, effectiveRange: nil) != nil
-            || storage.attribute(.outlineLinkEllipsis, at: index, effectiveRange: nil) != nil {
+            || storage.attribute(.outlineLinkEllipsis, at: index, effectiveRange: nil) != nil
+            || storage.attribute(.outlineLinkLabel, at: index, effectiveRange: nil) != nil {
             return .whitespace
         }
         if storage.attribute(.outlineHidden, at: index, effectiveRange: nil) != nil {
@@ -797,6 +807,8 @@ package final class HiddenMarkupGlyphs: NSObject, NSLayoutManagerDelegate {
             width = LinkPill.tailWidth
         } else if storage.attribute(.outlineLinkEllipsis, at: characterIndex, effectiveRange: nil) != nil {
             width = LinkPill.ellipsisWidth(for: font)
+        } else if let label = storage.attribute(.outlineLinkLabel, at: characterIndex, effectiveRange: nil) as? String {
+            width = LinkPill.labelWidth(label, font: font)
         }
         return NSRect(x: glyphPosition.x, y: glyphPosition.y, width: width, height: ceil(font.ascender - font.descender))
     }

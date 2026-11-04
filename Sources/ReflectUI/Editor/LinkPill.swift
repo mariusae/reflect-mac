@@ -53,6 +53,26 @@ package final class LinkPill: NSObject {
 
     package static var tint: NSColor { .controlAccentColor }
 
+    /// What an untitled page is shown as — what it begins with — by its
+    /// made-up name: a link to it shows that instead, but while the caret
+    /// is in it. Told by the app, from its index.
+    @MainActor package static var untitledName: (String) -> String? = { _ in nil }
+
+    /// No word marked misspelled where what is written is not shown: hidden
+    /// markup, a link shown as an untitled page's name.
+    @MainActor package static func spellingState(_ value: Int, in range: NSRange, of view: NSTextView) -> Int {
+        guard value != 0, let storage = view.textStorage, NSMaxRange(range) <= storage.length else { return value }
+        var shown = true
+        storage.enumerateAttributes(in: range) { attributes, _, stop in
+            if attributes[.outlineHidden] != nil || attributes[.outlineLinkLabel] != nil { shown = false; stop.pointee = true }
+        }
+        return shown ? value : 0
+    }
+
+    package static func labelWidth(_ label: String, font: NSFont) -> CGFloat {
+        ceil((label as NSString).size(withAttributes: [.font: font]).width)
+    }
+
     // MARK: Styling
 
     /// Marks a span as a pill: its lead, where the icon goes, on its first
@@ -115,6 +135,9 @@ extension NSAttributedString.Key {
     package static let outlineExternal = NSAttributedString.Key("ReflectOutlineExternal")
     /// On the hidden character laid out as a shortened address's ellipsis.
     package static let outlineLinkEllipsis = NSAttributedString.Key("ReflectOutlineLinkEllipsis")
+    /// On the hidden character laid out as room for what a link to an
+    /// untitled page shows: the page's name as it begins, a `String`.
+    package static let outlineLinkLabel = NSAttributedString.Key("ReflectOutlineLinkLabel")
 }
 
 extension OutlineLayoutManager {
@@ -195,6 +218,15 @@ extension OutlineLayoutManager {
                                          width: size.width, height: size.height),
                               from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
                 }
+            }
+            // An untitled page's name, in the room of the name it is linked by.
+            storage.enumerateAttribute(.outlineLinkLabel, in: range) { value, at, _ in
+                guard let label = value as? String else { return }
+                let glyph = glyphIndexForCharacter(at: at.location)
+                let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+                let point = location(forGlyphAt: glyph)
+                (label as NSString).draw(at: NSPoint(x: line.minX + point.x + origin.x, y: line.minY + point.y - ascent + origin.y),
+                                         withAttributes: [.font: font, .foregroundColor: ink])
             }
             // A shortened address's ellipsis, in the room its hidden middle has.
             storage.enumerateAttribute(.outlineLinkEllipsis, in: range) { value, at, _ in

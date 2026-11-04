@@ -20,11 +20,29 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     public var onFoldsChange: (([OutlineFolds.Mark]) -> Void)?
     /// Told when the caret comes into the editor, and when it leaves.
     public var onFocusChange: ((Bool) -> Void)? {
-        get { editor.onFirstResponderChange }
-        set { editor.onFirstResponderChange = newValue }
+        didSet {
+            let told = onFocusChange
+            editor.onFirstResponderChange = { [weak self] focused in
+                told?(focused)
+                self?.placeTitleChip()
+            }
+        }
     }
 
-    private let editor: OutlineTextView
+    let editor: OutlineTextView
+
+    // MARK: Titling
+
+    /// Whether the page has no title yet: Title is offered at the end of
+    /// its first row while the caret is on it, to make that row its title.
+    public var isUntitled: () -> Bool = { false }
+    /// Told the title an untitled page's first row makes, as the row goes.
+    public var onTitle: ((String) -> Void)?
+    /// Asked to title a page with no first row to title it by — or one
+    /// titled already: its title, to be typed.
+    public var onAskTitle: (() -> Void)?
+    /// At the end of the first row: Title.
+    lazy var titleChip = makeTitleChip()
     /// What the editor does not show — a body's trailing gap — kept as it was.
     private var shell = Outline(rows: [])
     public private(set) var text = ""
@@ -52,6 +70,12 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     /// written yet. Unset, every link's card says there is no such note.
     public static func findNotes(_ find: @escaping @MainActor (String) -> (path: String, source: String)?) {
         LinkCard.noteSource = { title in find(title).map { (NoteRef(path: $0.path), $0.source) } }
+    }
+
+    /// What an untitled page is shown as, by its made-up name: what it
+    /// begins with, for every outline editor's links to it.
+    public static func nameUntitled(_ find: @escaping @MainActor (String) -> String?) {
+        LinkPill.untitledName = find
     }
 
     /// Where what is kept of how notes are shown — a picture's size, a PDF's
@@ -269,6 +293,7 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
         let height = height(forWidth: bounds.width)
         editor.frame = NSRect(x: 0, y: 0, width: bounds.width, height: height)
         if abs(height - bounds.height) > 0.5 { checkHeight() }
+        placeTitleChip()
     }
 
     private func heightChanged() {
@@ -308,7 +333,14 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
 
     // MARK: NSTextViewDelegate
 
+    public func textView(_ textView: NSTextView, shouldSetSpellingState value: Int, range: NSRange) -> Int {
+        LinkPill.spellingState(value, in: range, of: textView)
+    }
+
+    public func textViewDidChangeSelection(_ notification: Notification) { placeTitleChip() }
+
     public func textDidChange(_ notification: Notification) {
+        defer { placeTitleChip() }
         var outline = shell
         outline.rows = editor.fullRows
         text = outline.isBlank ? "" : OutlineMarkdown.serialize(outline)

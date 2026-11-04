@@ -75,6 +75,8 @@ final class Session {
         }
         LinkCompletion.sources = SearchSources(index: index)
         TemplatesMenu.templates = { [weak self] in self?.index.templates ?? [] }
+        // Links to untitled notes shown as the notes begin.
+        LinkPill.untitledName = { [weak self] name in self?.index.entry("\(GraphPaths.notesDirectory)/\(name).md")?.untitledName }
         LinkCard.noteSource = { [weak self] title in
             guard let self, let path = index.resolve(title) else { return nil }
             return (NoteRef(path: path), graph.read(path: path) ?? "")
@@ -358,7 +360,7 @@ final class Session {
     func name(of path: String) -> (title: String, detail: String?) {
         if let day = GraphPaths.day(fromDailyPath: path) { return (OpenQuickly.dayTitle(day), day == .today ? "Today" : nil) }
         if let week = GraphPaths.week(fromWeeklyPath: path) { return ("Week \(week.week)", OpenQuickly.weekRange(week)) }
-        return (index.entry(path)?.title ?? (path as NSString).deletingPathExtension.components(separatedBy: "/").last ?? path, nil)
+        return (index.entry(path)?.shown ?? (path as NSString).deletingPathExtension.components(separatedBy: "/").last ?? path, nil)
     }
 
     // MARK: New notes, and their titles
@@ -625,7 +627,7 @@ final class Session {
             places.append(Place(title: OpenQuickly.dayTitle(day), path: path, detail: graph.exists(path: path) ? relative : relative + " · no note yet"))
         }
         places += index.matches(trimmed, limit: 20).map {
-            Place(title: $0.entry.title, path: $0.entry.path,
+            Place(title: $0.entry.shown, path: $0.entry.path,
                   detail: $0.alias.map { "as \($0)" } ?? Self.ago.localizedString(for: $0.entry.modified, relativeTo: Date()),
                   flags: NoteFlags($0.entry), cover: $0.entry.cover)
         }

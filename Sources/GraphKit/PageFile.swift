@@ -64,7 +64,10 @@ public enum PageFile {
         let parts = split(source)
         let old = Header(raw: parts.header ?? "")
         let oldHeading = old["title"] == nil && !fixedTitle ? heading(parts.body) : nil
-        let titled = !fixedTitle && oldHeading == nil && (old["title"] != nil || page.title != fallbackTitle)
+        // Titled now, where it was not — as an untitled page given a title
+        // is — by a heading, as a new page is.
+        let headed = headingTitle && !fixedTitle && oldHeading == nil && old["title"] == nil && page.title != fallbackTitle
+        let titled = !fixedTitle && oldHeading == nil && !headed && (old["title"] != nil || page.title != fallbackTitle)
         let wanted = entries(for: page, title: titled)
         let wantedByKey = Dictionary(wanted.map { ($0.key, $0.value) }, uniquingKeysWith: { first, _ in first })
         var lines: [String] = []
@@ -81,13 +84,17 @@ public enum PageFile {
             lines += Header.lines(key: entry.key, value: entry.value)
         }
         var body = page.text
-        if let oldHeading {
+        if headed {
+            body = "# \(page.title)\n" + (page.text.isEmpty ? "" : "\n" + page.text)
+        } else if let oldHeading {
             let line = page.title == oldHeading.title ? oldHeading.line : "# \(page.title)"
             body = oldHeading.leading + line + oldHeading.after + page.text
         }
         guard let header = parts.header else {
             return lines.isEmpty ? body : "---\n" + lines.joined(separator: "\n") + "\n---\n" + body
         }
+        // Every key it had taken out: no frontmatter left, empty.
+        if lines.isEmpty, old.entries.contains(where: { $0.key != nil }) { return body }
         // An empty header's closing fence has no newline before it to keep.
         let gap = header.isEmpty && !lines.isEmpty ? "\n" : ""
         return parts.open + lines.joined(separator: "\n") + gap + parts.close + body

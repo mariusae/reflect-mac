@@ -98,7 +98,7 @@ final class MovePicker: NSViewController, NSTextFieldDelegate, NSPopoverDelegate
         let today = Day.today
         var offered = [today, today.adding(1)].map(dayChoice).filter { $0.path != source }
         offered += session.index.pinned.filter { $0.path != source }.prefix(8).map { entry in
-            Choice(title: entry.title, detail: nil, symbol: "doc.text", path: entry.path, pinned: true)
+            Choice(title: entry.shown, detail: nil, symbol: "doc.text", path: entry.path, pinned: true)
         }
         return offered
     }

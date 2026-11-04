@@ -36,6 +36,12 @@ public struct NoteEntry: Equatable, Sendable {
     /// `related:`, a list of names — as written. A relation goes both ways:
     /// the other note is related to this one too.
     public var related: [String] = []
+    /// What an untitled page is shown as — its first line's words, or
+    /// "Untitled" — nil for any other: see `Untitled`.
+    public var untitledName: String? = nil
+
+    /// What it is shown as: its title, or, untitled, what it begins with.
+    public var shown: String { untitledName ?? title }
 
     public enum Pin: Equatable, Sendable, Comparable {
         case order(Double)
@@ -219,8 +225,10 @@ public final class NoteIndex: @unchecked Sendable {
         let frontmatter = raw.map(Frontmatter.init(raw:)) ?? Frontmatter(raw: "")
         let day = GraphPaths.day(fromDailyPath: path)
         var titleIsHeading = false
-        var title = frontmatter.scalar("title")?.trimmingCharacters(in: .whitespaces) ?? ""
-        if title.isEmpty, let heading = CommitMessage.firstH1(body) {
+        // Untitled, its file names it: no heading in it is its title.
+        let untitled = Untitled.isPath(path)
+        var title = untitled ? "" : frontmatter.scalar("title")?.trimmingCharacters(in: .whitespaces) ?? ""
+        if title.isEmpty, !untitled, let heading = CommitMessage.firstH1(body) {
             title = heading
             titleIsHeading = true
         }
@@ -249,7 +257,8 @@ public final class NoteIndex: @unchecked Sendable {
                          isPrivate: flag("private"), titleIsHeading: titleIsHeading,
                          pin: pin(frontmatter.scalar("pinned")), tags: tags(in: body), isTopic: flag("topic"),
                          isInInbox: flag("inbox"), cover: NoteCover.source(frontmatter), isTemplate: flag("template"),
-                         related: Related.names(in: frontmatter))
+                         related: Related.names(in: frontmatter),
+                         untitledName: untitled ? Untitled.name(of: body) ?? "Untitled" : nil)
     }
 
     /// Reflect's reading of `pinned:`: `true` (or yes, on, 1) pins, a
@@ -443,7 +452,8 @@ public final class NoteIndex: @unchecked Sendable {
         var found: [Match] = []
         for note in notes {
             var best: (score: Double, alias: String?)?
-            for (name, alias) in [(note.title, nil as String?)] + note.aliases.map({ ($0, $0 as String?) }) {
+            // Untitled: found by what it is shown as, not its made-up name.
+            for (name, alias) in [(note.shown, nil as String?)] + note.aliases.map({ ($0, $0 as String?) }) {
                 guard let score = Self.score(Self.foldKey(name), key) else { continue }
                 // A title found is worth a little more than an alias.
                 let adjusted = alias == nil ? score + 1 : score

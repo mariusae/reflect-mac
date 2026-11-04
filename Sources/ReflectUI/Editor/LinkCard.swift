@@ -208,7 +208,7 @@ package final class LinkCard: NSObject {
             return
         }
         let entry = NoteIndex.entry(path: found.ref.path, source: found.text)
-        let name = found.ref.day.map { OpenQuickly.dayTitle($0) } ?? entry.title
+        let name = found.ref.day.map { OpenQuickly.dayTitle($0) } ?? entry.shown
         parts.append(label(name, font: .systemFont(ofSize: 13, weight: .semibold)))
         // The note's own title heading is the card's name; the rest is shown.
         var outline = OutlineMarkdown.parse(found.text)

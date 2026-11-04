@@ -146,7 +146,7 @@ package final class DayView: NSView, NSTextViewDelegate {
             // A note's name, when its first heading does not already give it.
             let entry = NoteIndex.entry(path: ref.path, source: savedText)
             // Untitled: nothing over it — the title is typed in the note.
-            let untitled = TitleRename.authoredTitle(path: ref.path, source: savedText) == nil && entry.title == "Untitled"
+            let untitled = entry.untitledName != nil || TitleRename.authoredTitle(path: ref.path, source: savedText) == nil && entry.title == "Untitled"
             title.stringValue = entry.titleIsHeading || untitled ? "" : entry.title
             var notes: [String] = []
             // A week's note: its days beside its name.
@@ -744,6 +744,10 @@ package final class DayView: NSView, NSTextViewDelegate {
     }
 
     // MARK: NSTextViewDelegate
+
+    package func textView(_ textView: NSTextView, shouldSetSpellingState value: Int, range: NSRange) -> Int {
+        LinkPill.spellingState(value, in: range, of: textView)
+    }
 
     /// Where the caret is, noted as it moves while it is here — not as the
     /// note is loaded or changed from disk — so the note opens there again.

@@ -77,7 +77,7 @@ package final class StagedSearch: @unchecked Sendable {
     private func title(for path: String, fallback: String) -> (title: String, isDay: Bool) {
         let entry = sources.index.entry(path)
         if let day = entry?.day ?? GraphPaths.day(fromDailyPath: path) { return (OpenQuickly.dayTitle(day), true) }
-        return (entry?.title ?? fallback, false)
+        return (entry?.shown ?? fallback, false)
     }
 
     // MARK: Stages
@@ -88,7 +88,7 @@ package final class StagedSearch: @unchecked Sendable {
         add(Item(target: .day(today), title: "Today", detail: OpenQuickly.plain(OpenQuickly.dayTitle(today)), symbol: "calendar"),
             path: GraphPaths.dailyPath(for: today))
         for match in sources.index.matches("", limit: 12) {
-            add(Item(target: .note(match.entry.path), title: match.entry.title,
+            add(Item(target: .note(match.entry.path), title: match.entry.shown,
                      detail: OpenQuickly.plain(OpenQuickly.relative(match.entry.modified)), symbol: "doc.text"), path: match.entry.path)
         }
     }
@@ -109,7 +109,7 @@ package final class StagedSearch: @unchecked Sendable {
         let named = sources.index.matches(query, limit: 20)
         for match in named {
             let detail = match.alias.map { OpenQuickly.plain("also “\($0)”") } ?? OpenQuickly.plain(OpenQuickly.relative(match.entry.modified))
-            add(Item(target: .note(match.entry.path), title: match.entry.title, detail: detail, symbol: "doc.text"), path: match.entry.path)
+            add(Item(target: .note(match.entry.path), title: match.entry.shown, detail: detail, symbol: "doc.text"), path: match.entry.path)
         }
         // Weft's saved rivers the query names.
         for name in RiverLink.matching(query, in: sources.index.root) {

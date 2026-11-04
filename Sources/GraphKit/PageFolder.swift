@@ -63,11 +63,11 @@ public enum PageFolder {
 
     /// Whether a new page at this path is titled by a `# Heading`: a note
     /// is; a day or a week is named by its file.
-    public static func titlesByHeading(_ path: String) -> Bool { kind(of: path) == .note }
+    public static func titlesByHeading(_ path: String) -> Bool { kind(of: path) == .note && !Untitled.isPath(path) }
 
     /// Whether a page's title is its file's, whatever its text says: a
-    /// day's is its date, a week's its week.
-    public static func titleIsFixed(_ path: String) -> Bool { kind(of: path) != .note }
+    /// day's is its date, a week's its week, an untitled page's its name.
+    public static func titleIsFixed(_ path: String) -> Bool { kind(of: path) != .note || Untitled.isPath(path) }
 
     /// Makes the folder a page is to go in.
     public static func prepare(_ path: String, in root: URL) throws {

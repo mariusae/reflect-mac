@@ -25,6 +25,13 @@ public final class PageIndex: @unchecked Sendable {
         public var kind: PageFolder.Kind { PageFolder.kind(of: path) }
         /// Every name the page answers to: its title and its aliases.
         public var names: [String] { [page.title] + note.aliases }
+        /// What it is shown as: its title — or, untitled, what it begins with.
+        public var shown: String { note.untitledName ?? page.title }
+        /// Whether it has no title yet: see `Untitled`.
+        public var isUntitled: Bool { note.untitledName != nil }
+        /// The names it is found by as they are typed: an untitled page's
+        /// by what it is shown as, not by its made-up name.
+        var searchNames: [String] { note.untitledName.map { [$0] + note.aliases } ?? names }
         /// Its frontmatter's tags and the `#tags` in its body, each once.
         public var tags: [String] {
             var seen = Set<String>()
@@ -131,6 +138,19 @@ public final class PageIndex: @unchecked Sendable {
 
     public subscript(title: String) -> Page? { entries[title]?.page }
 
+    /// What a page is shown as: its title, or — untitled — what it begins with.
+    public func shown(_ title: String) -> String { entries[title]?.shown ?? title }
+
+    /// A name for a new untitled page, that no page or file has.
+    public func newUntitledName(at date: Date = Date()) -> String {
+        while true {
+            let name = Untitled.newName(at: date)
+            if entries[name] == nil, !FileManager.default.fileExists(atPath: root.appendingPathComponent("\(GraphPaths.notesDirectory)/\(name).md").path) {
+                return name
+            }
+        }
+    }
+
     /// The page kept in a graph-relative file, as Prism finds notes.
     public func entry(atPath path: String) -> Entry? { titlesByPath[path].flatMap { entries[$0] } }
 
@@ -221,8 +241,10 @@ public final class PageIndex: @unchecked Sendable {
         let previous = entries[oldTitle ?? page.title]
         // Renamed, a page keeps its file — unless asked to take a file
         // named for its new title, as one just made, still named for the
-        // title it was made with, is.
-        let moving = movingFile && previous != nil && previous?.page.title != page.title
+        // title it was made with, is; or it was untitled, and named by its
+        // file, or is untitled now.
+        let retitled = previous != nil && previous?.page.title != page.title
+        let moving = retitled && (movingFile || previous.map { Untitled.isPath($0.path) } == true || Untitled.isName(page.title))
         let path: String
         if let previous, !moving {
             path = previous.path
@@ -283,7 +305,7 @@ public final class PageIndex: @unchecked Sendable {
         let text = Array(fold(entry.page.text).utf8)
         var words: [(UInt64, Range<Int>)] = []
         forEachWord(in: text) { hash, word in words.append((hash, word.indices)) }
-        return Prepared(entry: entry, folded: Folded(names: entry.names.map(fold), text: text), words: words)
+        return Prepared(entry: entry, folded: Folded(names: entry.searchNames.map(fold), text: text), words: words)
     }
 
     private func add(_ entry: Entry) { add(Self.prepare(entry)) }
