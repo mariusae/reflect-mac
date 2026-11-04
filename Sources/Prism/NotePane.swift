@@ -268,7 +268,7 @@ final class NotePane: NSView, OutlineTextViewNavigator {
     private func updateBar() {
         let ref = ref
         let (title, detail) = Self.name(of: ref, session: session)
-        chrome.show(title: title, detail: detail, metrics: session.metrics)
+        chrome.show(title: title, detail: detail, icon: session.entry(ref.path)?.icon, metrics: session.metrics)
         chrome.canGoBack = history.canGoBack
         chrome.canGoForward = history.canGoForward
         chrome.isDay = ref.day != nil || GraphPaths.week(fromWeeklyPath: ref.path) != nil
@@ -842,9 +842,9 @@ final class PaneChrome: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    func show(title text: String, detail when: String?, metrics: OutlineMetrics) {
+    func show(title text: String, detail when: String?, icon: String? = nil, metrics: OutlineMetrics) {
         self.metrics = metrics
-        title.show(title: text, detail: when, metrics: metrics)
+        title.show(title: text, detail: when, icon: icon, metrics: metrics)
         styleLinked()
         needsLayout = true
     }
@@ -985,11 +985,22 @@ final class TitleLabel: NSView {
     override var isFlipped: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
 
-    func show(title: String, detail when: String?, metrics: OutlineMetrics) {
+    func show(title: String, detail when: String?, icon: String? = nil, metrics: OutlineMetrics) {
         let typography = metrics.typography
-        name = NSAttributedString(string: title, attributes: [
-            .font: typography.headingFont(size: 14, weight: .bold), .foregroundColor: Ink.text,
-        ])
+        let font = typography.headingFont(size: 14, weight: .bold)
+        let shown = NSMutableAttributedString()
+        // Its own icon before its name, quieter, on its capitals.
+        if let icon, let image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .medium).applying(.init(paletteColors: [Ink.secondary]))) {
+            let mark = NSTextAttachment()
+            mark.image = image
+            mark.bounds = NSRect(x: 0, y: ((font.capHeight - image.size.height) / 2).rounded(), width: image.size.width, height: image.size.height)
+            shown.append(NSAttributedString(attachment: mark))
+            shown.append(NSAttributedString(string: "  "))
+            shown.addAttribute(.font, value: font, range: NSRange(location: 0, length: shown.length))
+        }
+        shown.append(NSAttributedString(string: title, attributes: [.font: font, .foregroundColor: Ink.text]))
+        name = shown
         detail = NSAttributedString(string: when.map { "  " + $0 } ?? "", attributes: [
             .font: Typography.font(typography.bodyFamily, face: typography.bodyFace, size: 12.5), .foregroundColor: Ink.secondary,
         ])

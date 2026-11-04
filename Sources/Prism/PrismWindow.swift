@@ -961,6 +961,14 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         session.setFrontmatter(note.path, "topic", note.isTopic ? nil : "true", undoName: "Topic")
     }
 
+    /// Note ▸ Icon: its own icon — the item's symbol — or none.
+    @objc func setNoteIcon(_ sender: Any?) {
+        guard let note = menuNote else { return NSSound.beep() }
+        let symbol = (sender as? NSMenuItem)?.representedObject as? String
+        guard symbol != note.icon else { return }
+        session.setFrontmatter(note.path, PageIcon.key, symbol, undoName: symbol == nil ? "Remove Icon" : "Set Icon")
+    }
+
     @objc func togglePrivate(_ sender: Any?) {
         guard let note = menuNote else { return NSSound.beep() }
         session.setFrontmatter(note.path, "private", note.isPrivate ? nil : "true", undoName: "Private")
@@ -1061,6 +1069,9 @@ final class PrismWindow: NSWindowController, NSWindowDelegate, NSMenuItemValidat
         case #selector(togglePinned(_:)):
             item.title = note?.pin != nil ? "Unpin" : "Pin"
             return note?.day == nil && note != nil
+        case #selector(setNoteIcon(_:)):
+            item.state = (item.representedObject as? String) == note?.icon ? .on : .off
+            return note != nil
         case #selector(toggleTopic(_:)):
             item.state = note?.isTopic == true ? .on : .off
             return note?.day == nil && note != nil

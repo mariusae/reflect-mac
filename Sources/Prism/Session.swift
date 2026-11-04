@@ -77,6 +77,8 @@ final class Session {
         TemplatesMenu.templates = { [weak self] in self?.index.templates ?? [] }
         // Links to untitled notes shown as the notes begin.
         LinkPill.untitledName = { [weak self] name in self?.index.entry("\(GraphPaths.notesDirectory)/\(name).md")?.untitledName }
+        // A link to a note with its own icon: that, in its pill.
+        LinkPill.targetIcon = { [weak self] name in self?.index.icon(of: name) }
         LinkCard.noteSource = { [weak self] title in
             guard let self, let path = index.resolve(title) else { return nil }
             return (NoteRef(path: path), graph.read(path: path) ?? "")

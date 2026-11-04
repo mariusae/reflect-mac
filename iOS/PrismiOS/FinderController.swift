@@ -135,7 +135,7 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
         for match in store.index?.matches(query, limit: 30) ?? [] {
             items.append(Item(place: .note(match.entry.path), title: match.entry.title,
                               detail: match.alias.map { "as \($0)" } ?? relative.localizedString(for: match.entry.modified, relativeTo: Date()),
-                              symbol: match.entry.isTopic ? "number" : "doc.text", cover: match.entry.cover))
+                              symbol: match.entry.icon ?? (match.entry.isTopic ? "number" : "doc.text"), cover: match.entry.cover))
         }
         // Last, the words looked for in every note.
         if !query.isEmpty, offersSearch {

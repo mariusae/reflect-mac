@@ -244,7 +244,10 @@ final class NoteSummaryRow: UIControl {
             // A day: by its name alone — the month over the days says what it is.
             picture.image = nil
         } else {
-            picture.image = UIImage(systemName: "doc.text", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular))
+            // Its own icon, else a page's.
+            let symbol = store.index?.entry(path)?.icon ?? "doc.text"
+            picture.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular))
+                ?? UIImage(systemName: "doc.text", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular))
             picture.contentMode = .center
             picture.backgroundColor = Ink.text.withAlphaComponent(0.05)
         }

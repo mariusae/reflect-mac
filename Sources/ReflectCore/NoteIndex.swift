@@ -39,6 +39,9 @@ public struct NoteEntry: Equatable, Sendable {
     /// What an untitled page is shown as — its first line's words, or
     /// "Untitled" — nil for any other: see `Untitled`.
     public var untitledName: String? = nil
+    /// Its own icon — frontmatter `icon:`, an SF Symbol's name — shown
+    /// before its name and in links to it; nil for none.
+    public var icon: String? = nil
 
     /// What it is shown as: its title, or, untitled, what it begins with.
     public var shown: String { untitledName ?? title }
@@ -67,6 +70,9 @@ public final class NoteIndex: @unchecked Sendable {
     /// The keys of the `[[links]]` each note has, and the notes with each.
     private var linksOf: [String: Set<String>] = [:]
     private var linking: [String: Set<String>] = [:]
+    /// The notes' icons by the folded names they answer to; made again as
+    /// the notes change.
+    private var icons: [String: String]?
 
     public init(root: URL) {
         self.root = root
@@ -128,6 +134,7 @@ public final class NoteIndex: @unchecked Sendable {
         }
         lock.lock()
         entries = found
+        icons = nil
         bodies = texts
         assetsOf = assets
         showing = notes
@@ -166,6 +173,7 @@ public final class NoteIndex: @unchecked Sendable {
         for key in links { linking[key, default: []].insert(path) }
         linksOf[path] = links.isEmpty ? nil : links
         entries[path] = entry?.entry
+        icons = nil
         bodies[path] = entry?.text
         for asset in assetsOf[path] ?? [] where !referenced.contains(asset) {
             showing[asset]?.remove(path)
@@ -258,7 +266,8 @@ public final class NoteIndex: @unchecked Sendable {
                          pin: pin(frontmatter.scalar("pinned")), tags: tags(in: body), isTopic: flag("topic"),
                          isInInbox: flag("inbox"), cover: NoteCover.source(frontmatter), isTemplate: flag("template"),
                          related: Related.names(in: frontmatter),
-                         untitledName: untitled ? Untitled.name(of: body) ?? "Untitled" : nil)
+                         untitledName: untitled ? Untitled.name(of: body) ?? "Untitled" : nil,
+                         icon: frontmatter.scalar("icon").flatMap { $0.isEmpty ? nil : $0 })
     }
 
     /// Reflect's reading of `pinned:`: `true` (or yes, on, 1) pins, a
@@ -426,6 +435,26 @@ public final class NoteIndex: @unchecked Sendable {
         let notes = all.sorted { $0.path < $1.path }
         return notes.first { Self.foldKey($0.title) == key }?.path
             ?? notes.first { $0.aliases.contains { Self.foldKey($0) == key } }?.path
+    }
+
+    /// A link's target's own icon, by its title or an alias — as links are
+    /// drawn, so from a table made once for each change to the notes. Nil
+    /// for none.
+    public func icon(of target: String) -> String? {
+        let raw = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        lock.lock()
+        defer { lock.unlock() }
+        if icons == nil {
+            var table: [String: String] = [:]
+            // Titles before aliases, as a link resolves; the first path of each.
+            let notes = entries.values.filter { $0.icon != nil }.sorted { $0.path < $1.path }
+            for note in notes where table[Self.foldKey(note.title)] == nil { table[Self.foldKey(note.title)] = note.icon }
+            for note in notes { for alias in note.aliases where table[Self.foldKey(alias)] == nil { table[Self.foldKey(alias)] = note.icon } }
+            icons = table
+        }
+        if let day = Day(raw) { return entries[GraphPaths.dailyPath(for: day)]?.icon }
+        if let week = Week(raw) { return entries[GraphPaths.weeklyPath(for: week)]?.icon }
+        return icons?[Self.foldKey(raw)]
     }
 
     // MARK: Finding

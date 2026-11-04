@@ -89,6 +89,8 @@ final class PrismStore {
         PhoneImages.root = root
         self.conflicted = conflicted
         self.index = index
+        // A link to a note with its own icon: that, in its pill.
+        PhoneLayoutManager.targetIcon = { [weak self] name in self?.index?.icon(of: name) }
         changed = []
         revision += 1
         prepareGit()

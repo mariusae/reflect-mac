@@ -429,6 +429,26 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             return item
         }
         let left = String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!)), right = String(Character(UnicodeScalar(NSRightArrowFunctionKey)!))
+        /// The icons a note can have, by group and name — each sent to the
+        /// window with its symbol — and None.
+        func iconMenu() -> NSMenuItem {
+            let menu = NSMenu(title: "Icon")
+            let none = NSMenuItem(title: "None", action: #selector(PrismWindow.setNoteIcon(_:)), keyEquivalent: "")
+            menu.addItem(none)
+            for group in PageIcon.groups {
+                menu.addItem(.sectionHeader(title: group.name))
+                for choice in group.choices {
+                    let item = NSMenuItem(title: choice.name, action: #selector(PrismWindow.setNoteIcon(_:)), keyEquivalent: "")
+                    item.representedObject = choice.symbol
+                    item.image = NSImage(systemSymbolName: choice.symbol, accessibilityDescription: nil)
+                    menu.addItem(item)
+                }
+            }
+            let item = NSMenuItem(title: "Icon", action: nil, keyEquivalent: "")
+            item.submenu = menu
+            item.toolTip = "Shown before its name, and in links to it — kept in its frontmatter as icon:"
+            return item
+        }
         /// The graph's templates, as a submenu filled as it opens: each sent `action`, its path with it.
         func templatesMenu(_ title: String, _ action: Selector) -> NSMenuItem {
             let menu = NSMenu(title: title)
@@ -535,6 +555,7 @@ final class PrismApp: NSObject, NSApplicationDelegate {
             item("Add to Inbox", #selector(PrismWindow.toggleInbox(_:)), "i", [.command, .shift]),
             item("Pin", #selector(PrismWindow.togglePinned(_:)), "p", [.command, .shift]),
             item("Relate To…", #selector(PrismWindow.relateNote(_:)), "l", [.command, .control]),
+            iconMenu(),
             {
                 let topic = item("Topic", #selector(PrismWindow.toggleTopic(_:)))
                 topic.subtitle = "Marked #, and offered first when linking"

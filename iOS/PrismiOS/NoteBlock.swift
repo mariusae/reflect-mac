@@ -613,6 +613,16 @@ final class NoteBlock: UIView {
         updateCover()
         let title = Card.flat ? Card.flatHeader(path: ref.path, name: name, store: store, size: storedMetrics.size)
             : NSMutableAttributedString(attributedString: Card.header(name: name, meta: nil, size: storedMetrics.size))
+        // Its own icon before its name, quieter, on its capitals.
+        if let icon = store?.index?.entry(ref.path)?.icon,
+           let image = UIImage(systemName: icon, withConfiguration: UIImage.SymbolConfiguration(pointSize: round(storedMetrics.size * 0.8), weight: .medium))?
+            .withTintColor(Ink.secondary, renderingMode: .alwaysOriginal) {
+            let mark = NSTextAttachment(image: image)
+            let cap = Typeface.current.heading(storedMetrics.size, weight: .bold).capHeight
+            mark.bounds = CGRect(x: 0, y: ((cap - image.size.height) / 2).rounded(), width: image.size.width, height: image.size.height)
+            title.insert(NSAttributedString(string: "  "), at: 0)
+            title.insert(NSAttributedString(attachment: mark), at: 0)
+        }
         metaLabel.text = Card.meta(for: ref.path, store: store)
         metaLabel.sizeToFit()
         // Its to-dos, how far along, at the end of its name.

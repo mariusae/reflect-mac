@@ -1001,6 +1001,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
                 sheet?.saveAll()
                 self?.chooseRelated(for: path)
             },
+            iconMenu(for: path, current: entry?.icon),
             UIAction(title: entry?.isInInbox == true ? "Take Out of Inbox" : "Add to Inbox",
                      image: UIImage(systemName: entry?.isInInbox == true ? "tray.and.arrow.up" : "tray.and.arrow.down")) { [weak self] _ in
                 self?.store.setFrontmatter(path, "inbox", entry?.isInInbox == true ? nil : "true")
@@ -1170,6 +1171,24 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
             day == .today ? "Today" : day == Day.today.adding(1) ? "Tomorrow" : NoteBlock.dayTitle(day)
         } ?? SliceBlock.name(path, store: store)
         editor.moveRows(at: index, named: name) { [store] rows, undo in store.add(rows, to: path, undo: undo) }
+    }
+
+    /// A note's icon to choose: by group, each by its name — its own
+    /// checked — and None. Kept in its frontmatter as `icon:`.
+    private func iconMenu(for path: String, current: String?) -> UIMenu {
+        let none = UIAction(title: "None", image: UIImage(systemName: "circle.slash"), attributes: current == nil ? .disabled : []) { [weak self] _ in
+            self?.store.setFrontmatter(path, PageIcon.key, nil, undoName: "Remove Icon")
+        }
+        let groups = PageIcon.groups.map { group in
+            UIMenu(title: group.name, children: group.choices.map { choice in
+                UIAction(title: choice.name, image: UIImage(systemName: choice.symbol), state: choice.symbol == current ? .on : .off) { [weak self] _ in
+                    self?.store.setFrontmatter(path, PageIcon.key, choice.symbol, undoName: "Set Icon")
+                }
+            })
+        }
+        let menu = UIMenu(title: "Icon", image: UIImage(systemName: current ?? "square.grid.3x3"), children: [none] + groups)
+        menu.subtitle = current.map(PageIcon.name(of:))
+        return menu
     }
 
     /// Where a row goes, asked for as Go to asks — a note, a day — then the
