@@ -40,6 +40,10 @@ public struct Query: Equatable, Sendable {
     public var listedIn = ""
     /// Having each of these fields.
     public var hasFields: [String] = []
+    /// Edited since the start of the day this many days ago, by the
+    /// calendar: 0 today, 1 since yesterday — written `edited since: today`,
+    /// `edited since: yesterday`, `edited since: 3 days ago`.
+    public var editedSinceDaysAgo: Int?
     /// Wiki pages, or the rest; nil for both.
     public var wiki: Bool?
     /// What each page is, as Prism flags notes: `is: inbox`, `is: pinned`.
@@ -138,6 +142,8 @@ public struct Query: Equatable, Sendable {
             case "linked from": linkedFrom = value
             case "listed in": listedIn = value
             case "has": hasFields += Self.items(value)
+            case "edited since", "edited":
+                if let days = Self.daysAgo(value) { editedSinceDaysAgo = days } else { unknown.append(line) }
             case "wiki": wiki = FieldSpec.flag(value)
             case "is":
                 let named = Self.items(value).map { Flag(rawValue: $0.lowercased()) }
@@ -151,6 +157,42 @@ public struct Query: Equatable, Sendable {
             default: unknown.append(line)
             }
         }
+    }
+
+    /// How many days back a day is: `today`, `yesterday`, `3 days ago`,
+    /// `2 weeks ago`, `3`.
+    static func daysAgo(_ value: String) -> Int? {
+        let said = value.lowercased().trimmingCharacters(in: .whitespaces)
+        switch said {
+        case "today": return 0
+        case "yesterday": return 1
+        default: break
+        }
+        var words = said.split(separator: " ").map(String.init)
+        if words.last == "ago" { words.removeLast() }
+        guard let first = words.first else { return nil }
+        let number = first == "a" || first == "an" || first == "one" ? 1 : Int(first)
+        guard let number, number >= 0 else { return nil }
+        switch words.dropFirst().first {
+        case nil, "day", "days": return number
+        case "week", "weeks": return number * 7
+        default: return nil
+        }
+    }
+
+    /// A day this many back, as a query says it.
+    public static func daysAgoPhrase(_ days: Int) -> String {
+        switch days {
+        case 0: "today"
+        case 1: "yesterday"
+        default: "\(days) days ago"
+        }
+    }
+
+    /// When the day this many back began, by the calendar.
+    static func start(ofDaysAgo days: Int, from now: Date = Date(), calendar: Calendar = .current) -> Date {
+        let today = calendar.startOfDay(for: now)
+        return calendar.date(byAdding: .day, value: -days, to: today) ?? today
     }
 
     private static func items(_ value: String) -> [String] {
@@ -169,6 +211,7 @@ public struct Query: Equatable, Sendable {
         if !linkedFrom.isEmpty { lines.append("linked from: \(linkedFrom)") }
         if !listedIn.isEmpty { lines.append("listed in: \(listedIn)") }
         if !hasFields.isEmpty { lines.append("has: \(hasFields.joined(separator: ", "))") }
+        if let editedSinceDaysAgo { lines.append("edited since: \(Self.daysAgoPhrase(editedSinceDaysAgo))") }
         if let wiki { lines.append("wiki: \(wiki ? "yes" : "no")") }
         if !flags.isEmpty { lines.append("is: \(flags.map(\.rawValue).joined(separator: ", "))") }
         if sort != .automatic || descending { lines.append("sort: \(descending ? "-" : "")\(sort.rawValue)") }
@@ -197,6 +240,7 @@ public struct Query: Equatable, Sendable {
         if !titleContains.isEmpty { parts.append("titled “\(titleContains)”") }
         if !textContains.isEmpty { parts.append("mentioning “\(textContains)”") }
         if !hasFields.isEmpty { parts.append("with \(hasFields.joined(separator: ", "))") }
+        if let editedSinceDaysAgo { parts.append(editedSinceDaysAgo == 0 ? "edited today" : "edited since \(Self.daysAgoPhrase(editedSinceDaysAgo))") }
         if let wiki { parts.append(wiki ? "in the wiki" : "outside the wiki") }
         if !flags.isEmpty { parts.append(flags.map(\.phrase).joined(separator: " and ")) }
         if parts.isEmpty { parts.append("Every page") }
@@ -251,6 +295,8 @@ public struct Query: Equatable, Sendable {
         }
         let linkingTo = linksTo.isEmpty ? nil : Self.linking(to: resolve(linksTo), in: index)
         let linkedFromSet = linkedFrom.isEmpty ? nil : Self.linked(from: resolve(linkedFrom), in: index)
+        // Edited since the start of that day.
+        let editedSince = editedSinceDaysAgo.map { Self.start(ofDaysAgo: $0) }
         titles = titles.filter { title in
             guard let page = index[title] else { return false }
             let own = Set(index.tags(of: title).map { $0.lowercased() })
@@ -268,6 +314,7 @@ public struct Query: Equatable, Sendable {
             if let linkingTo, !linkingTo.contains(title) { return false }
             if let linkedFromSet, !linkedFromSet.contains(title) { return false }
             if !hasFields.allSatisfy({ field in Self.has(page, field) }) { return false }
+            if let editedSince, (index.entries[title]?.modified ?? .distantPast) < editedSince { return false }
             return true
         }
         return (titles, ordered)

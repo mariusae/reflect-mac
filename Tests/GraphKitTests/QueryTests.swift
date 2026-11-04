@@ -38,6 +38,45 @@ import Testing
         #expect(Query(text: "text: soft").run(in: wiki, this: "x") == ["Pear"])
     }
 
+    /// Edited since the start of a day, by the calendar: today, yesterday,
+    /// so many days ago.
+    @Test func findsWhatWasEditedSinceADay() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("edited-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wiki = PageIndex(root: root)
+        let today = Calendar.current.startOfDay(for: Date())
+        let at = { (days: Int, hours: Double) in
+            Calendar.current.date(byAdding: .day, value: -days, to: today)!.addingTimeInterval(hours * 3600)
+        }
+        try wiki.save(Page(title: "This Morning", modified: at(0, 0.01), text: ""))
+        try wiki.save(Page(title: "Last Night", modified: at(1, 23.9), text: ""))
+        try wiki.save(Page(title: "Three Days Ago", modified: at(3, 12), text: ""))
+        try wiki.save(Page(title: "Last Month", modified: at(30, 12), text: ""))
+        let found = { (text: String) in Query(text: text + "\nsort: -modified").run(in: wiki, this: "") }
+        #expect(found("edited since: today") == ["This Morning"])
+        #expect(found("edited since: yesterday") == ["This Morning", "Last Night"])
+        #expect(found("edited since: 2 days ago") == ["This Morning", "Last Night"])
+        #expect(found("edited since: 3 days ago") == ["This Morning", "Last Night", "Three Days Ago"])
+        #expect(found("edited since: 5 weeks ago").count == 4)
+        // Written back as a day is said; what is not one, kept as it was.
+        #expect(Query(text: "edited since: Today").text == "edited since: today")
+        #expect(Query(text: "edited since: 1 day ago").text == "edited since: yesterday")
+        #expect(Query(text: "edited since: a week ago").text == "edited since: 7 days ago")
+        #expect(Query(text: "edited since: soon").unknown == ["edited since: soon"])
+        #expect(Query(text: "edited since: today").summary == "Edited today")
+        #expect(Query(text: "edited since: 3 days ago").summary == "Edited since 3 days ago")
+    }
+
+    /// The day so many back starts at its midnight, whenever it is asked.
+    @Test func aDayAgoStartsAtItsMidnight() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let now = ISO8601DateFormatter().date(from: "2026-11-04T00:30:00-05:00")!
+        #expect(Query.start(ofDaysAgo: 0, from: now, calendar: calendar) == ISO8601DateFormatter().date(from: "2026-11-04T00:00:00-05:00"))
+        // Across the clocks going back, still a midnight.
+        #expect(Query.start(ofDaysAgo: 3, from: now, calendar: calendar) == ISO8601DateFormatter().date(from: "2026-11-01T00:00:00-04:00"))
+    }
+
     /// Prism's lenses, as queries: the inbox newest first, the pinned by number.
     @Test func findsByFlag() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("flags-\(UUID())")
