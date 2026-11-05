@@ -73,6 +73,36 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
         OutlineMetrics(fontSize: fontSize).textIndent(for: .blank)
     }
 
+    /// How big a row's checkbox is drawn — a ring, a box — at a size of
+    /// type: for marks drawn beside the editor to be the same.
+    public static func markSize(fontSize: CGFloat = 15) -> CGFloat {
+        (OutlineMetrics(fontSize: fontSize).body.pointSize * 0.95).rounded()
+    }
+
+    /// The colour a row's open checkbox is drawn in: for marks drawn
+    /// beside the editor to be the same.
+    public static var markColor: NSColor { OutlineMetrics(fontSize: 15).typography.ink.secondary }
+
+    /// An untitled page that is a thing to do — done or not: its ring drawn
+    /// as its first row's mark, that row's own checkbox or bullet not shown.
+    /// Clicked, `onLeadMark` is told.
+    public var leadMark: Bool? {
+        get { editor.leadMark }
+        set { editor.leadMark = newValue }
+    }
+    public var onLeadMark: (() -> Void)? {
+        get { editor.onLeadMark }
+        set { editor.onLeadMark = newValue }
+    }
+
+    /// The middle of its first line's capitals, down from its top: what
+    /// stands beside that line — a chevron, controls — centred on it.
+    public var firstLineMiddle: CGFloat? {
+        guard let middle = editor.firstLineMiddle else { return nil }
+        let point = convert(NSPoint(x: 0, y: middle), from: editor)
+        return isFlipped ? point.y : bounds.height - point.y
+    }
+
     /// The notes `[[` completes from, for every outline editor.
     public static func completeLinks(from index: NoteIndex) {
         LinkCompletion.sources = SearchSources(index: index)

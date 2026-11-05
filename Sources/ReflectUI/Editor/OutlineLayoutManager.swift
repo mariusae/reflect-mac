@@ -203,6 +203,8 @@ package final class OutlineLayoutManager: NSLayoutManager {
             // A row that shows no bullet is still a row: under the pointer,
             // it shows a ghost of one.
             if case .none = handle, index == view.hoveredRow, row.kind != .rule { handle = .ghost }
+            // The page's own ring, standing for it: its first row's mark, whatever that row's is.
+            if index == 0, let done = view.leadMark { handle = .task(done: done, round: true) }
             drawHandle(handle, row: row, paragraph: paragraph, origin: origin, indent: indent,
                        progress: index < under.count ? under[index] : nil)
             if row.isFolded, let pill = foldPill(for: paragraph, origin: origin) { Self.drawFoldPill(in: pill) }
@@ -494,7 +496,7 @@ package final class OutlineLayoutManager: NSLayoutManager {
         guard let view = outlineView, let storage = textStorage else { return nil }
         for (index, paragraph) in view.paragraphRanges.enumerated() {
             let row = OutlineText.style(storage, at: paragraph.location).row
-            if case .none = Self.handle(for: row), index != view.hoveredRow { continue }
+            if case .none = Self.handle(for: row), index != view.hoveredRow, !(index == 0 && view.leadMark != nil) { continue }
             let glyph = glyphIndexForCharacter(at: paragraph.location)
             guard glyph < numberOfGlyphs else { break }
             let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).offsetBy(dx: origin.x, dy: origin.y)

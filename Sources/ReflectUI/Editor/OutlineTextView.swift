@@ -808,6 +808,22 @@ package final class OutlineTextView: NSTextView {
     package var hoveredPictureFrame: NSRect?
     /// The picture whose grip shows.
     package var hoveredPictureBox: ImageBox?
+    /// An untitled page that is a thing to do: its ring — done or not —
+    /// drawn as its first row's mark, that row's own not shown; clicked,
+    /// `onLeadMark` is told. Nil, the first row shows its own.
+    package var leadMark: Bool? {
+        didSet { if leadMark != oldValue { needsDisplay = true; placeRowButtons() } }
+    }
+    package var onLeadMark: (() -> Void)?
+
+    /// The middle of the first row's capitals, in the view: where a mark
+    /// beside it is centred, as its own is.
+    package var firstLineMiddle: CGFloat? {
+        guard let layout = layoutManager, let first = paragraphRanges.first, let row = rows.first else { return nil }
+        let font = metrics.font(for: row)
+        let glyph = layout.glyphIndexForCharacter(at: first.location)
+        return textContainerOrigin.y + outlineLayout.baseline(ofLineAt: glyph, font: font) - font.capHeight / 2
+    }
     /// The link's card under the pointer — a post, a video, a page — whose
     /// "–" shows, to hide it.
     package var hoveredCardFrame: NSRect?
@@ -1505,8 +1521,10 @@ package final class OutlineTextView: NSTextView {
     /// A row's checkbox or bullet clicked, as the mouse does it.
     package func clickHandleForScript(ofRow index: Int) { clickHandle(ofRow: index) }
 
-    /// A checkbox checks; a bullet with children folds or unfolds them.
+    /// A checkbox checks; a bullet with children folds or unfolds them —
+    /// the page's own ring, standing for the first row's, tells the page.
     private func clickHandle(ofRow index: Int) {
+        if index == 0, leadMark != nil, let onLeadMark { return onLeadMark() }
         let row = row(at: index)
         if row.task != nil {
             perform("Toggle Done", on: index..<(index + 1), followingCaret: false) { rows, selection in

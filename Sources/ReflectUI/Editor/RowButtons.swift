@@ -97,7 +97,7 @@ extension OutlineTextView {
         let all = rows
         let ranges = paragraphRanges
         guard isEditable, selectedRows == nil, draggedRows == nil, let index = hoveredRow, all.indices.contains(index),
-              ranges.indices.contains(index), all[index].task != nil, let layout = layoutManager,
+              ranges.indices.contains(index), all[index].task != nil, !(index == 0 && leadMark != nil), let layout = layoutManager,
               let host = enclosingScrollView?.documentView ?? superview else {
             rowButtons?.isHidden = true
             return
