@@ -1,4 +1,5 @@
 import UIKit
+import GraphKit
 import ReflectCore
 import PhoneUI
 
@@ -50,6 +51,13 @@ enum QuickActions {
 final class PrismSceneDelegate: NSObject, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
         if let item = options.shortcutItem { MainActor.assumeIsolated { _ = QuickActions.handle(item) } }
+        for activity in options.userActivities { self.scene(scene, continue: activity) }
+    }
+
+    /// A note chosen in the system's search: opened, as one from the icon is.
+    func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+        guard let path = SpotlightIndex.path(of: userActivity, in: PrismStore.defaultRoot) else { return }
+        MainActor.assumeIsolated { QuickActions.pending = path }
     }
 
     func windowScene(_ windowScene: UIWindowScene, performActionFor item: UIApplicationShortcutItem,

@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 import ReflectCore
 import SQLite3
 
@@ -24,10 +25,13 @@ public final class TextIndex: @unchecked Sendable {
     private var hadPages = false
 
     /// The version of what is kept: another, and it is made afresh.
-    private static let schema = "2"
+    private static let schema = "4"
 
     /// Lines of a page are numbered within its row ids: this many to a page.
     private static let lineBits: Int64 = 20
+    /// Where a page's pictures are numbered from, after its lines: the
+    /// first picture with text this, the next one more.
+    public static let pictureLines = 1 << 19
 
     /// The index kept in a file — one per file, however many ask for it.
     public static func shared(at file: URL) -> TextIndex? {
@@ -43,9 +47,15 @@ public final class TextIndex: @unchecked Sendable {
 
     /// Where an app keeps a graph's: its caches, by the graph's path.
     public static func location(for root: URL, app: String) -> URL {
+        cache(for: root, app: app, kind: "Search").appendingPathExtension("sqlite")
+    }
+
+    /// Where an app keeps something of a graph's in its caches — its
+    /// words, what its pictures say — by the graph's path.
+    public static func cache(for root: URL, app: String, kind: String) -> URL {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
         let name = String(format: "%016llx", UInt64(bitPattern: Self.hash(root.standardizedFileURL.path)))
-        return caches.appendingPathComponent(app).appendingPathComponent("Search").appendingPathComponent("\(name).sqlite")
+        return caches.appendingPathComponent(app).appendingPathComponent(kind).appendingPathComponent(name)
     }
 
     init?(file: URL) {
@@ -56,13 +66,17 @@ public final class TextIndex: @unchecked Sendable {
         Self.run(writer, "pragma journal_mode = wal")
         Self.run(writer, "pragma synchronous = normal")
         if Self.value(writer, "select value from meta where key = 'schema'") != Self.schema {
-            for table in ["meta", "files", "pages", "lines"] { Self.run(writer, "drop table if exists \(table)") }
+            for table in ["meta", "files", "pages", "lines", "meaning", "vocab"] { Self.run(writer, "drop table if exists \(table)") }
         }
         let tokenizer = "tokenize = \"unicode61 remove_diacritics 2\""
         guard Self.run(writer, "create table if not exists meta(key text primary key, value text)"),
               Self.run(writer, "create table if not exists files(path text primary key, stamp integer)"),
-              Self.run(writer, "create virtual table if not exists pages using fts5(title, names, body, \(tokenizer))"),
+              Self.run(writer, "create virtual table if not exists pages using fts5(title, names, body, pictures, \(tokenizer))"),
               Self.run(writer, "create virtual table if not exists lines using fts5(text, \(tokenizer))"),
+              // What each page is about: its words' meanings, the rarer counting more.
+              Self.run(writer, "create table if not exists meaning(rowid integer primary key, vector blob)"),
+              // How many pages have each word: how rare it is.
+              Self.run(writer, "create virtual table if not exists vocab using fts5vocab(pages, 'row')"),
               Self.run(writer, "insert or replace into meta values('schema', '\(Self.schema)')"),
               let reader = Self.open(file, flags: SQLITE_OPEN_READONLY)
         else {
@@ -94,19 +108,22 @@ public final class TextIndex: @unchecked Sendable {
         public var title: String
         public var names: [String]
         public var text: String
+        /// The text in the pictures it shows, each by its file — in the
+        /// order its lines are numbered in.
+        public var pictures: [(path: String, text: String)]
 
-        public init(path: String, title: String, names: [String] = [], text: String) {
+        public init(path: String, title: String, names: [String] = [], text: String, pictures: [(path: String, text: String)] = []) {
             self.path = path
             self.title = title
             self.names = names
             self.text = text
+            self.pictures = pictures
         }
 
-        init(_ entry: PageIndex.Entry) {
-            self.init(path: entry.path, title: entry.shown, names: entry.note.aliases, text: entry.page.text)
+        var stamp: Int64 {
+            TextIndex.hash(path + "\u{0}" + title + "\u{0}" + names.joined(separator: "\n") + "\u{0}" + text
+                + pictures.map { "\u{0}" + $0.path + "\u{0}" + $0.text }.joined())
         }
-
-        var stamp: Int64 { TextIndex.hash(path + "\u{0}" + title + "\u{0}" + names.joined(separator: "\n") + "\u{0}" + text) }
     }
 
     /// A page as it is kept: what is searched, and the hash it was made from.
@@ -116,6 +133,7 @@ public final class TextIndex: @unchecked Sendable {
         var title: String
         var names: String
         var body: String
+        var pictures: String
         var lines: [(number: Int, text: String)]
 
         init(_ source: Source) {
@@ -126,16 +144,20 @@ public final class TextIndex: @unchecked Sendable {
             var lines: [(Int, String)] = []
             for (number, line) in source.text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
                 let plain = PageIndex.plainLine(String(line))
-                if !plain.isEmpty, number < 1 << TextIndex.lineBits { lines.append((number, plain)) }
+                if !plain.isEmpty, number < TextIndex.pictureLines { lines.append((number, plain)) }
             }
-            self.lines = lines
             body = lines.map(\.1).joined(separator: "\n")
+            // Each picture's text a line of its own, after the text's.
+            var seen: [String] = []
+            for (at, picture) in source.pictures.enumerated() where at < TextIndex.pictureLines {
+                let flat = picture.text.split(whereSeparator: \.isNewline).joined(separator: " ")
+                lines.append((TextIndex.pictureLines + at, flat))
+                seen.append(flat)
+            }
+            pictures = seen.joined(separator: "\n")
+            self.lines = lines
         }
     }
-
-    /// Made to say what the pages say: those changed since it was kept,
-    /// kept again; those gone, forgotten.
-    func sync(_ entries: [PageIndex.Entry]) { sync(sources: entries.map(Source.init)) }
 
     /// Made to say what the pages given say — read in the background: those
     /// changed since it was kept, kept again; those gone, forgotten.
@@ -148,11 +170,16 @@ public final class TextIndex: @unchecked Sendable {
                 kept[Self.text(row, 0)] = (sqlite3_column_int64(row, 1), sqlite3_column_int64(row, 2))
             }
             // Only a page whose hash differs is made into lines again.
+            var written: [(Int64, Document)] = []
             for source in sources {
                 if let was = kept.removeValue(forKey: source.path), was.stamp == source.stamp { continue }
-                write(Document(source))
+                let document = Document(source)
+                if let id = write(document) { written.append((id, document)) }
             }
             for path in kept.keys { forget(path) }
+            // What they are about, once every page's words are counted.
+            if !written.isEmpty { countWords() }
+            for (id, document) in written { understand(document, id: id) }
             Self.run(writer, "commit")
             stateLock.lock()
             synced = true
@@ -162,16 +189,15 @@ public final class TextIndex: @unchecked Sendable {
 
     /// A page kept as it is now — before this returns, so what is asked
     /// next finds it.
-    func put(_ entry: PageIndex.Entry) { put(Source(entry)) }
-
-    /// A page kept as it is now — before this returns, so what is asked
-    /// next finds it.
     public func put(_ source: Source) {
         queue.sync { [self] in
             let document = Document(source)
             guard let writer else { return }
             Self.run(writer, "begin")
-            write(document)
+            if let id = write(document) {
+                if counts == nil { countWords() }
+                understand(document, id: id)
+            }
             Self.run(writer, "commit")
         }
     }
@@ -189,11 +215,13 @@ public final class TextIndex: @unchecked Sendable {
     /// Waits for what is being written: for tests, and the like.
     public func settle() { queue.sync {} }
 
-    private func write(_ document: Document) {
-        guard let writer else { return }
+    /// A page written, and its number; nil when it was as written already.
+    @discardableResult
+    private func write(_ document: Document) -> Int64? {
+        guard let writer else { return nil }
         let id: Int64
         if let was = rowid(of: document.path, in: writer) {
-            if stamp(of: was, in: writer) == document.stamp { return }
+            if stamp(of: was, in: writer) == document.stamp { return nil }
             clear(was)
             id = was
             Self.run(writer, "update files set stamp = ? where rowid = ?", .int(document.stamp), .int(id))
@@ -201,11 +229,15 @@ public final class TextIndex: @unchecked Sendable {
             Self.run(writer, "insert into files(path, stamp) values(?, ?)", .text(document.path), .int(document.stamp))
             id = sqlite3_last_insert_rowid(writer)
         }
-        Self.run(writer, "insert into pages(rowid, title, names, body) values(?, ?, ?, ?)",
-                 .int(id), .text(document.title), .text(document.names), .text(document.body))
+        Self.run(writer, "insert into pages(rowid, title, names, body, pictures) values(?, ?, ?, ?, ?)",
+                 .int(id), .text(document.title), .text(document.names), .text(document.body), .text(document.pictures))
         for (number, text) in document.lines {
             Self.run(writer, "insert into lines(rowid, text) values(?, ?)", .int(id << Self.lineBits | Int64(number)), .text(text))
         }
+        stateLock.lock()
+        paths?[id] = document.path
+        stateLock.unlock()
+        return id
     }
 
     private func forget(_ path: String) {
@@ -217,6 +249,11 @@ public final class TextIndex: @unchecked Sendable {
     /// A page's words taken out, its file still known.
     private func clear(_ id: Int64) {
         guard let writer else { return }
+        Self.run(writer, "delete from meaning where rowid = ?", .int(id))
+        stateLock.lock()
+        vectors?[id] = nil
+        paths?[id] = nil
+        stateLock.unlock()
         Self.run(writer, "delete from pages where rowid = ?", .int(id))
         Self.run(writer, "delete from lines where rowid between ? and ?", .int(id << Self.lineBits), .int((id + 1) << Self.lineBits - 1))
     }
@@ -244,7 +281,7 @@ public final class TextIndex: @unchecked Sendable {
         guard let reader else { return [] }
         var found: [(String, Double)] = []
         Self.each(reader, """
-            select files.path, bm25(pages, 10.0, 6.0, 1.0) as score from pages join files on files.rowid = pages.rowid
+            select files.path, bm25(pages, 10.0, 6.0, 1.0, 0.7) as score from pages join files on files.rowid = pages.rowid
             where pages match ? order by score limit ?
             """, .text(match), .int(Int64(limit))) { row in
             found.append((Self.text(row, 0), -sqlite3_column_double(row, 1)))
@@ -275,11 +312,183 @@ public final class TextIndex: @unchecked Sendable {
         return found
     }
 
+    // MARK: Meaning
+
+    /// How many pages have each word, and how many pages there are: how
+    /// rare a word is, as last counted. Shared by the queue and askers.
+    private var counts: (words: [String: Int], pages: Int)?
+    /// Each page's meaning, by its number, and each number's file: read
+    /// once asked for, kept as pages are written.
+    private var vectors: [Int64: [Float]]?
+    private var paths: [Int64: String]?
+    /// The meanings of words: one for the queue, one for askers — and
+    /// those looked up, kept.
+    private lazy var writerWords = Meanings()
+    private let readerWords = Meanings()
+
+    /// Words' meanings, as vectors: Apple's, of English words.
+    final class Meanings: @unchecked Sendable {
+        private let embedding = NLEmbedding.wordEmbedding(for: .english)
+        private var known: [String: [Double]?] = [:]
+        let lock = NSLock()
+
+        var dimension: Int { embedding?.dimension ?? 0 }
+
+        func vector(_ word: String) -> [Double]? {
+            if let found = known[word] { return found }
+            let found = embedding?.vector(for: word)
+            if known.count > 200_000 { known = [:] }
+            known[word] = found
+            return found
+        }
+    }
+
+    /// Every page's words counted again.
+    private func countWords() {
+        guard let writer else { return }
+        var words: [String: Int] = [:]
+        Self.each(writer, "select term, doc from vocab") { words[Self.text($0, 0)] = Int(sqlite3_column_int64($0, 1)) }
+        let pages = Int(Self.value(writer, "select count(*) from files") ?? "") ?? 0
+        stateLock.lock()
+        counts = (words, pages)
+        stateLock.unlock()
+    }
+
+    /// A page's meaning worked out and kept: its words', its title's twice.
+    private func understand(_ document: Document, id: Int64) {
+        guard let writer else { return }
+        stateLock.lock()
+        let counts = counts
+        stateLock.unlock()
+        var words: [String: Int] = [:]
+        for word in Self.meaningful(document.title) { words[word, default: 0] += 2 }
+        for word in Self.meaningful(document.body) { words[word, default: 0] += 1 }
+        guard let counts, let vector = Self.meaning(of: words, counts: counts, words: writerWords) else {
+            Self.run(writer, "delete from meaning where rowid = ?", .int(id))
+            return
+        }
+        let blob = vector.withUnsafeBufferPointer { Data(buffer: $0) }
+        Self.run(writer, "insert or replace into meaning(rowid, vector) values(?, ?)", .int(id), .blob(blob))
+        stateLock.lock()
+        vectors?[id] = vector
+        stateLock.unlock()
+    }
+
+    /// The words a text's meaning is made of: folded as the index has them,
+    /// short ones and numbers left out.
+    static func meaningful(_ text: String) -> [String] {
+        TextQuery.terms(text).filter { $0.count > 2 && $0.contains(where: \.isLetter) }
+    }
+
+    /// What words, so many times each, mean together: their meanings added,
+    /// a rarer word's more — and, a word used more, a little more — as a
+    /// direction. Nil with too few words known to say.
+    static func meaning(of words: [String: Int], counts: (words: [String: Int], pages: Int), words meanings: Meanings,
+                        least: Int = 3) -> [Float]? {
+        meanings.lock.lock()
+        defer { meanings.lock.unlock() }
+        let dimension = meanings.dimension
+        guard dimension > 0 else { return nil }
+        var sum = [Double](repeating: 0, count: dimension)
+        var known = 0
+        let pages = Double(max(counts.pages, 1))
+        for (word, times) in words {
+            guard let vector = meanings.vector(word) else { continue }
+            let rarity = max(0.1, log(pages / Double(1 + (counts.words[word] ?? 0))))
+            let weight = rarity * (1 + log(Double(times)))
+            for i in 0..<dimension { sum[i] += vector[i] * weight }
+            known += 1
+        }
+        guard known >= least else { return nil }
+        let length = sum.reduce(0) { $0 + $1 * $1 }.squareRoot()
+        guard length > 0 else { return nil }
+        return sum.map { Float($0 / length) }
+    }
+
+    /// Pages about what is typed, most first — their meaning nearest its
+    /// words' — those near enough: each with how near, 1 the nearest.
+    public func meaning(of text: String, limit: Int = 20, least: Double = 0.45) -> [(path: String, score: Double)] {
+        var words: [String: Int] = [:]
+        for word in Self.meaningful(text) { words[word, default: 0] += 1 }
+        guard let counts = currentCounts(),
+              let asked = Self.meaning(of: words, counts: counts, words: readerWords, least: 1) else { return [] }
+        return nearest(to: asked, limit: limit, least: least, except: nil)
+    }
+
+    /// Pages about what a page is about, most first.
+    public func meaning(near path: String, limit: Int = 10, least: Double = 0.6) -> [(path: String, score: Double)] {
+        loadMeanings()
+        stateLock.lock()
+        let id = paths?.first { $0.value == path }?.key
+        let vector = id.flatMap { vectors?[$0] }
+        stateLock.unlock()
+        guard let vector else { return [] }
+        return nearest(to: vector, limit: limit, least: least, except: id)
+    }
+
+    private func currentCounts() -> (words: [String: Int], pages: Int)? {
+        stateLock.lock()
+        let counts = counts
+        stateLock.unlock()
+        if let counts { return counts }
+        // Not yet counted this run: counted from what was kept, by the asker.
+        readLock.lock()
+        defer { readLock.unlock() }
+        guard let reader else { return nil }
+        var words: [String: Int] = [:]
+        Self.each(reader, "select term, doc from vocab") { words[Self.text($0, 0)] = Int(sqlite3_column_int64($0, 1)) }
+        let pages = Int(Self.value(reader, "select count(*) from files") ?? "") ?? 0
+        stateLock.lock()
+        if self.counts == nil { self.counts = (words, pages) }
+        stateLock.unlock()
+        return (words, pages)
+    }
+
+    /// Every page's meaning, read once.
+    private func loadMeanings() {
+        stateLock.lock()
+        let loaded = vectors != nil && paths != nil
+        stateLock.unlock()
+        guard !loaded else { return }
+        readLock.lock()
+        var read: [Int64: [Float]] = [:]
+        var files: [Int64: String] = [:]
+        if let reader {
+            Self.each(reader, "select rowid, vector from meaning") { row in
+                guard let bytes = sqlite3_column_blob(row, 1) else { return }
+                let count = Int(sqlite3_column_bytes(row, 1)) / MemoryLayout<Float>.size
+                read[sqlite3_column_int64(row, 0)] = Array(UnsafeBufferPointer(start: bytes.assumingMemoryBound(to: Float.self), count: count))
+            }
+            Self.each(reader, "select rowid, path from files") { files[sqlite3_column_int64($0, 0)] = Self.text($0, 1) }
+        }
+        readLock.unlock()
+        stateLock.lock()
+        if vectors == nil { vectors = read }
+        if paths == nil { paths = files }
+        stateLock.unlock()
+    }
+
+    private func nearest(to asked: [Float], limit: Int, least: Double, except: Int64?) -> [(path: String, score: Double)] {
+        loadMeanings()
+        stateLock.lock()
+        let all = vectors ?? [:]
+        let files = paths ?? [:]
+        stateLock.unlock()
+        var found: [(Int64, Double)] = []
+        for (id, vector) in all where id != except && vector.count == asked.count {
+            var dot: Float = 0
+            for i in 0..<vector.count { dot += vector[i] * asked[i] }
+            if Double(dot) >= least { found.append((id, Double(dot))) }
+        }
+        return found.sorted { $0.1 > $1.1 }.prefix(limit).compactMap { hit in files[hit.0].map { ($0, hit.1) } }
+    }
+
     // MARK: SQLite
 
     private enum Value {
         case int(Int64)
         case text(String)
+        case blob(Data)
     }
 
     private static func open(_ file: URL, flags: Int32) -> OpaquePointer? {
@@ -316,6 +525,8 @@ public final class TextIndex: @unchecked Sendable {
             switch value {
             case .int(let number): sqlite3_bind_int64(statement, Int32(index + 1), number)
             case .text(let text): sqlite3_bind_text(statement, Int32(index + 1), text, -1, transient)
+            case .blob(let data):
+                _ = data.withUnsafeBytes { sqlite3_bind_blob(statement, Int32(index + 1), $0.baseAddress, Int32(data.count), transient) }
             }
         }
         while true {

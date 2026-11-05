@@ -399,7 +399,7 @@ public final class NoteIndex: @unchecked Sendable {
     }
 
     /// The files under `assets/` a note's text names, as paths in the graph.
-    static func assets(in text: String) -> Set<String> {
+    public static func assets(in text: String) -> Set<String> {
         guard text.contains("assets/") else { return [] }
         let string = text as NSString
         var found = Set<String>()

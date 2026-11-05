@@ -60,7 +60,7 @@ import Testing
         let making = Date().timeIntervalSince(start)
         // Again, nothing changed: only the hashes compared.
         let again = Date()
-        words.sync(Array(index.entries.values))
+        words.sync(sources: index.entries.values.map(index.textSource))
         words.settle()
         let checking = Date().timeIntervalSince(again)
         let asking = Date()
@@ -74,5 +74,10 @@ import Testing
         print(String(format: "%d pages: made in %.2f s, checked again in %.2f s, %.1f MB; a search as typed %.1f ms (%d hits)",
                      index.entries.count, making, checking, Double(size) / 1e6, each * 1000, hits))
         #expect(each < 0.05)
+        let meaning = Date()
+        for asked in ["cooking recipes", "travel documents", "sleep", "money"] {
+            print(asked, "→", index.meaningMatches(asked, limit: 5))
+        }
+        print(String(format: "a search by meaning %.1f ms", Date().timeIntervalSince(meaning) / 4 * 1000))
     }
 }

@@ -32,7 +32,9 @@ extension Query {
     /// Where a page goes in the query's order.
     public func place(of title: String, in index: PageIndex) -> Place {
         if sortsByMatch {
-            let at = index.textMatches(TextQuery(textContains)).firstIndex(of: title) ?? 999_999
+            let saying = TextQuery(textContains)
+            let found = saying.isEmpty ? index.meaningMatches(about, limit: 60) : index.textMatches(saying)
+            let at = found.firstIndex(of: title) ?? 999_999
             return Place(rank: rank(of: title, in: index), key: Self.matchKey(at))
         }
         return Place(rank: rank(of: title, in: index), key: key(of: title, in: index))
@@ -40,7 +42,9 @@ extension Query {
 
     /// Whether its order is how well pages say what it asks: a query of
     /// words, sorted by nothing else.
-    var sortsByMatch: Bool { sort == .automatic && !TextQuery(textContains).isEmpty }
+    var sortsByMatch: Bool {
+        sort == .automatic && (!TextQuery(textContains).isEmpty || !about.trimmingCharacters(in: .whitespaces).isEmpty)
+    }
 
     /// A place among what pages say, as a key whose letters sort as it does.
     static func matchKey(_ at: Int) -> String { String(format: "%06d", at) }

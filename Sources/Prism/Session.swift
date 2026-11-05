@@ -16,6 +16,8 @@ final class Session {
     /// through — for the lenses' queries, and the outlines' queries, embeds
     /// and typed fields. Read off the main thread as Prism opens: nil till then.
     private(set) var pages: PageIndex?
+    /// Reads the text in the graph's pictures, as they come.
+    private var pictureReader: ImageTextReader?
     /// The graph's history's times, as last read: given to the pages too.
     private var history: (times: [String: Date], uncommitted: Set<String>)?
     let images: ImageStore
@@ -655,7 +657,13 @@ final class Session {
                     let word = String(line.text[start..<line.text.index(start, offsetBy: mark.count)])
                     if !marked.contains(where: { $0.caseInsensitiveCompare(word) == .orderedSame }) { marked.append(word) }
                 }
-                places.append(said(line.text, in: hit.path, words: marked.isEmpty ? words : marked))
+                places.append(said(line.picture != nil ? "In a picture: " + line.text : line.text, in: hit.path, words: marked.isEmpty ? words : marked))
+            }
+            // Then notes about it, by meaning — words like its words — not found by them.
+            for title in pages.meaningMatches(trimmed, limit: 6) {
+                guard let path = pages.entries[title]?.path, named.insert(path).inserted else { continue }
+                let entry = index.entry(path)
+                places.append(Place(title: name(of: path).title, path: path, detail: "About this", flags: NoteFlags(entry), cover: entry?.cover))
             }
         } else {
             for found in index.containing(trimmed, limit: 30) where named.insert(found.path).inserted {
@@ -830,11 +838,26 @@ final class Session {
     private func loadPages() {
         let fresh = PageIndex(root: graph.root, includingPrivate: true)
         // Its words on disk, in Prism's caches: ranked, kept as notes change,
-        // and ready at once when the graph was read before.
+        // and ready at once when the graph was read before — with what its
+        // pictures say.
         fresh.textIndex = TextIndex.shared(at: TextIndex.location(for: graph.root, app: "Prism"))
+        let pictures = ImageTextIndex(root: graph.root, cache: TextIndex.cache(for: graph.root, app: "Prism", kind: "Pictures"))
+        fresh.pictures = pictures
+        // The system's search told of the notes — a scripted run's graph not.
+        if !Self.scripted, ProcessInfo.processInfo.environment["PRISM_CAPTURE_SCRIPT"] == nil {
+            fresh.spotlight = SpotlightIndex(root: graph.root, app: "Prism")
+        }
         Task { [weak self] in
-            await Task.detached(priority: .userInitiated) { try? fresh.load() }.value
+            await Task.detached(priority: .userInitiated) {
+                _ = pictures.refresh()
+                try? fresh.load()
+            }.value
             guard let self else { return }
+            // The pictures not read yet, read in the background.
+            let reader = ImageTextReader(index: pictures)
+            reader.onRead = { [weak fresh] in DispatchQueue.main.async { fresh?.picturesRead() } }
+            pictureReader = reader
+            reader.update()
             if let history { fresh.useHistory(history.times, uncommitted: history.uncommitted) }
             pages = fresh
             OutlineGraph.pages = fresh

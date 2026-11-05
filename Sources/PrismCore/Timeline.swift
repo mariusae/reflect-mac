@@ -158,14 +158,50 @@ public final class NoteWords: @unchecked Sendable {
         self.index = index
     }
 
-    /// Made to say what the notes say now, and kept so as each is read again.
-    /// Reads every note's text the index holds: call it off the main thread.
-    public func keep(_ notes: NoteIndex) {
-        index.sync(sources: notes.all.compactMap { entry in notes.body(entry.path).map { Self.source(entry, $0) } })
+    /// Made to say what the notes say now — and what their pictures say,
+    /// as read so far — and kept so as each is read again. Reads every
+    /// note's text the index holds: call it off the main thread.
+    public func keep(_ notes: NoteIndex, pictures: ImageTextIndex? = nil, spotlight: SpotlightIndex? = nil) {
+        self.notes = notes
+        self.pictures = pictures
+        resync()
+        // The system's search told of the notes too — never of a private one.
+        spotlight?.sync(notes.all.compactMap { entry in notes.body(entry.path).flatMap { Self.item(entry, $0) } })
         let index = self.index
         notes.onRefresh = { path, entry, text in
-            if let entry, let text { index.put(Self.source(entry, text)) } else { index.remove(path: path) }
+            if let entry, let text { index.put(Self.source(entry, text, pictures: pictures)) } else { index.remove(path: path) }
+            if let entry, let text, let item = Self.item(entry, text) { spotlight?.put(item) } else { spotlight?.remove(path: path) }
         }
+    }
+
+    private static func item(_ entry: NoteEntry, _ text: String) -> SpotlightIndex.Item? {
+        guard !entry.isPrivate else { return nil }
+        return SpotlightIndex.Item(path: entry.path, title: entry.title, summary: SpotlightIndex.summary(of: body(of: text)),
+                                   keywords: entry.tags + entry.aliases, modified: entry.modified)
+    }
+
+    /// More pictures read: the notes showing them kept again, with it.
+    public func picturesRead() { resync() }
+
+    private weak var notes: NoteIndex?
+    private var pictures: ImageTextIndex?
+
+    private func resync() {
+        guard let notes else { return }
+        let pictures = pictures
+        index.sync(sources: notes.all.compactMap { entry in notes.body(entry.path).map { Self.source(entry, $0, pictures: pictures) } })
+    }
+
+    /// Where Prism keeps what a graph's pictures say.
+    public static func picturesCache(for root: URL) -> URL {
+        TextIndex.cache(for: root, app: "Prism", kind: "Pictures")
+    }
+
+    /// The notes about what is typed, by meaning — words like its words —
+    /// the nearest first.
+    public func about(_ query: String, limit: Int = 6) -> [String] {
+        guard index.isReady else { return [] }
+        return index.meaning(of: query, limit: limit).map(\.path)
     }
 
     /// The notes saying what is typed, best first; nil till the words are ready.
@@ -174,8 +210,11 @@ public final class NoteWords: @unchecked Sendable {
         return index.paths(matching: TextQuery(query), limit: limit)
     }
 
-    private static func source(_ entry: NoteEntry, _ text: String) -> TextIndex.Source {
-        TextIndex.Source(path: entry.path, title: entry.title, names: entry.aliases, text: body(of: text))
+    private static func source(_ entry: NoteEntry, _ text: String, pictures: ImageTextIndex?) -> TextIndex.Source {
+        let shown = pictures.map { pictures in
+            NoteIndex.assets(in: text).sorted().compactMap { path in pictures.text(path).map { (path: path, text: $0) } }
+        } ?? []
+        return TextIndex.Source(path: entry.path, title: entry.title, names: entry.aliases, text: body(of: text), pictures: shown)
     }
 
     /// A note's text without its frontmatter.

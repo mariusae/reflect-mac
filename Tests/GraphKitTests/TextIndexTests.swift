@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GraphKit
+import ReflectCore
 
 /// Finding pages by what they say: the words on disk, ranked, kept as pages
 /// change — and, without them, the word index in memory, finding the same.
@@ -159,6 +160,58 @@ import Testing
             #expect(Set(ranked.textMatches(query)) == Set(plain.textMatches(query)), "\(typed)")
         }
         #expect(plain.searchText("frost").first { $0.title == "Apple Orchard" }?.lines.map(\.text) == ["Worry about frost in April"])
+    }
+
+    @Test func findsPagesByTheirPicturesText() throws {
+        let (root, file) = graph("pictures")
+        defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: file) }
+        let assets = root.appendingPathComponent("assets")
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        try Data([0x89, 0x50, 0x4e, 0x47]).write(to: assets.appendingPathComponent("sign.png"))
+        // Reflect's description of it, beside it: its text, without reading it.
+        try Data("Welcome to the Lantern Waste".utf8).write(to: assets.appendingPathComponent("sign.png.reflect.md"))
+        let pictures = ImageTextIndex(root: root, cache: root.appendingPathComponent(".cache"))
+        _ = pictures.refresh()
+        let index = PageIndex(root: root)
+        let words = try #require(TextIndex(file: file))
+        index.pictures = pictures
+        index.textIndex = words
+        try index.load()
+        try index.save(Page(title: "Trip", text: "- Saw this\n- ![](../assets/sign.png)"))
+        try index.save(Page(title: "Lamp", text: "A lantern, lit."))
+        words.settle()
+        #expect(index.textMatches(TextQuery("waste")) == ["Trip"])
+        // What it says counts before what its pictures do.
+        #expect(index.textMatches(TextQuery("lantern")) == ["Lamp", "Trip"])
+        let line = try #require(index.searchText("waste").first?.lines.first)
+        #expect(line.picture == "assets/sign.png")
+        #expect(line.text == "Welcome to the Lantern Waste")
+    }
+
+    @Test func findsPagesByWhatTheyAreAbout() throws {
+        let (root, file) = graph("meaning")
+        defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: file) }
+        let index = PageIndex(root: root)
+        let words = try #require(TextIndex(file: file))
+        index.textIndex = words
+        try index.load()
+        try index.save(Page(title: "Backyard", text: "Planted tomatoes, basil and roses. Pruning the shrubs and weeding the beds."))
+        try index.save(Page(title: "Dinner", text: "Simmer the onions, add garlic and cumin, then bake the bread in the oven."))
+        try index.save(Page(title: "Servers", text: "Upgrade the cluster, patch the database servers and monitor network latency."))
+        // Written again together, as a graph is read: every word counted first.
+        index.textIndex = nil
+        let again = try #require(TextIndex(file: file.deletingLastPathComponent().appendingPathComponent("again-\(UUID()).sqlite")))
+        defer { try? FileManager.default.removeItem(at: again.file) }
+        index.textIndex = again
+        again.settle()
+        // Not their words: words like them.
+        #expect(index.meaningMatches("gardening flowers").first == "Backyard")
+        #expect(index.meaningMatches("cooking a meal").first == "Dinner")
+        #expect(index.meaningMatches("computer infrastructure").first == "Servers")
+        #expect(index.textMatches(TextQuery("gardening")).isEmpty)
+        // As a river asks it.
+        #expect(Query(text: "about: cooking").run(in: index, this: "").first == "Dinner")
+        #expect(Query(text: "about: cooking").ordered(in: index).first?.title == "Dinner")
     }
 
     @Test func longLinesAreCutRoundWhatWasFound() {

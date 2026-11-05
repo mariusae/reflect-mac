@@ -136,7 +136,53 @@ public final class PageIndex: @unchecked Sendable {
     /// without one, the word index here. Given, made to say what the pages
     /// read so far say.
     public var textIndex: TextIndex? {
-        didSet { if let textIndex, textIndex !== oldValue, !entries.isEmpty { textIndex.sync(Array(entries.values)) } }
+        didSet { if let textIndex, textIndex !== oldValue, !entries.isEmpty { textIndex.sync(sources: textSources()) } }
+    }
+
+    /// The text in the graph's pictures, as read so far: what a page's
+    /// pictures say, found as what it says.
+    public var pictures: ImageTextIndex?
+
+    /// The system's search, told of the pages as they change — but never of
+    /// a private note. Given, told of those read so far.
+    public var spotlight: SpotlightIndex? {
+        didSet { if let spotlight, spotlight !== oldValue, !entries.isEmpty { spotlight.sync(entries.values.compactMap(spotlightItem)) } }
+    }
+
+    /// A page as the system's search is told it; nil for a private note.
+    func spotlightItem(_ entry: Entry) -> SpotlightIndex.Item? {
+        guard !entry.note.isPrivate else { return nil }
+        return SpotlightIndex.Item(path: entry.path, title: entry.shown, summary: SpotlightIndex.summary(of: entry.page.text),
+                                   keywords: entry.tags + entry.note.aliases, modified: entry.modified)
+    }
+
+    /// The system's search told of a page as it is now — or that it is gone.
+    private func tellSpotlight(_ entry: Entry?, was path: String?) {
+        guard let spotlight else { return }
+        if let path, path != entry?.path { spotlight.remove(path: path) }
+        if let entry {
+            if let item = spotlightItem(entry) { spotlight.put(item) } else { spotlight.remove(path: entry.path) }
+        }
+    }
+
+    /// More pictures read: the pages showing them kept again, with it.
+    public func picturesRead() {
+        textIndex?.sync(sources: textSources())
+    }
+
+    private func textSources() -> [TextIndex.Source] { entries.values.map(textSource) }
+
+    /// A page as the words on disk keep it: its names, its text, and the
+    /// text in the pictures it shows that have any.
+    func textSource(_ entry: Entry) -> TextIndex.Source {
+        TextIndex.Source(path: entry.path, title: entry.shown, names: entry.note.aliases, text: entry.page.text,
+                         pictures: picturesSaying(in: entry))
+    }
+
+    /// The pictures a page shows that have text, in order, with it.
+    private func picturesSaying(in entry: Entry) -> [(path: String, text: String)] {
+        guard let pictures, entry.page.text.contains("assets/") else { return [] }
+        return NoteIndex.assets(in: entry.page.text).sorted().compactMap { path in pictures.text(path).map { (path, $0) } }
     }
 
     public init(root: URL, includingPrivate: Bool = false) {
@@ -211,7 +257,8 @@ public final class PageIndex: @unchecked Sendable {
         wordSpelled = nil
         nameKeys = entries.values.flatMap { Self.nameKeys(for: $0.page.title, folded: folded[$0.page.title]?.names ?? []) }.sorted()
         for key in incoming.keys { recheckMissing(key) }
-        textIndex?.sync(Array(entries.values))
+        textIndex?.sync(sources: textSources())
+        spotlight?.sync(entries.values.compactMap(spotlightItem))
     }
 
     /// Every page file under the graph, sorted by path.
@@ -279,7 +326,8 @@ public final class PageIndex: @unchecked Sendable {
         if let previous { remove(previous, keeping: Set(prepared.words.lazy.map(\.hash))) }
         add(prepared)
         if let old = previous?.path, old != entry.path { textIndex?.remove(path: old) }
-        textIndex?.put(entry)
+        textIndex?.put(textSource(entry))
+        tellSpotlight(entry, was: previous?.path)
         onChanged?(previous, entry)
         return entry
     }
@@ -294,7 +342,8 @@ public final class PageIndex: @unchecked Sendable {
             add(entry)
             now = entry
         }
-        if let now { textIndex?.put(now) } else if previous != nil { textIndex?.remove(path: path) }
+        if let now { textIndex?.put(textSource(now)) } else if previous != nil { textIndex?.remove(path: path) }
+        tellSpotlight(now, was: previous?.path)
         if previous != nil || now != nil { onChanged?(previous, now) }
     }
 
@@ -304,6 +353,7 @@ public final class PageIndex: @unchecked Sendable {
         try FileManager.default.removeItem(at: root.appendingPathComponent(entry.path))
         remove(entry)
         textIndex?.remove(path: entry.path)
+        tellSpotlight(nil, was: entry.path)
         onChanged?(entry, nil)
     }
 
@@ -699,6 +749,19 @@ public final class PageIndex: @unchecked Sendable {
         return found
     }
 
+    /// Pages about what is typed, by meaning — not its words, but words
+    /// like them — the nearest first: those near enough.
+    public func meaningMatches(_ text: String, limit: Int = 12) -> [String] {
+        guard let textIndex, textIndex.isReady else { return [] }
+        return textIndex.meaning(of: text, limit: limit).compactMap { titlesByPath[$0.path] }
+    }
+
+    /// Pages about what a page is about, the nearest first.
+    public func related(byMeaning title: String, limit: Int = 8) -> [String] {
+        guard let textIndex, textIndex.isReady, let path = entries[title]?.path else { return [] }
+        return textIndex.meaning(near: path, limit: limit).compactMap { titlesByPath[$0.path] }
+    }
+
     private func ranked(_ query: TextQuery, limit: Int, in textIndex: TextIndex) -> [String] {
         guard let match = query.match else { return [] }
         let now = Date()
@@ -746,6 +809,8 @@ public final class PageIndex: @unchecked Sendable {
         public struct Line: Sendable, Equatable {
             /// Its place in the page's text, counting from 0.
             public var number: Int
+            /// A picture's text, not a line of the page's: the picture's file.
+            public var picture: String?
             /// The line as plain text, cut down round what was asked when long.
             public var text: String
             /// Where what was asked is in it, in characters.
@@ -794,7 +859,15 @@ public final class PageIndex: @unchecked Sendable {
     private func lines(of entry: Entry, saying query: TextQuery, limit: Int) -> [TextHit.Line] {
         if let textIndex, textIndex.isReady, let match = query.anyMatch {
             let found = textIndex.lines(of: entry.path, matching: match, limit: limit)
-            if !found.isEmpty { return found.map { Self.line($0.number, marked: $0.marked) } }
+            if !found.isEmpty {
+                let pictures = found.contains { $0.number >= TextIndex.pictureLines } ? picturesSaying(in: entry) : []
+                return found.map { hit in
+                    var line = Self.line(hit.number, marked: hit.marked)
+                    let at = hit.number - TextIndex.pictureLines
+                    if at >= 0 { line.picture = pictures.indices.contains(at) ? pictures[at].path : "" }
+                    return line
+                }
+            }
         }
         // Without the words on disk: the lines with any of the words in them,
         // in order, the words marked as written.
@@ -842,7 +915,7 @@ public final class PageIndex: @unchecked Sendable {
         let count = line.text.count
         guard count > most else { return line }
         let center = line.marks.first?.lowerBound ?? 0
-        let start = max(0, min(center - 50, count - most))
+        let start = max(0, min(center - 24, count - most))
         let end = min(count, start + most)
         let from = line.text.index(line.text.startIndex, offsetBy: start)
         let to = line.text.index(from, offsetBy: end - start)
@@ -852,7 +925,7 @@ public final class PageIndex: @unchecked Sendable {
             let lower = max(mark.lowerBound, start), upper = min(mark.upperBound, end)
             return lower < upper ? (lower + shift)..<(upper + shift) : nil
         }
-        return TextHit.Line(number: line.number, text: lead + line.text[from..<to] + (end < count ? "…" : ""), marks: marks)
+        return TextHit.Line(number: line.number, picture: line.picture, text: lead + line.text[from..<to] + (end < count ? "…" : ""), marks: marks)
     }
 
     /// A line as a list of what was found shows it: plain, its list's or

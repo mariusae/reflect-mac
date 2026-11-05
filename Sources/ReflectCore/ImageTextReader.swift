@@ -1,25 +1,26 @@
 import Foundation
 import ImageIO
-import ReflectCore
 import Vision
 
-/// Reads the text in the graph's pictures, on this Mac, a picture at a
-/// time in the background, into the index the chooser searches.
+/// Reads the text in the graph's pictures, on this device, a picture at a
+/// time in the background, into the index searches look through.
 ///
 /// Asked again while it reads, it goes round once more when it is done, so
 /// pictures added meanwhile are read too.
-package final class ImageTextReader: @unchecked Sendable {
-    package let index: ImageTextIndex
+public final class ImageTextReader: @unchecked Sendable {
+    public let index: ImageTextIndex
+    /// Told, off the main thread, when a round has read text in pictures new to it.
+    public var onRead: (@Sendable () -> Void)?
     private let lock = NSLock()
     private var running = false
     private var again = false
 
-    package init(index: ImageTextIndex) {
+    public init(index: ImageTextIndex) {
         self.index = index
     }
 
     /// Reads whatever pictures are new or changed.
-    package func update() {
+    public func update() {
         lock.lock()
         if running {
             again = true
@@ -37,9 +38,14 @@ package final class ImageTextReader: @unchecked Sendable {
                     let text = autoreleasepool { Self.text(in: picture.url) }
                     guard let text else { continue }
                     index.store(text, for: picture)
-                    if !text.isEmpty { read += 1 }
+                    if !text.isEmpty {
+                        read += 1
+                        // A long first read told of as it goes, not only at its end.
+                        if read % 25 == 0 { onRead?() }
+                    }
                 }
                 if !pending.isEmpty { Log.shared.info("pictures", "Found text in \(read) of \(pending.count) pictures") }
+                if read % 25 != 0 { onRead?() }
             } while lock.withLock({
                 let more = again
                 again = false
@@ -51,7 +57,7 @@ package final class ImageTextReader: @unchecked Sendable {
 
     /// Where in a picture some words are, as fractions of it from its lower
     /// left: each place any of them is seen.
-    package static func boxes(of words: [String], in url: URL) -> [CGRect] {
+    public static func boxes(of words: [String], in url: URL) -> [CGRect] {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return [] }
         let request = VNRecognizeTextRequest()
@@ -75,7 +81,7 @@ package final class ImageTextReader: @unchecked Sendable {
 
     /// The text Vision finds in a picture, a line to each line it sees —
     /// empty when there is none; nil when the picture cannot be read.
-    package static func text(in url: URL) -> String? {
+    public static func text(in url: URL) -> String? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
         let request = VNRecognizeTextRequest()

@@ -1,4 +1,5 @@
 import AppKit
+import GraphKit
 import SystemConfiguration
 import ReflectCore
 import PrismCore
@@ -384,6 +385,14 @@ final class PrismApp: NSObject, NSApplicationDelegate {
                 exit(0)
             }
         }
+    }
+
+    /// A note chosen in Spotlight: opened, as one captured is.
+    func application(_ application: NSApplication, continue userActivity: NSUserActivity,
+                     restorationHandler: @escaping ([any NSUserActivityRestoring]) -> Void) -> Bool {
+        guard let session, let path = SpotlightIndex.path(of: userActivity, in: session.graph.root) else { return false }
+        session.openCaptured(path)
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) { session?.save() }

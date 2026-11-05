@@ -137,6 +137,15 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
                               detail: match.alias.map { "as \($0)" } ?? relative.localizedString(for: match.entry.modified, relativeTo: Date()),
                               symbol: match.entry.icon ?? (match.entry.isTopic ? "number" : "doc.text"), cover: match.entry.cover))
         }
+        // Then notes about it, by meaning — words like its words.
+        if query.count >= 3, let words = store.words {
+            var named = Set(items.compactMap { item -> String? in if case .note(let path) = item.place { path } else { nil } })
+            for path in words.about(query, limit: 5) where named.insert(path).inserted {
+                guard let entry = store.index?.entry(path) else { continue }
+                items.append(Item(place: .note(path), title: entry.title, detail: "About this", symbol: entry.icon ?? "sparkle.magnifyingglass",
+                                  cover: entry.cover))
+            }
+        }
         // Last, the words looked for in every note.
         if !query.isEmpty, offersSearch {
             items.append(Item(place: .search(query), title: "Search notes for “\(query)”", detail: "", symbol: "text.magnifyingglass"))

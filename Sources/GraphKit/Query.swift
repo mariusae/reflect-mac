@@ -32,6 +32,8 @@ public struct Query: Equatable, Sendable {
     /// Words in the title, and in the body.
     public var titleContains = ""
     public var textContains = ""
+    /// Pages about this, by meaning — words like these, not these words.
+    public var about = ""
     /// Pages linking to this one, and those this one links to — a page
     /// related to another, in its frontmatter's `related:`, as linking to it.
     public var linksTo = ""
@@ -140,6 +142,7 @@ public struct Query: Equatable, Sendable {
             case "not tag": excludedTags.append(value)
             case "title": titleContains = value
             case "text": textContains = value
+            case "about": about = value
             case "links to": linksTo = value
             case "linked from": linkedFrom = value
             case "listed in": listedIn = value
@@ -212,6 +215,7 @@ public struct Query: Equatable, Sendable {
         lines += excludedTags.map { "not tag: \($0)" }
         if !titleContains.isEmpty { lines.append("title: \(titleContains)") }
         if !textContains.isEmpty { lines.append("text: \(textContains)") }
+        if !about.isEmpty { lines.append("about: \(about)") }
         if !linksTo.isEmpty { lines.append("links to: \(linksTo)") }
         if !linkedFrom.isEmpty { lines.append("linked from: \(linkedFrom)") }
         if !listedIn.isEmpty { lines.append("listed in: \(listedIn)") }
@@ -245,6 +249,7 @@ public struct Query: Equatable, Sendable {
         if !linkedFrom.isEmpty { parts.append("Linked from \(linkedFrom)") }
         if !titleContains.isEmpty { parts.append("titled “\(titleContains)”") }
         if !textContains.isEmpty { parts.append("mentioning “\(textContains)”") }
+        if !about.isEmpty { parts.append("about “\(about)”") }
         if !hasFields.isEmpty { parts.append("with \(hasFields.joined(separator: ", "))") }
         if let editedSinceDaysAgo { parts.append(editedSinceDaysAgo == 0 ? "edited today" : "edited since \(Self.daysAgoPhrase(editedSinceDaysAgo))") }
         if let wiki { parts.append(wiki ? "in the wiki" : "outside the wiki") }
@@ -281,9 +286,14 @@ public struct Query: Equatable, Sendable {
         let ordered: Bool
         var titles: [String]
         let saying = TextQuery(textContains)
+        let meaning = about.trimmingCharacters(in: .whitespaces)
         if !saying.isEmpty {
             // What pages say, best first: the order the rest keep.
             titles = index.textMatches(saying)
+            ordered = true
+        } else if !meaning.isEmpty {
+            // What pages are about, the nearest first.
+            titles = index.meaningMatches(meaning, limit: 60)
             ordered = true
         } else if !listedIn.isEmpty {
             titles = (index[resolve(listedIn)]?[field: "list"]?.list ?? []).filter { index[$0] != nil }
@@ -305,6 +315,8 @@ public struct Query: Equatable, Sendable {
             titles = index.titles
             ordered = false
         }
+        // About something, besides what they say: among those nearest it.
+        let near = !saying.isEmpty && !meaning.isEmpty ? Set(index.meaningMatches(meaning, limit: 200)) : nil
         let linkingTo = linksTo.isEmpty ? nil : Self.linking(to: resolve(linksTo), in: index)
         let linkedFromSet = linkedFrom.isEmpty ? nil : Self.linked(from: resolve(linkedFrom), in: index)
         // Edited since the start of that day.
@@ -321,6 +333,7 @@ public struct Query: Equatable, Sendable {
             if !titleContains.isEmpty, title.range(of: titleContains, options: [.caseInsensitive, .diacriticInsensitive]) == nil {
                 return false
             }
+            if let near, !near.contains(title) { return false }
             if let linkingTo, !linkingTo.contains(title) { return false }
             if let linkedFromSet, !linkedFromSet.contains(title) { return false }
             if !hasFields.allSatisfy({ field in Self.has(page, field) }) { return false }

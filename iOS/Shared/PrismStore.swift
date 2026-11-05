@@ -1,4 +1,5 @@
 import Foundation
+import GraphKit
 import UIKit
 import Observation
 import ReflectCore
@@ -20,6 +21,8 @@ final class PrismStore {
     private(set) var index: NoteIndex?
     /// The notes' words on disk, ranked: what searching every note asks.
     private(set) var words: NoteWords?
+    /// Reads the text in the graph's pictures, as they come.
+    @ObservationIgnored private var pictureReader: ImageTextReader?
     /// Bumped whenever notes change — written here, or brought in by a
     /// sync — for every view of them to follow.
     private(set) var revision = 0
@@ -95,7 +98,20 @@ final class PrismStore {
         // away from the screen.
         let words = NoteWords(root: root)
         self.words = words
-        if let words { Task.detached(priority: .utility) { words.keep(index) } }
+        if let words {
+            // What the pictures say too: as read before at once, the rest as read.
+            let pictures = ImageTextIndex(root: root, cache: NoteWords.picturesCache(for: root))
+            let reader = ImageTextReader(index: pictures)
+            reader.onRead = { words.picturesRead() }
+            pictureReader = reader
+            // The system's search told of the notes — not a graph given to try something on.
+            let spotlight = ProcessInfo.processInfo.arguments.contains("-" + Self.graphPathKey) ? nil : SpotlightIndex(root: root, app: "Prism")
+            Task.detached(priority: .utility) {
+                _ = pictures.refresh()
+                words.keep(index, pictures: pictures, spotlight: spotlight)
+                reader.update()
+            }
+        }
         // A link to a note with its own icon: that, in its pill.
         PhoneLayoutManager.targetIcon = { [weak self] name in self?.index?.icon(of: name) }
         changed = []
