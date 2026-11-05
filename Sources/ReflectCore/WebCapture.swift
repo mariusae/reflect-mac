@@ -138,10 +138,15 @@ public enum WebCapture {
     public static func url(in source: String) -> String? {
         // Most notes are no page's: told without reading them as an outline.
         guard source.contains("URL:") else { return nil }
-        for row in Row.unfold(OutlineMarkdown.parse(source).rows) where row.depth == 0 {
-            let text = row.text.trimmingCharacters(in: .whitespaces)
-            guard text.hasPrefix("URL:") else { continue }
-            var address = text.dropFirst(4).trimmingCharacters(in: .whitespaces)
+        // Its top-level rows' lines, as they start — not the note read as an
+        // outline, which a long day takes a while to be.
+        for line in source.split(separator: "\n", omittingEmptySubsequences: true) where line.contains("URL:") {
+            guard let first = line.first, first != " ", first != "\t" else { continue }
+            var text = Substring(line)
+            for marker in ["- ", "* ", "+ "] where text.hasPrefix(marker) { text = text.dropFirst(2); break }
+            let words = text.trimmingCharacters(in: .whitespaces)
+            guard words.hasPrefix("URL:") else { continue }
+            var address = words.dropFirst(4).trimmingCharacters(in: .whitespaces)
             if address.hasPrefix("<"), address.hasSuffix(">") { address = String(address.dropFirst().dropLast()) }
             // `[title](address)`, as some captures write it.
             if let open = address.range(of: "]("), address.hasSuffix(")") {

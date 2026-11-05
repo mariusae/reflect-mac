@@ -54,7 +54,7 @@ extension PageOutlineEditor {
               case let caret = editor.selectedRange(), caret.location >= row.location, NSMaxRange(caret) <= NSMaxRange(words),
               !Untitled.title(from: text.substring(with: words)).isEmpty,
               let layout = editor.layoutManager, let container = editor.textContainer else {
-            if !titleChip.isHidden { titleChip.isHidden = true }
+            if madeChip?.isHidden == false { madeChip?.isHidden = true }
             return
         }
         let glyphs = layout.glyphRange(forCharacterRange: words, actualCharacterRange: nil)
@@ -93,7 +93,7 @@ extension PageOutlineEditor {
         editor.setSelectedRange(taken)
         editor.insertText("", replacementRange: taken)
         editor.setSelectedRange(NSRange(location: 0, length: 0))
-        titleChip.isHidden = true
+        madeChip?.isHidden = true
         return true
     }
 }

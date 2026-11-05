@@ -23,6 +23,8 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
         didSet {
             let told = onFocusChange
             editor.onFirstResponderChange = { [weak self] focused in
+                // Leaving: what was typed told first, as it stands.
+                if !focused { self?.flushEdits() }
                 told?(focused)
                 self?.placeTitleChip()
             }
@@ -42,7 +44,15 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     /// titled already: its title, to be typed.
     public var onAskTitle: (() -> Void)?
     /// At the end of the first row: Title.
-    lazy var titleChip = makeTitleChip()
+    var titleChip: NSButton {
+        if let madeChip { return madeChip }
+        let made = makeTitleChip()
+        madeChip = made
+        return made
+    }
+    /// The chip, once there has been reason to show it: not made for every
+    /// card, with every move of the caret, only to be hidden.
+    private(set) var madeChip: NSButton?
     /// Whether Title is offered at the end of an untitled page's first row;
     /// else it is titled by the app's own command alone.
     public var offersTitleChip = true
@@ -202,6 +212,9 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     /// is shown — its rows folded as `folds` say.
     public func load(_ text: String, folds: [OutlineFolds.Mark] = []) {
         guard !text.isSameText(as: self.text) || editor.textStorage?.length == 0 else { return }
+        // Another body: what was typed in this one, not yet told, goes with it.
+        flushing?.cancel()
+        editsPending = false
         self.text = text
         var outline = OutlineMarkdown.parse(text)
         let rows = outline.rows
@@ -350,6 +363,30 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
 
     public func textDidChange(_ notification: Notification) {
         defer { placeTitleChip() }
+        heightChanged()
+        // Written back as Markdown a moment after the typing stops — the
+        // whole body each time, and all that hears of it — not for each key.
+        editsPending = true
+        flushing?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.flushEdits() }
+        flushing = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.flushDelay, execute: work)
+    }
+
+    /// How long after the last key what was typed is told.
+    static let flushDelay: TimeInterval = 0.15
+    private var editsPending = false
+    private var flushing: DispatchWorkItem?
+    private var terminating: NSObjectProtocol?
+
+    /// What was typed and not yet told, told now: the body's Markdown, and
+    /// its folds. Done on its own a moment after typing stops, as the caret
+    /// leaves, and before the app quits.
+    public func flushEdits() {
+        flushing?.cancel()
+        flushing = nil
+        guard editsPending else { return }
+        editsPending = false
         var outline = shell
         outline.rows = editor.fullRows
         text = outline.isBlank ? "" : OutlineMarkdown.serialize(outline)
@@ -360,7 +397,17 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
             shownFolds = folds
             onFoldsChange?(folds)
         }
-        heightChanged()
+    }
+
+    public override func viewWillMove(toWindow newWindow: NSWindow?) {
+        // Taken away: nothing typed left untold.
+        if newWindow == nil { flushEdits() }
+        super.viewWillMove(toWindow: newWindow)
+        if terminating == nil {
+            terminating = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.flushEdits() }
+            }
+        }
     }
 
     public func undoManager(for view: NSTextView) -> UndoManager? { undo }

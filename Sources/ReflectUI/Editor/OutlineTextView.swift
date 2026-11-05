@@ -125,7 +125,7 @@ package final class OutlineTextView: NSTextView {
         layout.outlineView = self
         layout.delegate = hiddenGlyphs
         storage.delegate = styler
-        styler.onCharactersEdited = { [weak self] in self?.paragraphCache = nil }
+        styler.onCharactersEdited = { [weak self] edited, delta in self?.charactersEdited(edited, delta) }
         NotificationCenter.default.addObserver(self, selector: #selector(storageWillEdit), name: NSTextStorage.willProcessEditingNotification, object: storage)
         NotificationCenter.default.addObserver(self, selector: #selector(pictureArrived(_:)), name: ImageStore.didLoad, object: nil)
         addSubview(caret)
@@ -223,7 +223,7 @@ package final class OutlineTextView: NSTextView {
     // MARK: Changing text
 
     package override func didChangeText() {
-        paragraphCache = nil
+        withinLine = false
         if !adjusting { tidy() }
         super.didChangeText()
         updateCaret()
@@ -236,6 +236,16 @@ package final class OutlineTextView: NSTextView {
     /// An edit that would take some of a span's markup, but not all of it,
     /// leaves that markup be, so the span's text keeps its style.
     package override func shouldChangeText(inRanges ranges: [NSValue], replacementStrings strings: [String]?) -> Bool {
+        // What the edit is, for tidying after it: within one line, or not.
+        if !adjusting, let storage = textStorage {
+            let text = storage.string as NSString
+            let lines = ranges.contains { value in
+                let range = value.rangeValue
+                return NSMaxRange(range) <= text.length && text.rangeOfCharacter(from: .newlines, options: [], range: range).location != NSNotFound
+            } || (strings ?? []).contains { $0.rangeOfCharacter(from: .newlines) != nil }
+            lineEdit = lines || ranges.count != 1 ? nil : ranges[0].rangeValue.location
+            withinLine = lineEdit != nil
+        }
         guard !adjusting, ranges.count == 1, let replacement = strings?.first, let storage = textStorage else {
             return super.shouldChangeText(inRanges: ranges, replacementStrings: strings)
         }
@@ -272,9 +282,40 @@ package final class OutlineTextView: NSTextView {
     /// Puts right what an edit can leave wrong: the text must end in a line
     /// break, rows swallowed by an edit come back, and every row must sit at
     /// a depth Markdown can write.
+    /// Where the last edit was, when it was within a line: only the rows
+    /// beside it can need tidying. Nil, one that made or took lines.
+    private var lineEdit: Int?
+    /// Whether the edit about to happen is within a line, for the
+    /// paragraphs' ranges to be moved along rather than read again.
+    private var withinLine = false
+
+    /// Characters changed: the paragraphs' ranges moved along by what was
+    /// typed in a line — the one it is in longer or shorter, those after it
+    /// moved — or, any other edit, read again when next asked.
+    private func charactersEdited(_ edited: NSRange, _ delta: Int) {
+        let inLine = withinLine
+        withinLine = false
+        // Only the typing just asked for: not an edit of the editor's own.
+        guard inLine, !adjusting, var ranges = paragraphCache, !ranges.isEmpty, let storage = textStorage,
+              (storage.string as NSString).rangeOfCharacter(from: .newlines, options: [], range: edited).location == NSNotFound else {
+            paragraphCache = nil
+            return
+        }
+        var low = 0, high = ranges.count - 1
+        while low < high {
+            let middle = (low + high + 1) / 2
+            if ranges[middle].location <= edited.location { low = middle } else { high = middle - 1 }
+        }
+        ranges[low].length += delta
+        if delta != 0 { for index in (low + 1)..<ranges.count { ranges[index].location += delta } }
+        paragraphCache = ranges
+    }
+
     private func tidy() {
         adjusting = true
         defer { adjusting = false }
+        let edited = lineEdit
+        lineEdit = nil
         let storage = textStorage!
         if storage.length == 0 || !storage.string.hasSuffix("\n") {
             let style = storage.length > 0 ? OutlineText.style(storage, at: storage.length - 1) : RowStyle(.blank)
@@ -285,9 +326,21 @@ package final class OutlineTextView: NSTextView {
             }
             setSelectedRange(selection)
         }
-        paragraphCache = nil
         let orphans = styler.orphans
         styler.orphans = []
+        // Typed within a line: its row, and the one after, are all that its
+        // kind or depth can have made wrong — not the whole note, read again.
+        if orphans.isEmpty, let edited, storage.length > 0 {
+            let index = rowIndex(at: min(edited, lastLocation))
+            let count = paragraphRanges.count
+            let sound = (index..<min(count, index + 2)).allSatisfy { at in
+                let row = row(at: at)
+                guard at > 0 else { return row.depth == 0 }
+                let previous = self.row(at: at - 1)
+                return row.depth >= 0 && row.depth <= previous.depth + (previous.canHaveChildren ? 1 : 0)
+            }
+            if sound { return }
+        }
         let before = rows
         var after = before
         for orphan in orphans.reversed() {

@@ -39,6 +39,31 @@ public struct ReaderSource: Hashable, Sendable {
         return found
     }
 
+    /// Whether a page has anything to read — as `all` would find, but
+    /// looking only at the lines that could hold it, and stopping at the
+    /// first: asked as a page's card is drawn, after each save.
+    public static func any(in text: String, root: URL) -> Bool {
+        if let own = WebCapture.url(in: text), source(own, root: root) != nil { return true }
+        let whole = text as NSString
+        var at = 0
+        while at < whole.length {
+            let line = whole.lineRange(for: NSRange(location: at, length: 0))
+            at = NSMaxRange(line)
+            guard whole.range(of: "http", options: [.literal], range: line).location != NSNotFound
+                    || whole.range(of: ".pdf", options: [.literal, .caseInsensitive], range: line).location != NSNotFound else { continue }
+            let words = whole.substring(with: line) as NSString
+            for span in InlineMarkup.spans(in: words, range: NSRange(location: 0, length: words.length)) {
+                switch span.kind {
+                case .link(let target), .url(let target): if source(target, root: root) != nil { return true }
+                case .image(let reference) where reference.source.lowercased().hasSuffix(".pdf"):
+                    if source(reference.source, root: root) != nil { return true }
+                default: break
+                }
+            }
+        }
+        return false
+    }
+
     /// A page on the web, a PDF there, or a PDF in the graph's assets: nil, anything else.
     static func source(_ address: String, root: URL) -> ReaderSource? {
         if address.hasPrefix("http://") || address.hasPrefix("https://") {

@@ -424,7 +424,9 @@ package final class OutlineLayoutManager: NSLayoutManager {
     /// the character its link starts at, and its frame. Lays the text out
     /// as far as the last of them.
     package func pdfFrames(origin: NSPoint) -> [(box: ImageBox, location: Int, frame: NSRect)] {
-        guard let storage = textStorage, storage.string.localizedCaseInsensitiveContains(".pdf") else { return [] }
+        // A plain search: not a localized one, over the whole note, after every key.
+        guard let storage = textStorage,
+              (storage.string as NSString).range(of: ".pdf", options: [.caseInsensitive, .literal]).location != NSNotFound else { return [] }
         return pictureFrames(origin: origin) { $0.isPDF }
     }
 

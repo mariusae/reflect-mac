@@ -86,7 +86,7 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
     package var orphans: [(location: Int, rows: [Row])] = []
     /// Told of every change to the characters, before anything else hears
     /// of it.
-    package var onCharactersEdited: (() -> Void)?
+    package var onCharactersEdited: ((_ edited: NSRange, _ delta: Int) -> Void)?
     /// Where pictures come from; without it, images stay as Markdown.
     package var images: ImageStore?
     /// The graph the note is in: with it, queries show what they find and
@@ -109,7 +109,7 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
     // edit to its end.
     package func textStorage(_ storage: NSTextStorage, didProcessEditing mask: NSTextStorageEditActions,
                      range edited: NSRange, changeInLength delta: Int) {
-        if mask.contains(.editedCharacters) { onCharactersEdited?() }
+        if mask.contains(.editedCharacters) { onCharactersEdited?(edited, delta) }
         guard storage.length > 0 else { return }
         let text = storage.string as NSString
         var range = text.paragraphRange(for: NSRange(location: min(edited.location, text.length), length: edited.length))
@@ -118,11 +118,15 @@ package final class OutlineStyler: NSObject, NSTextStorageDelegate {
             range = NSUnionRange(range, text.paragraphRange(for: NSRange(location: NSMaxRange(range), length: 0)))
         }
         if mask.contains(.editedCharacters) { unify(storage, in: range, inserted: edited) }
-        slots = timeSlots(storage)
+        // A note with no time blocks, and nothing that could start one
+        // typed — no digit in the rows edited — has none still: not every
+        // row of it read again for each key.
+        let mayTime = !slots.isEmpty || text.rangeOfCharacter(from: .decimalDigits, options: [], range: range).location != NSNotFound
+        if mayTime { slots = timeSlots(storage) }
         style(storage, in: range)
         // A row edited can make or unmake its list a timeline, or move
         // the blocks after it: those whose slots changed are styled again.
-        restyleChangedSlots(storage, besides: range)
+        if mayTime { restyleChangedSlots(storage, besides: range) }
     }
 
     /// Styles again the rows of time blocks that changed — the caret moved

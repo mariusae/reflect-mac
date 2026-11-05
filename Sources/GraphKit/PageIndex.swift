@@ -261,11 +261,14 @@ public final class PageIndex: @unchecked Sendable {
                 try? FileManager.default.removeItem(at: root.appendingPathComponent(old))
             }
         }
-        if let previous { remove(previous) }
         // Read back as it will be read: its title, aliases and tags as written.
         var entry = Self.entry(path: path, source: source, written: Date())
         entry.page = page
-        add(entry)
+        let prepared = Self.prepare(entry)
+        // Its words still in it keep their place in the vocabulary: not
+        // each taken out of it and put back, a sorted list moved each time.
+        if let previous { remove(previous, keeping: Set(prepared.words.lazy.map(\.hash))) }
+        add(prepared)
         onChanged?(previous, entry)
         return entry
     }
@@ -358,7 +361,7 @@ public final class PageIndex: @unchecked Sendable {
         if entry.source.contains("<<<<<<< "), ConflictMarkers.detect(entry.source) { conflictedTitles.insert(title) }
     }
 
-    private func remove(_ entry: Entry) {
+    private func remove(_ entry: Entry, keeping kept: Set<UInt64> = []) {
         let title = entry.page.title
         guard entries[title]?.path == entry.path else { return }
         let old = folded[title]
@@ -368,7 +371,7 @@ public final class PageIndex: @unchecked Sendable {
         if let id = ids[title] {
             Self.forEachWord(in: old?.text ?? []) { hash, word in
                 wordPages[hash]?.remove(id)
-                if wordPages[hash]?.isEmpty == true {
+                if wordPages[hash]?.isEmpty == true, !kept.contains(hash) {
                     wordPages[hash] = nil
                     Self.remove(String(decoding: word, as: UTF8.self), from: &vocabulary, by: <)
                 }
