@@ -31,12 +31,28 @@ extension Query {
 
     /// Where a page goes in the query's order.
     public func place(of title: String, in index: PageIndex) -> Place {
-        Place(rank: rank(of: title, in: index), key: key(of: title, in: index))
+        if sortsByMatch {
+            let at = index.textMatches(TextQuery(textContains)).firstIndex(of: title) ?? 999_999
+            return Place(rank: rank(of: title, in: index), key: Self.matchKey(at))
+        }
+        return Place(rank: rank(of: title, in: index), key: key(of: title, in: index))
     }
+
+    /// Whether its order is how well pages say what it asks: a query of
+    /// words, sorted by nothing else.
+    var sortsByMatch: Bool { sort == .automatic && !TextQuery(textContains).isEmpty }
+
+    /// A place among what pages say, as a key whose letters sort as it does.
+    static func matchKey(_ at: Int) -> String { String(format: "%06d", at) }
 
     /// The pages the query finds, in its order, each with its place.
     public func ordered(in index: PageIndex, this: String = "") -> [(title: String, place: Place)] {
-        var found = matching(in: index, this: this).map { (title: $0, place: place(of: $0, in: index)) }
+        let titles = matching(in: index, this: this)
+        // What pages say, sorted by nothing else: best first, as found.
+        let byMatch = sortsByMatch
+        var found = titles.enumerated().map { at, title in
+            (title: title, place: byMatch ? Place(rank: rank(of: title, in: index), key: Self.matchKey(at)) : place(of: title, in: index))
+        }
         found.sort { a, b in
             if precedes(a.place, b.place) { return true }
             if precedes(b.place, a.place) { return false }

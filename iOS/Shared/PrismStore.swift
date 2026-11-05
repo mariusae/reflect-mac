@@ -18,6 +18,8 @@ final class PrismStore {
 
     private(set) var graph: Graph?
     private(set) var index: NoteIndex?
+    /// The notes' words on disk, ranked: what searching every note asks.
+    private(set) var words: NoteWords?
     /// Bumped whenever notes change — written here, or brought in by a
     /// sync — for every view of them to follow.
     private(set) var revision = 0
@@ -89,6 +91,11 @@ final class PrismStore {
         PhoneImages.root = root
         self.conflicted = conflicted
         self.index = index
+        // Their words on disk caught up, and kept as notes are read again —
+        // away from the screen.
+        let words = NoteWords(root: root)
+        self.words = words
+        if let words { Task.detached(priority: .utility) { words.keep(index) } }
         // A link to a note with its own icon: that, in its pill.
         PhoneLayoutManager.targetIcon = { [weak self] name in self?.index?.icon(of: name) }
         changed = []

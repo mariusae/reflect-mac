@@ -157,6 +157,10 @@ public final class NoteIndex: @unchecked Sendable {
         }.sorted()
     }
 
+    /// Told of each note read again — its text, or nil when it is gone —
+    /// on whatever thread read it: for what else keeps the notes' words.
+    public var onRefresh: (@Sendable (_ path: String, _ entry: NoteEntry?, _ text: String?) -> Void)?
+
     /// Reads one note again, after it was written; or forgets it, when it
     /// is gone.
     public func refresh(_ path: String) {
@@ -181,7 +185,9 @@ public final class NoteIndex: @unchecked Sendable {
         }
         for asset in referenced { showing[asset, default: []].insert(path) }
         assetsOf[path] = referenced.isEmpty ? nil : referenced
+        let told = onRefresh
         lock.unlock()
+        told?(path, entry?.entry, entry?.text.text)
     }
 
     private func read(_ path: String, at url: URL) -> (entry: NoteEntry, text: (text: String, folded: String))? {

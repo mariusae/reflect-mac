@@ -43,3 +43,36 @@ import Testing
         for hit in found.prefix(5) { print("  \(hit.phrase ? "“”" : "  ") \(hit.title) — \(hit.line)") }
     }
 }
+
+/// The words on disk for a real graph: `GRAPH=~/reflect swift test --filter RealTextIndex`.
+@Suite(.enabled(if: ProcessInfo.processInfo.environment["GRAPH"] != nil)) struct RealTextIndexTests {
+    let root = URL(fileURLWithPath: (ProcessInfo.processInfo.environment["GRAPH"]! as NSString).expandingTildeInPath)
+
+    @Test func madeAndAskedQuickly() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("real-\(UUID()).sqlite")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let index = PageIndex(root: root)
+        try index.load()
+        let words = try #require(TextIndex(file: file))
+        let start = Date()
+        index.textIndex = words
+        words.settle()
+        let making = Date().timeIntervalSince(start)
+        // Again, nothing changed: only the hashes compared.
+        let again = Date()
+        words.sync(Array(index.entries.values))
+        words.settle()
+        let checking = Date().timeIntervalSince(again)
+        let asking = Date()
+        var typed = "", hits = 0
+        for letter in "worry about the plan" {
+            typed.append(letter)
+            hits += index.searchText(typed, limit: 30).count
+        }
+        let each = Date().timeIntervalSince(asking) / 20
+        let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        print(String(format: "%d pages: made in %.2f s, checked again in %.2f s, %.1f MB; a search as typed %.1f ms (%d hits)",
+                     index.entries.count, making, checking, Double(size) / 1e6, each * 1000, hits))
+        #expect(each < 0.05)
+    }
+}

@@ -1,4 +1,5 @@
 import Foundation
+import GraphKit
 import ReflectCore
 
 /// The timeline: every day there is a note for, and today, in order —
@@ -117,13 +118,24 @@ public enum NoteSearch {
         public var editable: Bool
     }
 
-    /// The notes with all the words — regardless of case and accents — the
-    /// most lately changed first, each with the rows they are in. Reads
-    /// every note: call it off the main thread.
-    public static func find(_ words: [String], in index: NoteIndex, limit: Int = 60) -> [Found] {
+    /// The notes with all the words — regardless of case and accents — each
+    /// with the rows they are in: in the order `ranked` gives, best first,
+    /// when the words on disk are ready; else the most lately changed first,
+    /// every note read — call it off the main thread.
+    public static func find(_ words: [String], in index: NoteIndex, ranked: [String]? = nil, limit: Int = 60) -> [Found] {
         guard !words.isEmpty else { return [] }
         let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
         var found: [Found] = []
+        if let ranked {
+            for path in ranked where !path.hasPrefix("templates/") {
+                guard let text = index.body(path) else { continue }
+                let slices = NoteSlice.slices(finding: words, path: path, in: text)
+                guard !slices.isEmpty else { continue }
+                found.append(Found(path: path, slices: slices, editable: OutlineMarkdown.roundTrips(text)))
+                if found.count == limit { break }
+            }
+            return found
+        }
         for entry in index.all.sorted(by: { $0.modified > $1.modified }) where !entry.path.hasPrefix("templates/") {
             guard let text = index.body(entry.path),
                   words.allSatisfy({ text.range(of: $0, options: options) != nil }) else { continue }
@@ -133,5 +145,45 @@ public enum NoteSearch {
             if found.count == limit { break }
         }
         return found
+    }
+}
+
+/// The notes' words on disk, ranked — in Prism's caches, kept as the notes
+/// are read again — for finding notes by what they say, best first.
+public final class NoteWords: @unchecked Sendable {
+    private let index: TextIndex
+
+    public init?(root: URL) {
+        guard let index = TextIndex.shared(at: TextIndex.location(for: root, app: "Prism")) else { return nil }
+        self.index = index
+    }
+
+    /// Made to say what the notes say now, and kept so as each is read again.
+    /// Reads every note's text the index holds: call it off the main thread.
+    public func keep(_ notes: NoteIndex) {
+        index.sync(sources: notes.all.compactMap { entry in notes.body(entry.path).map { Self.source(entry, $0) } })
+        let index = self.index
+        notes.onRefresh = { path, entry, text in
+            if let entry, let text { index.put(Self.source(entry, text)) } else { index.remove(path: path) }
+        }
+    }
+
+    /// The notes saying what is typed, best first; nil till the words are ready.
+    public func paths(_ query: String, limit: Int = 200) -> [String]? {
+        guard index.isReady else { return nil }
+        return index.paths(matching: TextQuery(query), limit: limit)
+    }
+
+    private static func source(_ entry: NoteEntry, _ text: String) -> TextIndex.Source {
+        TextIndex.Source(path: entry.path, title: entry.title, names: entry.aliases, text: body(of: text))
+    }
+
+    /// A note's text without its frontmatter.
+    static func body(of source: String) -> String {
+        guard source.hasPrefix("---\n") || source.hasPrefix("---\r\n"),
+              let close = source.range(of: "\n---", range: source.index(source.startIndex, offsetBy: 3)..<source.endIndex)
+        else { return source }
+        let rest = source[close.upperBound...]
+        return String(rest.drop { $0 != "\n" }.dropFirst())
     }
 }

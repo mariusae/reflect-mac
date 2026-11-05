@@ -772,8 +772,10 @@ final class SheetController: UIViewController, UIScrollViewDelegate {
         guard !words.isEmpty, let index = store.index else {
             return setBlocks(note: nil)
         }
+        // Best first, by the words on disk, when they are ready.
+        let ranked = store.words?.paths(query)
         DispatchQueue.global(qos: .userInitiated).async {
-            let found = NoteSearch.find(words, in: index)
+            let found = NoteSearch.find(words, in: index, ranked: ranked)
             DispatchQueue.main.async { [weak self] in
                 guard let self, generation == self.searching else { return }
                 let head = HeadBlock(title: found.isEmpty ? "Nothing found" : "\(found.count == 60 ? "60+" : String(found.count)) notes",

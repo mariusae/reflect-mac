@@ -131,6 +131,14 @@ public final class PageIndex: @unchecked Sendable {
     /// as it was and as it is: for an app to redraw only what showed it.
     public var onChanged: ((_ before: Entry?, _ after: Entry?) -> Void)?
 
+    /// The pages' words on disk, ranked, kept as pages change: what finding
+    /// pages by what they say asks, once it is ready — till then, and
+    /// without one, the word index here. Given, made to say what the pages
+    /// read so far say.
+    public var textIndex: TextIndex? {
+        didSet { if let textIndex, textIndex !== oldValue, !entries.isEmpty { textIndex.sync(Array(entries.values)) } }
+    }
+
     public init(root: URL, includingPrivate: Bool = false) {
         self.root = root.standardizedFileURL
         includesPrivate = includingPrivate
@@ -203,6 +211,7 @@ public final class PageIndex: @unchecked Sendable {
         wordSpelled = nil
         nameKeys = entries.values.flatMap { Self.nameKeys(for: $0.page.title, folded: folded[$0.page.title]?.names ?? []) }.sorted()
         for key in incoming.keys { recheckMissing(key) }
+        textIndex?.sync(Array(entries.values))
     }
 
     /// Every page file under the graph, sorted by path.
@@ -269,6 +278,8 @@ public final class PageIndex: @unchecked Sendable {
         // each taken out of it and put back, a sorted list moved each time.
         if let previous { remove(previous, keeping: Set(prepared.words.lazy.map(\.hash))) }
         add(prepared)
+        if let old = previous?.path, old != entry.path { textIndex?.remove(path: old) }
+        textIndex?.put(entry)
         onChanged?(previous, entry)
         return entry
     }
@@ -283,6 +294,7 @@ public final class PageIndex: @unchecked Sendable {
             add(entry)
             now = entry
         }
+        if let now { textIndex?.put(now) } else if previous != nil { textIndex?.remove(path: path) }
         if previous != nil || now != nil { onChanged?(previous, now) }
     }
 
@@ -291,6 +303,7 @@ public final class PageIndex: @unchecked Sendable {
         guard let entry = entries[title] else { return }
         try FileManager.default.removeItem(at: root.appendingPathComponent(entry.path))
         remove(entry)
+        textIndex?.remove(path: entry.path)
         onChanged?(entry, nil)
     }
 
@@ -617,8 +630,32 @@ public final class PageIndex: @unchecked Sendable {
     /// then those with a word in a name starting with it, then — the most
     /// lately written first — those whose text has its words.
     public func search(_ query: String, limit: Int = 50) -> [String] {
+        let typed = query
         let query = Self.fold(query.trimmingCharacters(in: .whitespaces))
         guard !query.isEmpty, limit > 0 else { return [] }
+        var found = named(query, limit: limit)
+        var seen = Set(found)
+        guard found.count < limit else { return Array(found.prefix(limit)) }
+        // Then by what they say: best first, once the words on disk are
+        // ready; else the most lately written first.
+        if let textIndex, textIndex.isReady {
+            for title in ranked(TextQuery(typed, typing: true), limit: limit * 2, in: textIndex) where seen.insert(title).inserted {
+                found.append(title)
+                if found.count >= limit { break }
+            }
+            return found
+        }
+        guard let candidates = candidates(query) else { return found }
+        newestFirst(candidates) { title in
+            if seen.insert(title).inserted { found.append(title) }
+            return found.count < limit
+        }
+        return found
+    }
+
+    /// Pages by their names: those a name of starts with what is typed,
+    /// folded, then those with a word in a name starting so.
+    private func named(_ query: String, limit: Int) -> [String] {
         var starts: [String] = [], within: [String] = []
         var seen = Set<String>()
         var at = Self.place(of: NameKey(key: query, title: ""), in: nameKeys, by: <)
@@ -629,13 +666,208 @@ public final class PageIndex: @unchecked Sendable {
             }
             at += 1
         }
-        var found = starts + within
-        guard found.count < limit, let candidates = candidates(query) else { return Array(found.prefix(limit)) }
-        newestFirst(candidates) { title in
-            if !seen.contains(title) { found.append(title) }
-            return found.count < limit
+        return Array((starts + within).prefix(limit))
+    }
+
+    // MARK: Finding by what pages say
+
+    /// The pages saying what is asked — every word, the phrases as written,
+    /// none of what is left out — best first: by the words on disk, ranked,
+    /// what was written lately a little before the rest; without them, or
+    /// till they are ready, the most lately written first.
+    public func textMatches(_ query: TextQuery, limit: Int = 1000) -> [String] {
+        guard !query.isEmpty, limit > 0 else { return [] }
+        if let textIndex, textIndex.isReady { return ranked(query, limit: limit, in: textIndex) }
+        // Without them: every page read, the most lately written first — its
+        // text and its names — as only till they are ready.
+        let words = query.words.map { Array($0.utf8) }
+        let phrases = query.phrases.map { Array($0.utf8) }
+        let excluded = query.excluded.map { Array($0.utf8) }
+        var found: [String] = []
+        for title in byRecency {
+            guard let page = folded[title] else { continue }
+            let names = Array(page.names.joined(separator: "\n").utf8)
+            func has(_ word: [UInt8], prefix: Bool) -> Bool {
+                Self.hasWord(word, in: page.text, prefix: prefix) || Self.hasWord(word, in: names, prefix: prefix)
+            }
+            func says(_ phrase: [UInt8]) -> Bool { Self.offset(phrase, in: page.text) != nil || Self.offset(phrase, in: names) != nil }
+            guard words.enumerated().allSatisfy({ has($1, prefix: query.prefix && $0 == words.count - 1) }),
+                  phrases.allSatisfy(says), !excluded.contains(where: says) else { continue }
+            found.append(title)
+            if found.count >= limit { break }
         }
         return found
+    }
+
+    private func ranked(_ query: TextQuery, limit: Int, in textIndex: TextIndex) -> [String] {
+        guard let match = query.match else { return [] }
+        let now = Date()
+        // A little more than asked: what was written lately moved up among it.
+        let found = textIndex.pages(matching: match, limit: limit + limit / 2 + 10).compactMap { hit -> (String, Double)? in
+            guard let title = titlesByPath[hit.path], let entry = entries[title] else { return nil }
+            let days = max(0, now.timeIntervalSince(entry.modified) / 86400)
+            return (title, hit.score * (1 + 0.5 * exp(-days / 60)))
+        }
+        return found.sorted { $0.1 > $1.1 }.prefix(limit).map(\.0)
+    }
+
+    /// Whether a folded text has a word, whole — or, `prefix`, a word
+    /// starting so.
+    private static func hasWord(_ word: [UInt8], in text: [UInt8], prefix: Bool = false) -> Bool {
+        guard !word.isEmpty, text.count >= word.count else { return false }
+        return text.withUnsafeBytes { h in
+            word.withUnsafeBytes { n in
+                var from = 0
+                while from <= h.count - n.count,
+                      let found = memmem(h.baseAddress! + from, h.count - from, n.baseAddress, n.count) {
+                    let at = UnsafeRawPointer(found) - h.baseAddress!
+                    let end = at + n.count
+                    if at == 0 || !isWordByte(text[at - 1]), prefix || end >= text.count || !isWordByte(text[end]) { return true }
+                    from = at + 1
+                }
+                return false
+            }
+        }
+    }
+
+    private static func isWordByte(_ byte: UInt8) -> Bool {
+        (byte >= 48 && byte <= 57) || (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122) || byte >= 128
+    }
+
+    /// A page found by what is typed: by its names, or by what it says —
+    /// and the lines saying it, best first.
+    public struct TextHit: Sendable, Equatable {
+        public var title: String
+        public var path: String
+        /// Found by a name of its, not only by what it says.
+        public var byName: Bool
+        public var lines: [Line]
+
+        public struct Line: Sendable, Equatable {
+            /// Its place in the page's text, counting from 0.
+            public var number: Int
+            /// The line as plain text, cut down round what was asked when long.
+            public var text: String
+            /// Where what was asked is in it, in characters.
+            public var marks: [Range<Int>]
+        }
+    }
+
+    /// Pages by what is typed — words, `"phrases"`, `-left out`, and
+    /// `#tag`, `is:todo`, `-is:done`, `edited:today` — those named so first,
+    /// then by what they say, best first; each with up to `lines` of its
+    /// lines saying it.
+    public func searchText(_ typed: String, limit: Int = 30, lines lineLimit: Int = 2) -> [TextHit] {
+        let query = Query(search: typed)
+        let text = TextQuery(query.textContains, typing: true)
+        var rest = query
+        rest.textContains = ""
+        let conditions = !rest.text.isEmpty
+        let allowed = conditions ? Set(rest.run(in: self, this: "")) : nil
+        var titles: [String] = []
+        var seen = Set<String>()
+        var byName = Set<String>()
+        if !text.isEmpty {
+            // As a title or an alias begins, when only words were typed.
+            if text.excluded.isEmpty, text.phrases.isEmpty {
+                for title in named(Self.fold(query.textContains.trimmingCharacters(in: .whitespaces)), limit: limit)
+                where allowed?.contains(title) ?? true && seen.insert(title).inserted {
+                    titles.append(title)
+                    byName.insert(title)
+                }
+            }
+            for title in textMatches(text, limit: max(limit * 3, 60)) where allowed?.contains(title) ?? true && seen.insert(title).inserted {
+                titles.append(title)
+                if titles.count >= limit { break }
+            }
+        } else if conditions {
+            titles = rest.run(in: self, this: "")
+        }
+        return titles.prefix(limit).compactMap { title in
+            guard let entry = entries[title] else { return nil }
+            return TextHit(title: title, path: entry.path, byName: byName.contains(title),
+                           lines: lineLimit > 0 && !text.isEmpty ? lines(of: entry, saying: text, limit: lineLimit) : [])
+        }
+    }
+
+    /// A page's lines saying any of what is asked, best first.
+    private func lines(of entry: Entry, saying query: TextQuery, limit: Int) -> [TextHit.Line] {
+        if let textIndex, textIndex.isReady, let match = query.anyMatch {
+            let found = textIndex.lines(of: entry.path, matching: match, limit: limit)
+            if !found.isEmpty { return found.map { Self.line($0.number, marked: $0.marked) } }
+        }
+        // Without the words on disk: the lines with any of the words in them,
+        // in order, the words marked as written.
+        let terms = (query.words + query.phrases).filter { !$0.isEmpty }
+        var found: [TextHit.Line] = []
+        for (number, raw) in entry.page.text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+            let plain = Self.plainLine(String(raw))
+            var marks: [Range<Int>] = []
+            for term in terms {
+                var from = plain.startIndex
+                while let range = plain.range(of: term, options: [.caseInsensitive, .diacriticInsensitive], range: from..<plain.endIndex) {
+                    marks.append(plain.distance(from: plain.startIndex, to: range.lowerBound)..<plain.distance(from: plain.startIndex, to: range.upperBound))
+                    from = range.upperBound
+                }
+            }
+            guard !marks.isEmpty else { continue }
+            found.append(Self.cut(TextHit.Line(number: number, text: plain, marks: marks.sorted { $0.lowerBound < $1.lowerBound })))
+            if found.count >= limit { break }
+        }
+        return found
+    }
+
+    /// A line as SQLite marks it — what was asked between `\u{1}` and
+    /// `\u{2}` — as a line with its marks.
+    static func line(_ number: Int, marked: String) -> TextHit.Line {
+        var text = ""
+        var marks: [Range<Int>] = []
+        var start: Int?
+        var count = 0
+        for character in marked {
+            if character == "\u{1}" { start = count; continue }
+            if character == "\u{2}" {
+                if let begun = start, begun < count { marks.append(begun..<count) }
+                start = nil
+                continue
+            }
+            text.append(character)
+            count += 1
+        }
+        return cut(TextHit.Line(number: number, text: text, marks: marks))
+    }
+
+    /// A long line cut down round where what was asked first is.
+    static func cut(_ line: TextHit.Line, most: Int = 160) -> TextHit.Line {
+        let count = line.text.count
+        guard count > most else { return line }
+        let center = line.marks.first?.lowerBound ?? 0
+        let start = max(0, min(center - 50, count - most))
+        let end = min(count, start + most)
+        let from = line.text.index(line.text.startIndex, offsetBy: start)
+        let to = line.text.index(from, offsetBy: end - start)
+        let lead = start > 0 ? "…" : ""
+        let shift = lead.count - start
+        let marks = line.marks.compactMap { mark -> Range<Int>? in
+            let lower = max(mark.lowerBound, start), upper = min(mark.upperBound, end)
+            return lower < upper ? (lower + shift)..<(upper + shift) : nil
+        }
+        return TextHit.Line(number: line.number, text: lead + line.text[from..<to] + (end < count ? "…" : ""), marks: marks)
+    }
+
+    /// A line as a list of what was found shows it: plain, its list's or
+    /// task's marker, its heading's hashes gone.
+    static func plainLine(_ line: String) -> String {
+        var line = line.trimmingCharacters(in: .whitespaces)
+        for marker in ["- [ ] ", "- [x] ", "+ [ ] ", "+ [x] ", "* [ ] ", "* [x] ", "- ", "* ", "+ ", "> "] where line.hasPrefix(marker) {
+            line.removeFirst(marker.count)
+            break
+        }
+        if line.hasPrefix("#") {
+            let hashes = line.prefix { $0 == "#" }
+            if line.dropFirst(hashes.count).first == " " { line.removeFirst(hashes.count) }
+        }
+        return InlineMarkup.plainText(line.trimmingCharacters(in: .whitespaces))
     }
 
     /// A page found by what it says, and the line that says it.

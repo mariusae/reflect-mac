@@ -636,14 +636,26 @@ final class Session {
         // Then the rows lately written that say it, as they are listed with nothing typed.
         let edited = trimmed.count < 2 ? [] : Array(recentPlaces(trimmed).prefix(6))
         places += edited
-        // Then the notes that say it — the words together first — each with
-        // the line saying it, the words shown once open.
+        // Then the notes that say it, best first — every word, `"phrases"`,
+        // `-left out`, `#tags`, `is:todo` — each with the line saying it, the
+        // words shown once open.
         var named = Set(places.map(\.path))
         let words = trimmed.split(separator: " ").map(String.init)
         guard trimmed.count >= 2 else { return places }
         if let pages {
-            for found in pages.find(trimmed, limit: 30) where named.insert(found.path).inserted {
-                places.append(said(found.line, in: found.path, words: found.phrase ? [trimmed] : words))
+            for hit in pages.searchText(query, limit: 30, lines: 1) where named.insert(hit.path).inserted {
+                guard let line = hit.lines.first else {
+                    places.append(said("", in: hit.path, words: words))
+                    continue
+                }
+                // The words as the line has them, to show where they are once open.
+                var marked: [String] = []
+                for mark in line.marks where mark.upperBound <= line.text.count {
+                    let start = line.text.index(line.text.startIndex, offsetBy: mark.lowerBound)
+                    let word = String(line.text[start..<line.text.index(start, offsetBy: mark.count)])
+                    if !marked.contains(where: { $0.caseInsensitiveCompare(word) == .orderedSame }) { marked.append(word) }
+                }
+                places.append(said(line.text, in: hit.path, words: marked.isEmpty ? words : marked))
             }
         } else {
             for found in index.containing(trimmed, limit: 30) where named.insert(found.path).inserted {
@@ -817,6 +829,9 @@ final class Session {
     /// it in place of the last once read.
     private func loadPages() {
         let fresh = PageIndex(root: graph.root, includingPrivate: true)
+        // Its words on disk, in Prism's caches: ranked, kept as notes change,
+        // and ready at once when the graph was read before.
+        fresh.textIndex = TextIndex.shared(at: TextIndex.location(for: graph.root, app: "Prism"))
         Task { [weak self] in
             await Task.detached(priority: .userInitiated) { try? fresh.load() }.value
             guard let self else { return }

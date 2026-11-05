@@ -280,7 +280,12 @@ public struct Query: Equatable, Sendable {
         let tags = tags.map(resolve), excludedTags = excludedTags.map(resolve)
         let ordered: Bool
         var titles: [String]
-        if !listedIn.isEmpty {
+        let saying = TextQuery(textContains)
+        if !saying.isEmpty {
+            // What pages say, best first: the order the rest keep.
+            titles = index.textMatches(saying)
+            ordered = true
+        } else if !listedIn.isEmpty {
             titles = (index[resolve(listedIn)]?[field: "list"]?.list ?? []).filter { index[$0] != nil }
             ordered = true
         } else if let first = tags.first {
@@ -314,9 +319,6 @@ public struct Query: Equatable, Sendable {
             if !flags.isEmpty, let entry = index.entries[title], !flags.allSatisfy({ $0.holds(for: entry) }) { return false }
             if !excludedFlags.isEmpty, let entry = index.entries[title], excludedFlags.contains(where: { $0.holds(for: entry) }) { return false }
             if !titleContains.isEmpty, title.range(of: titleContains, options: [.caseInsensitive, .diacriticInsensitive]) == nil {
-                return false
-            }
-            if !textContains.isEmpty, page.text.range(of: textContains, options: [.caseInsensitive, .diacriticInsensitive]) == nil {
                 return false
             }
             if let linkingTo, !linkingTo.contains(title) { return false }
@@ -421,5 +423,61 @@ extension MarkdownBlock {
             line += 1
         }
         return text
+    }
+}
+
+extension Query {
+    /// A query as a search is typed: its words — `"phrases"`, `-left out` —
+    /// what its pages are to say; and among them `#tag` and `-#tag`, `is:todo`
+    /// and `-is:done`, `title:word`, and `edited:today`, `edited:yesterday`,
+    /// `edited:3` — since that many days ago.
+    public init(search: String) {
+        self.init()
+        var words: [String] = []
+        var rest = Substring(search)
+        while let start = rest.firstIndex(where: { !$0.isWhitespace }) {
+            rest = rest[start...]
+            // A phrase, as typed: kept whole, quotes and all.
+            let quoted = rest.first == "\"" || rest.hasPrefix("-\"")
+            let end: Substring.Index
+            if quoted {
+                let open = rest.firstIndex(of: "\"")!
+                end = rest[rest.index(after: open)...].firstIndex(of: "\"").map { rest.index(after: $0) } ?? rest.endIndex
+            } else {
+                end = rest.firstIndex(where: \.isWhitespace) ?? rest.endIndex
+            }
+            let token = String(rest[..<end])
+            rest = rest[end...]
+            if quoted || !take(token) { words.append(token) }
+        }
+        textContains = words.joined(separator: " ") + (search.last?.isWhitespace == true && !words.isEmpty ? " " : "")
+    }
+
+    /// An operator taken into the query; false when the token is words.
+    private mutating func take(_ token: String) -> Bool {
+        let negated = token.hasPrefix("-")
+        let bare = negated ? String(token.dropFirst()) : token
+        if bare.hasPrefix("#"), bare.count > 1 {
+            if negated { excludedTags.append(String(bare.dropFirst())) } else { tags.append(String(bare.dropFirst())) }
+            return true
+        }
+        guard let colon = bare.firstIndex(of: ":"), colon != bare.startIndex else { return false }
+        let key = bare[..<colon].lowercased(), value = String(bare[bare.index(after: colon)...])
+        guard !value.isEmpty else { return false }
+        switch key {
+        case "is":
+            guard let flag = Flag(rawValue: value.lowercased()) else { return false }
+            if negated { excludedFlags.append(flag) } else { flags.append(flag) }
+        case "tag":
+            if negated { excludedTags.append(value) } else { tags.append(value) }
+        case "title" where !negated:
+            titleContains = value
+        case "edited" where !negated:
+            guard let days = Int(value).map({ max(0, $0) }) ?? Self.daysAgo(value) else { return false }
+            editedSinceDaysAgo = days
+        default:
+            return false
+        }
+        return true
     }
 }
