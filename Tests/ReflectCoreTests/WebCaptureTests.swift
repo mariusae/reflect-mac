@@ -18,6 +18,7 @@ import Testing
         #expect(note == """
         ---
         id: "link-ca743bd42c24825debdeb152ba375e69d0e281ccdbede0bf75a891e1710b7a92"
+        icon: link
         ---
 
         # Global Capacity Management With Flux ｜ USENIX
@@ -35,6 +36,17 @@ import Testing
         """)
         let entry = NoteIndex.entry(path: "notes/x.md", source: note)
         #expect(entry.title == "Global Capacity Management With Flux ｜ USENIX")
+        #expect(entry.icon == "link")
+    }
+
+    /// One captured before links had their icon: shown with it all the
+    /// same, by its `#link` — unless it has an icon of its own.
+    @Test func anOlderCaptureIsShownAsALink() {
+        let older = "---\nid: \"link-x\"\n---\n# A Page\n\n- URL: <https://example.com>\n- Type: #link\n"
+        #expect(NoteIndex.entry(path: "notes/a.md", source: older).icon == "link")
+        let own = "---\nicon: star\n---\n# A Page\n\n- Type: #link\n"
+        #expect(NoteIndex.entry(path: "notes/a.md", source: own).icon == "star")
+        #expect(NoteIndex.entry(path: "notes/b.md", source: "# Plain\n\n- Words\n").icon == nil)
     }
 
     @Test func capturedAgainTheNoteTakesInWhatIsNew() {

@@ -82,7 +82,8 @@ public enum WebCapture {
         // A blank line after the frontmatter, and after the title, as Reflect writes them.
         var heading = Row(kind: .heading(1), text: title)
         heading.gap = [""]
-        let outline = Outline(frontmatter: "---\nid: \"\(id(for: page.url))\"\n---", rows: [heading] + rows)
+        // Its icon, a link's, as every app shows a page's own.
+        let outline = Outline(frontmatter: "---\nid: \"\(id(for: page.url))\"\nicon: \(PageIcon.link)\n---", rows: [heading] + rows)
         return OutlineMarkdown.serialize(outline)
     }
 

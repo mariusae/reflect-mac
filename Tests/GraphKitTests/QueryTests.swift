@@ -94,6 +94,12 @@ import Testing
         #expect(Query(text: "is: day").run(in: wiki, this: "") == ["2026-10-31"])
         #expect(Query(text: "is: pinned, inbox").run(in: wiki, this: "").isEmpty)
         #expect(Query(text: "is: pinned").text == "is: pinned")
+        // What none of them is: left out.
+        #expect(Query(text: "is not: inbox, pinned\nsort: title").run(in: wiki, this: "") == ["2026-10-31"])
+        #expect(Query(text: "is: pinned\nis not: inbox\nsort: title").run(in: wiki, this: "") == ["Alpha", "Beta", "Zeta"])
+        #expect(Query(text: "is not: inbox, todo").text == "is not: inbox, todo")
+        #expect(Query(text: "is not: inbox").summary == "Not in the inbox")
+        #expect(Query(text: "is not: nonsense").unknown == ["is not: nonsense"])
         #expect(wiki.entry(atPath: "notes/zeta.md")?.page.title == "Zeta")
     }
 

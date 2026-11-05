@@ -8,6 +8,10 @@ public enum PageIcon {
     /// The frontmatter field it is kept in.
     public static let key = "icon"
 
+    /// A captured link's: given it as it is captured, and shown for one
+    /// captured before — `Type: #link` — that has none of its own.
+    public static let link = "link"
+
     public struct Choice: Hashable, Sendable, Identifiable {
         public let name: String
         public let symbol: String

@@ -267,7 +267,8 @@ public final class NoteIndex: @unchecked Sendable {
                          isInInbox: flag("inbox"), cover: NoteCover.source(frontmatter), isTemplate: flag("template"),
                          related: Related.names(in: frontmatter),
                          untitledName: untitled ? Untitled.name(of: body) ?? "Untitled" : nil,
-                         icon: frontmatter.scalar("icon").flatMap { $0.isEmpty ? nil : $0 })
+                         icon: frontmatter.scalar(PageIcon.key).flatMap { $0.isEmpty ? nil : $0 }
+                            ?? (tags(in: body).contains { $0.caseInsensitiveCompare("link") == .orderedSame } ? PageIcon.link : nil))
     }
 
     /// Reflect's reading of `pinned:`: `true` (or yes, on, 1) pins, a

@@ -48,6 +48,8 @@ public struct Query: Equatable, Sendable {
     public var wiki: Bool?
     /// What each page is, as Prism flags notes: `is: inbox`, `is: pinned`.
     public var flags: [Flag] = []
+    /// What none of them is: `is not: inbox, todo`.
+    public var excludedFlags: [Flag] = []
     public var sort: Sort = .automatic
     public var descending = false
     public var limit: Int?
@@ -148,6 +150,9 @@ public struct Query: Equatable, Sendable {
             case "is":
                 let named = Self.items(value).map { Flag(rawValue: $0.lowercased()) }
                 if named.contains(nil) { unknown.append(line) } else { flags += named.compactMap { $0 } }
+            case "is not":
+                let named = Self.items(value).map { Flag(rawValue: $0.lowercased()) }
+                if named.contains(nil) { unknown.append(line) } else { excludedFlags += named.compactMap { $0 } }
             case "sort":
                 descending = value.hasPrefix("-")
                 sort = Sort(rawValue: value.trimmingCharacters(in: CharacterSet(charactersIn: "-+ ")).lowercased()) ?? .automatic
@@ -214,6 +219,7 @@ public struct Query: Equatable, Sendable {
         if let editedSinceDaysAgo { lines.append("edited since: \(Self.daysAgoPhrase(editedSinceDaysAgo))") }
         if let wiki { lines.append("wiki: \(wiki ? "yes" : "no")") }
         if !flags.isEmpty { lines.append("is: \(flags.map(\.rawValue).joined(separator: ", "))") }
+        if !excludedFlags.isEmpty { lines.append("is not: \(excludedFlags.map(\.rawValue).joined(separator: ", "))") }
         if sort != .automatic || descending { lines.append("sort: \(descending ? "-" : "")\(sort.rawValue)") }
         if !highPriority.isEmpty { lines.append("high priority: \(highPriority.joined(separator: ", "))") }
         if !lowPriority.isEmpty { lines.append("low priority: \(lowPriority.joined(separator: ", "))") }
@@ -243,6 +249,7 @@ public struct Query: Equatable, Sendable {
         if let editedSinceDaysAgo { parts.append(editedSinceDaysAgo == 0 ? "edited today" : "edited since \(Self.daysAgoPhrase(editedSinceDaysAgo))") }
         if let wiki { parts.append(wiki ? "in the wiki" : "outside the wiki") }
         if !flags.isEmpty { parts.append(flags.map(\.phrase).joined(separator: " and ")) }
+        if !excludedFlags.isEmpty { parts.append("not " + excludedFlags.map(\.phrase).joined(separator: " or ")) }
         if parts.isEmpty { parts.append("Every page") }
         if sort != .automatic { parts.append("by \(sort.rawValue)\(descending ? ", newest first" : "")") }
         if let limit { parts.append("first \(limit)") }
@@ -305,6 +312,7 @@ public struct Query: Equatable, Sendable {
             if excludedTags.contains(where: { own.contains($0.lowercased()) }) { return false }
             if let wanted = self.wiki, page.isWiki != wanted { return false }
             if !flags.isEmpty, let entry = index.entries[title], !flags.allSatisfy({ $0.holds(for: entry) }) { return false }
+            if !excludedFlags.isEmpty, let entry = index.entries[title], excludedFlags.contains(where: { $0.holds(for: entry) }) { return false }
             if !titleContains.isEmpty, title.range(of: titleContains, options: [.caseInsensitive, .diacriticInsensitive]) == nil {
                 return false
             }
