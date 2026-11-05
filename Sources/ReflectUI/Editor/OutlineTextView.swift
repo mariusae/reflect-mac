@@ -806,6 +806,8 @@ package final class OutlineTextView: NSTextView {
     package private(set) var hoveredRow: Int?
     /// The picture under the pointer, whose grip shows.
     package var hoveredPictureFrame: NSRect?
+    /// The picture whose grip shows.
+    package var hoveredPictureBox: ImageBox?
     /// The link's card under the pointer — a post, a video, a page — whose
     /// "–" shows, to hide it.
     package var hoveredCardFrame: NSRect?
@@ -830,6 +832,20 @@ package final class OutlineTextView: NSTextView {
     }
 
     package override func mouseMoved(with event: NSEvent) {
+        // Still on the picture whose grip shows, or just by it: it stays —
+        // its edge and grip can reach past what is this view's own.
+        let here = convert(event.locationInWindow, from: nil)
+        if let frame = hoveredPictureFrame, frame.insetBy(dx: -8, dy: -8).contains(here) {
+            if !isCovered(event) { super.mouseMoved(with: event); hover(at: here) }
+            // A picture is a thing to click, not text: the arrow over it; the
+            // resizing pointer over its grip.
+            if Self.grip(in: frame).insetBy(dx: -3, dy: -3).contains(here) {
+                NSCursor.frameResize(position: .bottomRight, directions: .all).set()
+            } else {
+                NSCursor.arrow.set()
+            }
+            return
+        }
         if isCovered(event) {
             // Over something else — in an app with many notes in one column,
             // another's words: what this one showed under the pointer goes,

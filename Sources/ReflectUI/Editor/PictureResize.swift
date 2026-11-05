@@ -19,10 +19,14 @@ extension OutlineTextView {
     package func hoverPicture(at point: NSPoint?) {
         let hit = point.flatMap { outlineLayout.pictureFrame(at: $0, origin: textContainerOrigin) }
         hoverCard(hit.flatMap { isLinkCard($0.box) ? $0.frame : nil }, at: point)
-        let next = hit.flatMap { $0.box.isResizable ? $0.frame : nil }
+        var next = hit.flatMap { $0.box.isResizable ? $0.frame : nil }
+        // Not found under the pointer, but the pointer still on or by the
+        // picture whose grip shows — its corner, its edge: that one still.
+        if next == nil, let point, let shown = hoveredPictureFrame, shown.insetBy(dx: -8, dy: -8).contains(point) { next = shown }
         guard next != hoveredPictureFrame else { return }
         if let old = hoveredPictureFrame { setNeedsDisplay(old.insetBy(dx: -2, dy: -2)) }
         hoveredPictureFrame = next
+        hoveredPictureBox = next == nil ? nil : (hit?.box ?? hoveredPictureBox)
         if let next { setNeedsDisplay(next.insetBy(dx: -2, dy: -2)) }
     }
 
@@ -30,10 +34,13 @@ extension OutlineTextView {
     package func onPictureGrip(_ point: NSPoint) -> Bool {
         guard let frame = hoveredPictureFrame, Self.grip(in: frame).insetBy(dx: -3, dy: -3).contains(point) else { return false }
         // The picture may have moved since the pointer was over it: only a
-        // grip on a picture there now.
-        guard let hit = outlineLayout.pictureFrame(at: point, origin: textContainerOrigin), hit.box.isResizable,
+        // grip on a picture there now — looked for by its middle, which a
+        // grip at its very corner may not find.
+        let middle = NSPoint(x: frame.midX, y: frame.midY)
+        guard let hit = outlineLayout.pictureFrame(at: middle, origin: textContainerOrigin), hit.box.isResizable,
               hit.frame == frame else {
             hoveredPictureFrame = nil
+            hoveredPictureBox = nil
             return false
         }
         return true
@@ -43,8 +50,10 @@ extension OutlineTextView {
     /// goes; twice clicked, forgets the size it was given.
     package func dragPictureGrip(_ event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        guard let (box, frame) = outlineLayout.pictureFrame(at: point, origin: textContainerOrigin), box.isResizable,
-              let root = images?.root else { return }
+        // The picture whose grip it is: found under the pointer, or by its middle.
+        let found = outlineLayout.pictureFrame(at: point, origin: textContainerOrigin)
+            ?? hoveredPictureFrame.flatMap { outlineLayout.pictureFrame(at: NSPoint(x: $0.midX, y: $0.midY), origin: textContainerOrigin) }
+        guard let (box, frame) = found, box.isResizable, let root = images?.root else { return }
         if event.clickCount >= 2 {
             SessionState.shared.setPictureSize(root, box.sizeKey, nil)
             NotificationCenter.default.post(name: ImageStore.didLoad, object: box.source)
