@@ -200,9 +200,10 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     /// What a day is called, in an undo's name: a later one's.
     public var dayName: (Day) -> String = { $0.description }
 
-    /// `root`: the graph's folder, where its pictures are.
-    public init(text: String, fontSize: CGFloat = 15, root: URL? = nil) {
-        editor = OutlineTextView(metrics: OutlineMetrics(fontSize: fontSize))
+    /// `root`: the graph's folder, where its pictures are. `serif`: set in
+    /// Apple's New York, not the system's face.
+    public init(text: String, fontSize: CGFloat = 15, serif: Bool = false, root: URL? = nil) {
+        editor = OutlineTextView(metrics: OutlineMetrics(fontSize: fontSize, serif: serif))
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 40))
         editor.delegate = self
         editor.navigator = self

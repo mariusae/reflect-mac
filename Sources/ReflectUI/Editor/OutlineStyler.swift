@@ -9,9 +9,17 @@ package struct OutlineMetrics {
         self.typography = typography
     }
 
-    package init(fontSize: CGFloat) {
+    /// `serif`: its words and headings in Apple's New York, as an app
+    /// that sets its own face asks.
+    package init(fontSize: CGFloat, serif: Bool = false) {
         var typography = Typography.current
         typography.size = fontSize
+        if serif {
+            typography.bodyFamily = Typography.newYork
+            typography.headingFamily = Typography.newYork
+            typography.bodyFace = nil
+            typography.headingFace = nil
+        }
         self.typography = typography
     }
 
