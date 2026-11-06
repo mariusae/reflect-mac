@@ -1043,6 +1043,9 @@ public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate 
     /// The tasks and checklist items under each row, by its paragraph's
     /// start: found once for each change to the text, not each drawing.
     private var progressUnder: [Int: Checkboxes.Progress]?
+    /// An untitled page that is a thing to do — done or not: its ring drawn
+    /// as its first row's mark, that row's own not shown.
+    public var leadMark: Bool?
     /// Set while typing within a row: the checkboxes under each row are as
     /// they were, not found again through the whole note for each key.
     public var keepsProgress = false
@@ -1205,6 +1208,12 @@ public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate 
             let baseline = startsWithImage ? line.minY + PhoneImageBox.margin + ceil(font.ascender)
                 : empty ? used.maxY + font.descender : line.minY + glyphLocation.y
             let middle = baseline - font.xHeight / 2
+            // The page's own ring, standing for it: its first row's mark, whatever that row's is.
+            if paragraph.location == 0, let done = leadMark {
+                Self.drawTask(done: done, round: true, font: font, at: markerX, baseline: baseline)
+                if row.isFolded, let pill = foldPill(for: paragraph) { Self.drawFoldPill(in: pill.offsetBy(dx: origin.x, dy: origin.y)) }
+                continue
+            }
             switch row.kind {
             case .quote:
                 let last = glyphRange(forCharacterRange: NSRange(location: NSMaxRange(paragraph) - 1, length: 1), actualCharacterRange: nil)
@@ -1229,28 +1238,7 @@ public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate 
                 UIBezierPath(roundedRect: CGRect(x: markerX - 1.5, y: line.minY + 2, width: 3, height: bottom - line.minY - 6), cornerRadius: 1.5).fill()
             case .bullet, .ordered:
                 if let task = row.task {
-                    let side = round(font.pointSize * 0.82)
-                    let box = CGRect(x: markerX - side / 2, y: baseline - font.capHeight / 2 - side / 2, width: side, height: side)
-                    let round = row.marker == "+"
-                    let shape = round ? UIBezierPath(ovalIn: box) : UIBezierPath(roundedRect: box, cornerRadius: 3.5)
-                    if task.isDone {
-                        // Ticked: black on the flat page, as all else is; else blue.
-                        (Card.flat ? Ink.text : Ink.accent).setFill()
-                        shape.fill()
-                        let tick = UIBezierPath()
-                        tick.move(to: CGPoint(x: box.minX + side * 0.27, y: box.midY))
-                        tick.addLine(to: CGPoint(x: box.minX + side * 0.44, y: box.minY + side * 0.68))
-                        tick.addLine(to: CGPoint(x: box.minX + side * 0.74, y: box.minY + side * 0.32))
-                        tick.lineWidth = 1.8
-                        tick.lineCapStyle = .round
-                        tick.lineJoinStyle = .round
-                        (Card.flat ? Ink.paper : UIColor.white).setStroke()
-                        tick.stroke()
-                    } else {
-                        shape.lineWidth = 1.4
-                        Ink.secondary.setStroke()
-                        shape.stroke()
-                    }
+                    Self.drawTask(done: task.isDone, round: row.marker == "+", font: font, at: markerX, baseline: baseline)
                 } else if row.kind == .ordered {
                     let label = NSAttributedString(string: "\(row.number)\(row.marker)", attributes: [
                         .font: UIFont.monospacedDigitSystemFont(ofSize: round(font.pointSize * 0.85), weight: .regular),
@@ -1274,6 +1262,34 @@ public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate 
             }
             // Folded, whatever it is: a pill after its words says so.
             if row.isFolded, let pill = foldPill(for: paragraph) { Self.drawFoldPill(in: pill.offsetBy(dx: origin.x, dy: origin.y)) }
+        }
+    }
+}
+
+extension PhoneLayoutManager {
+    /// A checkbox — round, a task's or a page's; square, a checklist's —
+    /// centred on its line's capitals, ticked when done.
+    static func drawTask(done: Bool, round: Bool, font: UIFont, at markerX: CGFloat, baseline: CGFloat) {
+        let side = (font.pointSize * 0.82).rounded()
+        let box = CGRect(x: markerX - side / 2, y: baseline - font.capHeight / 2 - side / 2, width: side, height: side)
+        let shape = round ? UIBezierPath(ovalIn: box) : UIBezierPath(roundedRect: box, cornerRadius: 3.5)
+        if done {
+            // Ticked: black on the flat page, as all else is; else blue.
+            (Card.flat ? Ink.text : Ink.accent).setFill()
+            shape.fill()
+            let tick = UIBezierPath()
+            tick.move(to: CGPoint(x: box.minX + side * 0.27, y: box.midY))
+            tick.addLine(to: CGPoint(x: box.minX + side * 0.44, y: box.minY + side * 0.68))
+            tick.addLine(to: CGPoint(x: box.minX + side * 0.74, y: box.minY + side * 0.32))
+            tick.lineWidth = 1.8
+            tick.lineCapStyle = .round
+            tick.lineJoinStyle = .round
+            (Card.flat ? Ink.paper : UIColor.white).setStroke()
+            tick.stroke()
+        } else {
+            shape.lineWidth = 1.4
+            Ink.secondary.setStroke()
+            shape.stroke()
         }
     }
 }
@@ -2418,6 +2434,22 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
         gesture is UISwipeGestureRecognizer || gesture === dragScroll || other === dragScroll
     }
 
+    /// An untitled page that is a thing to do — done or not: its ring drawn
+    /// as its first row's mark, that row's own not shown. Tapped,
+    /// `onLeadMark` is told.
+    public var leadMark: Bool? {
+        get { outlineLayout.leadMark }
+        set {
+            guard newValue != outlineLayout.leadMark else { return }
+            outlineLayout.leadMark = newValue
+            if textStorage.length > 0 {
+                outlineLayout.invalidateDisplay(forCharacterRange: NSRange(location: 0, length: min(textStorage.length, paragraphRanges.first?.length ?? 1)))
+            }
+            setNeedsDisplay()
+        }
+    }
+    public var onLeadMark: (() -> Void)?
+
     @objc private func tapped(_ gesture: UITapGestureRecognizer) {
         if isChoosingRows {
             if let index = rowUnder(gesture.location(in: self)) { toggleChosen(index) }
@@ -2425,6 +2457,12 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
         }
         switch target(at: gesture.location(in: self)) {
         case .marker(let index):
+            // The page's own ring, standing for the first row's: the page told.
+            if index == 0, leadMark != nil, let onLeadMark {
+                onLeadMark()
+                UISelectionFeedbackGenerator().selectionChanged()
+                return
+            }
             let row = rows[index]
             if row.task != nil {
                 guard let toggled = OutlineKeys.toggle(rows, at: index) else { return }
