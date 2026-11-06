@@ -83,6 +83,20 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     /// beside the editor to be the same.
     public static var markColor: NSColor { OutlineMetrics(fontSize: 15).typography.ink.secondary }
 
+    /// Whether nothing is written in it, as it is now — not as last told.
+    public var isEmpty: Bool { (editor.textStorage?.length ?? 0) == 0 }
+    /// Told at once when it comes to have words in it, or none: for a
+    /// placeholder over it, which what is told a moment later would leave
+    /// over the first letters typed.
+    public var onEmptinessChange: ((Bool) -> Void)?
+    private var toldEmpty: Bool?
+
+    /// Words its spelling takes as written — the graph's own, its pages'
+    /// names — not underlined, nor corrected to others.
+    public func acceptSpelling(of words: [String]) {
+        NSSpellChecker.shared.setIgnoredWords(words, inSpellDocumentWithTag: editor.spellCheckerDocumentTag)
+    }
+
     /// An untitled page that is a thing to do — done or not: its ring drawn
     /// as its first row's mark, that row's own checkbox or bullet not shown.
     /// Clicked, `onLeadMark` is told.
@@ -393,6 +407,11 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
 
     public func textDidChange(_ notification: Notification) {
         defer { placeTitleChip() }
+        let empty = isEmpty
+        if empty != toldEmpty {
+            toldEmpty = empty
+            onEmptinessChange?(empty)
+        }
         heightChanged()
         // Written back as Markdown a moment after the typing stops — the
         // whole body each time, and all that hears of it — not for each key.

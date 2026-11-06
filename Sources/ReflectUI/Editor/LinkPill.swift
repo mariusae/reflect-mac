@@ -72,7 +72,11 @@ package final class LinkPill: NSObject {
         guard value != 0, let storage = view.textStorage, NSMaxRange(range) <= storage.length else { return value }
         var shown = true
         storage.enumerateAttributes(in: range) { attributes, _, stop in
-            if attributes[.outlineHidden] != nil || attributes[.outlineLinkLabel] != nil { shown = false; stop.pointee = true }
+            // Hidden markup, and a link's words — a page's name, not prose.
+            if attributes[.outlineHidden] != nil || attributes[.outlineLinkLabel] != nil || attributes[.outlineLink] != nil {
+                shown = false
+                stop.pointee = true
+            }
         }
         return shown ? value : 0
     }

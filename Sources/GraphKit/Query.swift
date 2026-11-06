@@ -256,10 +256,25 @@ public struct Query: Equatable, Sendable {
         if !flags.isEmpty { parts.append(flags.map(\.phrase).joined(separator: " and ")) }
         if !excludedFlags.isEmpty { parts.append("not " + excludedFlags.map(\.phrase).joined(separator: " or ")) }
         if parts.isEmpty { parts.append("Every page") }
-        if sort != .automatic { parts.append("by \(sort.rawValue)\(descending ? ", newest first" : "")") }
-        if let limit { parts.append("first \(limit)") }
-        let said = parts.joined(separator: ", ").replacingOccurrences(of: Self.this, with: "this page")
+        // How they are ordered, and how many: after what they are, apart.
+        var after: [String] = []
+        if let order = orderPhrase { after.append(order) }
+        if let limit { after.append("first \(limit)") }
+        let said = ([parts.joined(separator: ", ")] + after).joined(separator: " · ").replacingOccurrences(of: Self.this, with: "this page")
         return said.prefix(1).uppercased() + said.dropFirst()
+    }
+
+    /// Its order in words: what comes first.
+    private var orderPhrase: String? {
+        switch sort {
+        case .automatic: nil
+        // Edited lately, asked for already: which first is all there is to say.
+        case .modified where editedSinceDaysAgo != nil: descending ? "newest first" : "oldest first"
+        case .modified: descending ? "recently edited first" : "least recently edited first"
+        case .created: descending ? "newest first" : "oldest first"
+        case .title: descending ? "Z to A" : "A to Z"
+        case .pinned: "as pinned"
+        }
     }
 
     // MARK: Asking

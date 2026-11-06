@@ -65,6 +65,10 @@ import Testing
         #expect(Query(text: "edited since: soon").unknown == ["edited since: soon"])
         #expect(Query(text: "edited since: today").summary == "Edited today")
         #expect(Query(text: "edited since: 3 days ago").summary == "Edited since 3 days ago")
+        // Its order in words, apart from what it finds.
+        #expect(Query(text: "edited since: today\nsort: -modified").summary == "Edited today · newest first")
+        #expect(Query(text: "tag: Fruit\nsort: -modified\nlimit: 3").summary == "Tagged Fruit · recently edited first · first 3")
+        #expect(Query(text: "sort: title").summary == "Every page · A to Z")
     }
 
     /// The day so many back starts at its midnight, whenever it is asked.
