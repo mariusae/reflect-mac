@@ -815,6 +815,11 @@ package final class OutlineTextView: NSTextView {
         didSet { if leadMark != oldValue { needsDisplay = true; placeRowButtons() } }
     }
     package var onLeadMark: (() -> Void)?
+    /// Whether the first row's gutter is the host's — a card's handle in
+    /// it: a row with no mark of its own shows no ghost of one there.
+    package var leadGutterTaken = false {
+        didSet { if leadGutterTaken != oldValue { needsDisplay = true } }
+    }
 
     /// The middle of the first row's capitals, in the view: where a mark
     /// beside it is centred, as its own is.
@@ -829,6 +834,10 @@ package final class OutlineTextView: NSTextView {
     package var hoveredCardFrame: NSRect?
     /// A task's Move to… and ⋯, at the end of its line while it is hovered.
     package var rowButtons: RowButtons?
+    /// What the row buttons are put in, out in the margin: by default the
+    /// document of the scroll view it is in — but in a column another app
+    /// draws, that column's own, which does not pass clicks on to them.
+    package weak var rowButtonsHost: NSView?
 
     package override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -1692,6 +1701,10 @@ package final class OutlineTextView: NSTextView {
 
     // MARK: Keys
 
+    /// Told on Escape with rows selected, if set: out of the outline, as its
+    /// host has it — else back to the row's text.
+    package var onEscapeFromRows: (() -> Void)?
+
     /// Escape selects the caret's row as a row, and goes back to its text.
     package override func cancelOperation(_ sender: Any?) {
         if linkCompletion != nil {
@@ -1699,6 +1712,10 @@ package final class OutlineTextView: NSTextView {
             return
         }
         if let selectedRows {
+            if let onEscapeFromRows {
+                editText(inRow: rowHead)
+                return onEscapeFromRows()
+            }
             editText(inRow: rowHead == selectedRows.lowerBound ? rowHead : rowHead)
         } else {
             let row = rowIndex(at: selectedRange().location)

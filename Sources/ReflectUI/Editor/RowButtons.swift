@@ -98,7 +98,7 @@ extension OutlineTextView {
         let ranges = paragraphRanges
         guard isEditable, selectedRows == nil, draggedRows == nil, let index = hoveredRow, all.indices.contains(index),
               ranges.indices.contains(index), all[index].task != nil, !(index == 0 && leadMark != nil), let layout = layoutManager,
-              let host = enclosingScrollView?.documentView ?? superview else {
+              let host = rowButtonsHost ?? enclosingScrollView?.documentView ?? superview else {
             rowButtons?.isHidden = true
             return
         }
@@ -168,12 +168,60 @@ extension OutlineTextView {
         rehover()
     }
 
-    /// What ⋯ offers for a row: where among its siblings, then elsewhere.
+    /// What ⋯ offers for a row: folding it, or the list it is in; done or
+    /// not, and the list's done after the rest; where among its siblings,
+    /// then elsewhere; what kind of row; copied, cut or deleted.
     private func rowButtonsMenu(_ index: Int) -> NSMenu {
         let menu = NSMenu(title: "Row")
         menu.autoenablesItems = false
         let all = rows
         let one = index..<(index + 1)
+        func item(_ title: String, _ symbol: String, _ action: @escaping () -> Void) -> NSMenuItem {
+            let item = ClosureMenuItem(title: title, run: action)
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            return item
+        }
+        // Folded or unfolded where it is, the page not following the caret.
+        func folding(_ title: String, _ symbol: String, at row: Int, _ change: @escaping (inout [Row], Int) -> Int) -> NSMenuItem {
+            item(title, symbol) { [weak self] in
+                self?.perform(title, on: row..<(row + 1), followingCaret: false) { rows, selection in
+                    change(&rows, selection.lowerBound) == 0 ? nil : selection
+                }
+            }
+        }
+        let row = all[index]
+        if row.isFolded {
+            menu.addItem(folding("Unfold", "chevron.down", at: index) { OutlineEditing.unfold(&$0, at: $1) })
+        } else if OutlineEditing.hasChildren(all, index) {
+            menu.addItem(folding("Fold", "chevron.right", at: index) { -OutlineEditing.fold(&$0, at: $1) })
+        }
+        // The list it is in, folded into the row it is under: a checklist
+        // put away under its heading.
+        if let parent = all[..<index].lastIndex(where: { $0.depth < row.depth }) {
+            let name = all[parent].text.trimmingCharacters(in: .whitespaces)
+            let shown = name.count > 32 ? String(name.prefix(31)) + "…" : name
+            menu.addItem(folding(shown.isEmpty ? "Fold List" : "Fold “\(shown)”", "chevron.right.2", at: parent) {
+                -OutlineEditing.fold(&$0, at: $1)
+            })
+        }
+        if let task = row.task {
+            menu.addItem(item(task == .open ? "Mark Done" : "Mark Not Done", task == .open ? "checkmark.circle" : "circle") { [weak self] in
+                self?.perform("Toggle Done", on: one, followingCaret: false) { rows, selection in
+                    OutlineEditing.toggleDone(&rows, selection)
+                    return selection
+                }
+            })
+        }
+        // Its list's done, or its own children's, after the rest.
+        var probe = all
+        if OutlineEditing.moveDoneToBottom(&probe, at: index) != nil {
+            menu.addItem(item("Move Done to Bottom", "arrow.down.to.line.compact") { [weak self] in
+                self?.perform("Move Done to Bottom", on: one, followingCaret: false) { rows, selection in
+                    OutlineEditing.moveDoneToBottom(&rows, at: selection.lowerBound).map { $0..<($0 + 1) }
+                }
+            })
+        }
+        if !menu.items.isEmpty { menu.addItem(.separator()) }
         let reorder: [(String, String, (inout [Row], Range<Int>) -> Range<Int>?)] = [
             ("Move to Top", "arrow.up.to.line", { OutlineEditing.moveToTop(&$0, $1) }),
             ("Move Up", "arrow.up", { OutlineEditing.moveUp(&$0, $1) }),
@@ -207,6 +255,30 @@ extension OutlineTextView {
             }
         }
         cut.image = NSImage(systemSymbolName: "scissors", accessibilityDescription: nil)
+        // Another kind of row: a bullet, a checkbox, a heading.
+        let turn = NSMenuItem(title: "Turn Into", action: nil, keyEquivalent: "")
+        turn.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
+        turn.submenu = NSMenu(title: "Turn Into")
+        let kinds: [(String, Int, Bool)] = [
+            ("Bullet", 0, row.kind == .bullet && row.task == nil),
+            ("Checkbox", 14, row.kind == .bullet && row.task != nil && row.marker != "+"),
+            ("Task", 10, row.kind == .bullet && row.task != nil && row.marker == "+"),
+            ("Numbered", 11, row.kind == .ordered),
+            ("Heading 1", 1, row.kind == .heading(1)),
+            ("Heading 2", 2, row.kind == .heading(2)),
+            ("Heading 3", 3, row.kind == .heading(3)),
+        ]
+        for (title, tag, current) in kinds {
+            let kind = ClosureMenuItem(title: title) { [weak self] in
+                let sender = NSMenuItem()
+                sender.tag = tag
+                self?.setRowType(sender, on: one)
+            }
+            kind.state = current ? .on : .off
+            turn.submenu?.addItem(kind)
+        }
+        menu.addItem(turn)
+        menu.addItem(.separator())
         menu.addItem(copy)
         menu.addItem(cut)
         menu.addItem(.separator())

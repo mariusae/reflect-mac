@@ -358,8 +358,12 @@ extension OutlineTextView {
     // MARK: Row types
 
     /// Format ▸ Row Type: the menu item's tag says which.
-    @objc package func setRowType(_ sender: NSMenuItem) {
-        perform("Change Row Type") { rows, selection in
+    @objc package func setRowType(_ sender: NSMenuItem) { setRowType(sender, on: nil) }
+
+    /// The rows' kind set, as the menu item's tag says — `on` rows of its
+    /// own, the caret left where it is; else the caret's.
+    package func setRowType(_ sender: NSMenuItem, on target: Range<Int>?) {
+        perform("Change Row Type", on: target, followingCaret: target == nil) { rows, selection in
             for index in selection {
                 var row = rows[index]
                 row.spacing = 1

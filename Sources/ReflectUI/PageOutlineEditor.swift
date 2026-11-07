@@ -109,6 +109,21 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
         set { editor.onLeadMark = newValue }
     }
 
+    /// Told on a second Escape — rows selected by the first: out of the
+    /// outline, as its host has it. Unset, back to the row's text.
+    public var onEscapeFromRows: (() -> Void)? {
+        get { editor.onEscapeFromRows }
+        set { editor.onEscapeFromRows = newValue }
+    }
+
+    /// Whether its first row's gutter is the host's — a card's handle in
+    /// it: that row, with no mark of its own, shows no ghost of one there,
+    /// under the pointer or the caret.
+    public var leadGutterTaken: Bool {
+        get { editor.leadGutterTaken }
+        set { editor.leadGutterTaken = newValue }
+    }
+
     /// The middle of its first line's capitals, down from its top: what
     /// stands beside that line — a chevron, controls — centred on it.
     public var firstLineMiddle: CGFloat? {
@@ -210,6 +225,9 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
         if let root { editor.images = Self.pictures(of: root) }
         editor.onPicturesChanged = { [weak self] in self?.heightChanged() }
         addSubview(editor)
+        // Its rows' buttons in itself: the column it is in may be another
+        // app's, whose document passes no clicks to views put in it.
+        editor.rowButtonsHost = self
         load(text)
         NotificationCenter.default.addObserver(self, selector: #selector(storageEdited), name: NSTextStorage.didProcessEditingNotification, object: editor.textStorage)
     }
@@ -333,9 +351,25 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
 
     // MARK: Size
 
+    /// Room before its text, left empty — out in the column it is in, the
+    /// margin before its rows: their ⋯ and Move to… shown there, on a task
+    /// under the pointer, not over its checkbox. A click on nothing there
+    /// goes to what is under it.
+    public var leadingRoom: CGFloat = 0 {
+        didSet { if leadingRoom != oldValue { needsLayout = true; heightChanged() } }
+    }
+
+    private func textWidth(_ width: CGFloat) -> CGFloat { max(1, width - leadingRoom) }
+
+    public override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === self && leadingRoom > 0 ? nil : hit
+    }
+
     /// The height its text takes at a width.
     public func height(forWidth width: CGFloat) -> CGFloat {
         guard let layout = editor.layoutManager, let container = editor.textContainer else { return 0 }
+        let width = textWidth(width)
         if abs(container.size.width - width) > 0.5 {
             container.size = NSSize(width: width, height: .greatestFiniteMagnitude)
         }
@@ -345,8 +379,8 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
         // Asked of another width than it has — SwiftUI asking its ideal
         // size — the text laid out again at its own: else it is drawn
         // wrapped as it was asked, taller or shorter than its frame.
-        if bounds.width > 0, abs(bounds.width - width) > 0.5 {
-            container.size = NSSize(width: bounds.width, height: .greatestFiniteMagnitude)
+        if bounds.width > 0, abs(textWidth(bounds.width) - width) > 0.5 {
+            container.size = NSSize(width: textWidth(bounds.width), height: .greatestFiniteMagnitude)
         }
         return ceil(max(height, editor.metrics.fontSize * 1.4))
     }
@@ -358,7 +392,7 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     public override func layout() {
         super.layout()
         let height = height(forWidth: bounds.width)
-        editor.frame = NSRect(x: 0, y: 0, width: bounds.width, height: height)
+        editor.frame = NSRect(x: leadingRoom, y: 0, width: textWidth(bounds.width), height: height)
         if abs(height - bounds.height) > 0.5 { checkHeight() }
         placeTitleChip()
     }
