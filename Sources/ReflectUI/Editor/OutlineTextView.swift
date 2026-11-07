@@ -1704,6 +1704,9 @@ package final class OutlineTextView: NSTextView {
     /// Told on Escape with rows selected, if set: out of the outline, as its
     /// host has it — else back to the row's text.
     package var onEscapeFromRows: (() -> Void)?
+    /// Asked first on Return with the caret in a row's text, by the row:
+    /// true, when its host took the Return for something of its own.
+    package var onReturnInRow: ((Int) -> Bool)?
 
     /// Escape selects the caret's row as a row, and goes back to its text.
     package override func cancelOperation(_ sender: Any?) {
@@ -1831,6 +1834,7 @@ package final class OutlineTextView: NSTextView {
         }
         // `---`, `***` or `___` alone on a row, then Return: a line across.
         let index = rowIndex(at: selectedRange().location)
+        if selectedRange().length == 0, onReturnInRow?(index) == true { return }
         let current = row(at: index)
         // A fence alone on a row, then Return: a code block.
         let typed = ruleText(ofRowAt: selectedRange().location)

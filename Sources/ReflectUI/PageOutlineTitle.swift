@@ -18,9 +18,22 @@ extension PageOutlineEditor {
         chip.setAccessibilityLabel("Make this line the title")
         chip.refusesFirstResponder = true
         chip.isHidden = true
-        chip.sizeToFit()
+        styleTitleChip(chip)
         editor.addSubview(chip)
         return chip
+    }
+
+    /// Quiet, grey and borderless — a word in the margin, not a button
+    /// asking; else the accent's.
+    func styleTitleChip(_ chip: NSButton) {
+        chip.isBordered = !quietTitleChip
+        let color: NSColor = quietTitleChip ? .tertiaryLabelColor : .controlAccentColor
+        chip.contentTintColor = color
+        chip.attributedTitle = NSAttributedString(string: "Title", attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: quietTitleChip ? .medium : .semibold),
+            .foregroundColor: color,
+        ])
+        chip.sizeToFit()
     }
 
     @objc private func titleChipClicked(_ sender: Any?) {
@@ -51,7 +64,10 @@ extension PageOutlineEditor {
     func placeTitleChip() {
         guard offersTitleChip, let text = editor.textStorage?.string as NSString?, window?.firstResponder === editor, isUntitled(),
               let row = firstRow, case let words = words(of: row, in: text), words.length > 0,
-              case let caret = editor.selectedRange(), caret.location >= row.location, NSMaxRange(caret) <= NSMaxRange(words),
+              case let caret = editor.selectedRange(),
+              // Quiet: once the first row is written, the caret gone on below it.
+              quietTitleChip ? caret.location >= NSMaxRange(row) && NSMaxRange(row) < text.length && offersTitle()
+                             : caret.location >= row.location && NSMaxRange(caret) <= NSMaxRange(words),
               !Untitled.title(from: text.substring(with: words)).isEmpty,
               let layout = editor.layoutManager, let container = editor.textContainer else {
             if madeChip?.isHidden == false { madeChip?.isHidden = true }
@@ -72,9 +88,28 @@ extension PageOutlineEditor {
         if titleChip.isHidden { titleChip.isHidden = false }
     }
 
+    /// Return at the end of the first row, written as a heading — `# ` —
+    /// of a page Title would be offered for: that row made the title.
+    func titleByHeading(at index: Int) -> Bool {
+        guard titlesByHeading, index == 0, offersTitleChip, offersTitle(), isUntitled(),
+              let text = editor.textStorage?.string as NSString?, let row = firstRow, case let words = words(of: row, in: text),
+              editor.selectedRange().location == NSMaxRange(words),
+              // Its kind, or — what was typed may not be in its rows yet — its words.
+              Self.isTitleHeading(editor.row(at: 0)) || Self.isTitleHeading(Row(kind: .bullet, text: text.substring(with: words)))
+        else { return false }
+        return titleByFirstRow()
+    }
+
+    /// A row written as a top heading: made one, or `# ` typed at its start.
+    nonisolated static func isTitleHeading(_ row: Row) -> Bool {
+        if case .heading(1) = row.kind { return true }
+        return row.text.hasPrefix("# ") && row.text.dropFirst(2).contains { !$0.isWhitespace }
+    }
+
     /// The first row made the title — its words, as a title — and taken
-    /// out, with the blank rows after it; the caret at the start. False,
-    /// when the page has a title, or its first row no words.
+    /// out, with the blank rows after it; the caret where it was in what is
+    /// left, else at the start. False, when the page has a title, or its
+    /// first row no words.
     @discardableResult
     public func titleByFirstRow() -> Bool {
         guard isUntitled(), let text = editor.textStorage?.string as NSString?, let row = firstRow else { return false }
@@ -88,11 +123,14 @@ extension PageOutlineEditor {
         }
         // The only row: emptied, not taken — there is always a row.
         let taken = end >= text.length ? words(of: NSRange(location: 0, length: text.length), in: text) : NSRange(location: 0, length: end)
+        let caret = editor.selectedRange()
         onTitle?(title)
         window?.makeFirstResponder(editor)
         editor.setSelectedRange(taken)
         editor.insertText("", replacementRange: taken)
-        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        // Writing on below it: on where it was.
+        let after = caret.location >= NSMaxRange(taken) ? NSRange(location: caret.location - taken.length, length: caret.length) : NSRange(location: 0, length: 0)
+        editor.setSelectedRange(NSMaxRange(after) <= (editor.textStorage?.length ?? 0) ? after : NSRange(location: 0, length: 0))
         madeChip?.isHidden = true
         return true
     }

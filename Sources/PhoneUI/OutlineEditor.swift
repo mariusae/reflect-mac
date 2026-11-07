@@ -1365,6 +1365,23 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
     public var onFocusChange: ((Bool) -> Void)?
     /// Told when the caret moved, or what is around it did: to keep it in sight.
     public var onCaretMove: (() -> Void)?
+
+    // MARK: Titling
+
+    /// Whether the note has no title yet: its first row may be made one.
+    public var isUntitled: () -> Bool = { false }
+    /// Told the title an untitled note's first row makes, as the row goes.
+    public var onTitle: ((String) -> Void)?
+    /// Whether Title is offered — quietly, at the end of the first row once
+    /// it is written and the caret has gone on below it — while `offersTitle`
+    /// says so: a note made a moment ago, say.
+    public var offersTitleChip = false
+    public var offersTitle: () -> Bool = { true }
+    /// A first row typed as a heading — `# ` — then Return: that row made
+    /// the title, while Title would be offered.
+    public var titlesByHeading = false
+    /// The chip, once there has been reason to show it.
+    var madeTitleChip: UIButton?
     /// The notes and days a name typed after `@` or `[[` could be: set for
     /// every editor by whoever has the index.
     public static var suggest: ((String) -> [LinkSuggestions.Candidate])?
@@ -1973,6 +1990,9 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
             accept(first)
             return false
         }
+        // Return at the end of a first row written as a heading — `# ` — of
+        // a note Title is offered for: that row the title.
+        if text == "\n", range.length == 0, titleByHeading(at: range.location) { return false }
         // Return: the row split, the outline's way.
         if text == "\n" {
             if range.length > 0 { textStorage.replaceCharacters(in: range, with: "") }
@@ -2158,6 +2178,7 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
         onCaretMove?()
         showFoldState()
         showUndoState()
+        placeTitleChip()
         if completing != nil, typedOpener == nil { refreshCompletion() }
         // The span the caret is in shows its marks; the one it left, not.
         let old = styler.caret
@@ -2188,6 +2209,7 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
         // Not typed in, no span is the caret's: the one it was in — a link's
         // brackets, an untitled note's made-up name — hidden again.
         restyleCaret(nil)
+        placeTitleChip()
         onFocusChange?(false)
     }
 
@@ -3377,6 +3399,7 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
         // Made shorter than its text was, after the text was laid out.
         if super.contentSize.height > bounds.height { contentSize = super.contentSize }
         heightMayHaveChanged()
+        placeTitleChip()
     }
 }
 

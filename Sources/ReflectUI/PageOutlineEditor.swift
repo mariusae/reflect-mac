@@ -56,6 +56,17 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     /// Whether Title is offered at the end of an untitled page's first row;
     /// else it is titled by the app's own command alone.
     public var offersTitleChip = true
+    /// Title offered quietly: once the first row is written — the caret
+    /// gone on below it — small and grey, and only while `offersTitle`
+    /// says so; not while the first row is being typed.
+    public var quietTitleChip = false {
+        didSet { madeChip.map(styleTitleChip) }
+    }
+    /// Whether Title may be offered now: a page made a moment ago, say.
+    public var offersTitle: () -> Bool = { true }
+    /// A first row typed as a heading — `# ` — then Return: that row made
+    /// the title, while Title would be offered.
+    public var titlesByHeading = false
     /// What the editor does not show — a body's trailing gap — kept as it was.
     private var shell = Outline(rows: [])
     public private(set) var text = ""
@@ -228,6 +239,8 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
         // Its rows' buttons in itself: the column it is in may be another
         // app's, whose document passes no clicks to views put in it.
         editor.rowButtonsHost = self
+        // `# ` on the first row, then Return: that row the title.
+        editor.onReturnInRow = { [weak self] index in self?.titleByHeading(at: index) ?? false }
         load(text)
         NotificationCenter.default.addObserver(self, selector: #selector(storageEdited), name: NSTextStorage.didProcessEditingNotification, object: editor.textStorage)
     }
