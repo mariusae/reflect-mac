@@ -231,7 +231,7 @@ final class NoteSummaryRow: UIControl {
         name.text = SliceBlock.name(path, store: store)
         // A private note's words kept out of lists: said to be private, no more.
         let entry = store.index?.entry(path)
-        words.text = entry?.isPrivate == true ? "Private" : Self.firstWords(of: text)
+        words.text = entry?.isPrivate == true ? "Private" : Self.firstWords(of: text, named: entry?.untitledName != nil)
         accessibilityLabel = name.text
         accessibilityValue = [Card.meta(for: path, store: store), words.text].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
         age.attributedText = NSAttributedString(string: (Card.meta(for: path, store: store) ?? "").uppercased(),
@@ -254,11 +254,14 @@ final class NoteSummaryRow: UIControl {
         setNeedsLayout()
     }
 
-    private static func firstWords(of text: String) -> String {
+    /// What a note says under its name: its first line — after its
+    /// heading, or, untitled, after the line that is its name.
+    private static func firstWords(of text: String, named byFirstLine: Bool) -> String {
         let rows = OutlineMarkdown.parse(text).rows
         let shown = rows.lazy.map { InlineMarkup.plainText($0.text).trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        let first = { if case .heading = rows.first?.kind { return true } else { return false } }() ? shown.dropFirst().first : shown.first
+        let headed = { if case .heading = rows.first?.kind { return true } else { return false } }()
+        let first = headed || byFirstLine ? shown.dropFirst().first : shown.first
         return first ?? ""
     }
 

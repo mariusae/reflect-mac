@@ -904,7 +904,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         ]
         if let templates = store.index?.templates, !templates.isEmpty {
             making.append(UIMenu(title: "New from Template", image: UIImage(systemName: "doc.on.doc"), children: templates.map { entry in
-                UIAction(title: entry.title) { [weak self] _ in self?.compose(from: entry.path) }
+                UIAction(title: entry.shown) { [weak self] _ in self?.compose(from: entry.path) }
             }))
         }
         var sections: [UIMenuElement] = [UIMenu(options: .displayInline, children: making)]
@@ -1047,7 +1047,7 @@ final class PrismController: UIViewController, UINavigationControllerDelegate, U
         if day == nil {
             items.append(UIMenu(options: .displayInline, children: [
                 UIAction(title: "Delete Note…", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
-                    self?.confirmDelete(path, title: entry?.title ?? (path as NSString).lastPathComponent)
+                    self?.confirmDelete(path, title: entry?.shown ?? (path as NSString).lastPathComponent)
                 },
             ]))
         }

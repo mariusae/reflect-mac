@@ -385,7 +385,7 @@ final class ReaderController: UIViewController, WKNavigationDelegate, WKScriptMe
         if let day = GraphPaths.day(fromDailyPath: notePath), let date = day.date {
             return date.formatted(.dateTime.weekday(.wide).month(.wide).day())
         }
-        return store.index?.entry(notePath)?.title ?? (notePath as NSString).lastPathComponent
+        return store.index?.entry(notePath)?.shown ?? (notePath as NSString).lastPathComponent
     }
 
     private func setBandHidden(_ hidden: Bool) {

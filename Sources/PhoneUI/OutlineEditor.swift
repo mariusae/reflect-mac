@@ -1818,6 +1818,17 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
 
     public override func scrollRectToVisible(_ rect: CGRect, animated: Bool) {}
 
+    // Nor ever taller within than it is: a text view whose text reached
+    // past its bottom — framed as tall as its rows, not the empty line
+    // after the last; a long note laid out only so far, its height
+    // guessed — was a scroll view under the finger, and the sheet or
+    // river around it didn't scroll until the finger was lifted and tried
+    // again.
+    public override var contentSize: CGSize {
+        get { super.contentSize }
+        set { super.contentSize = CGSize(width: newValue.width, height: min(newValue.height, bounds.height)) }
+    }
+
     // MARK: Dictating at the caret
 
     /// The keyboard bar's microphone: listening — what is heard written at
@@ -3292,6 +3303,8 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
 
     public override func layoutSubviews() {
         super.layoutSubviews()
+        // Made shorter than its text was, after the text was laid out.
+        if super.contentSize.height > bounds.height { contentSize = super.contentSize }
         heightMayHaveChanged()
     }
 }

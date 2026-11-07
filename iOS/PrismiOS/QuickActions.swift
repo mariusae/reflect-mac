@@ -27,7 +27,7 @@ enum QuickActions {
                                       icon: UIApplicationShortcutIcon(systemImageName: "square.and.pencil"), userInfo: nil),
         ]
         UIApplication.shared.shortcutItems = capture + entries.prefix(2).map { entry in
-            UIApplicationShortcutItem(type: type, localizedTitle: entry.title.isEmpty ? (entry.path as NSString).lastPathComponent : entry.title,
+            UIApplicationShortcutItem(type: type, localizedTitle: entry.shown.isEmpty ? (entry.path as NSString).lastPathComponent : entry.shown,
                                       localizedSubtitle: nil, icon: UIApplicationShortcutIcon(systemImageName: "doc.text"),
                                       userInfo: ["path": entry.path as NSString])
         }

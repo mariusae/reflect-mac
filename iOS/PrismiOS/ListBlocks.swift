@@ -239,7 +239,7 @@ final class SliceBlock: UIView, SheetBlock {
     static func name(_ path: String, store: PrismStore) -> String {
         if let day = GraphPaths.day(fromDailyPath: path) { return NoteBlock.dayTitle(day) }
         if let week = GraphPaths.week(fromWeeklyPath: path) { return "Week \(week.week)" }
-        return store.index?.entry(path)?.title ?? (path as NSString).lastPathComponent
+        return store.index?.entry(path)?.shown ?? (path as NSString).lastPathComponent
     }
 
     /// What a note is called, longest first, each shorter than the last —

@@ -133,7 +133,7 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
         if let day = DayQuery.day(query), !(day == today && !items.isEmpty) { items.append(dayItem(day)) }
         let relative = RelativeDateTimeFormatter()
         for match in store.index?.matches(query, limit: 30) ?? [] {
-            items.append(Item(place: .note(match.entry.path), title: match.entry.title,
+            items.append(Item(place: .note(match.entry.path), title: match.entry.shown,
                               detail: match.alias.map { "as \($0)" } ?? relative.localizedString(for: match.entry.modified, relativeTo: Date()),
                               symbol: match.entry.icon ?? (match.entry.isTopic ? "number" : "doc.text"), cover: match.entry.cover))
         }
@@ -142,7 +142,7 @@ final class FinderController: UIViewController, UITableViewDataSource, UITableVi
             var named = Set(items.compactMap { item -> String? in if case .note(let path) = item.place { path } else { nil } })
             for path in words.about(query, limit: 5) where named.insert(path).inserted {
                 guard let entry = store.index?.entry(path) else { continue }
-                items.append(Item(place: .note(path), title: entry.title, detail: "About this", symbol: entry.icon ?? "sparkle.magnifyingglass",
+                items.append(Item(place: .note(path), title: entry.shown, detail: "About this", symbol: entry.icon ?? "sparkle.magnifyingglass",
                                   cover: entry.cover))
             }
         }

@@ -549,7 +549,7 @@ final class NoteBlock: UIView {
     private var name: String {
         if let day = ref.day { return Self.dayTitle(day) }
         if let week = GraphPaths.week(fromWeeklyPath: ref.path) { return "Week \(week.week)" }
-        return store?.index?.entry(ref.path)?.title ?? (ref.path as NSString).lastPathComponent
+        return store?.index?.entry(ref.path)?.shown ?? (ref.path as NSString).lastPathComponent
     }
 
     /// Whether its first row is its name: a top heading — even one not yet
