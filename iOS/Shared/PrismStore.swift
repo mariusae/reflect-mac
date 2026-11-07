@@ -114,6 +114,8 @@ final class PrismStore {
         }
         // A link to a note with its own icon: that, in its pill.
         PhoneLayoutManager.targetIcon = { [weak self] name in self?.index?.icon(of: name) }
+        // A link to an untitled note shown as what the note begins with.
+        PhoneLayoutManager.untitledName = { [weak self] name in self?.index?.entry("\(GraphPaths.notesDirectory)/\(name).md")?.untitledName }
         changed = []
         revision += 1
         prepareGit()

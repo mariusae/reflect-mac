@@ -19,6 +19,10 @@ extension NSAttributedString.Key {
     /// On a link's last hidden opening character: the symbol drawn there —
     /// a page, a day, the web — in room of its own, inside the pill.
     public static let prismIcon = NSAttributedString.Key("PrismIcon")
+    /// On the first character of a link to an untitled note: what the
+    /// note begins with, drawn in place of its made-up name — the rest of
+    /// which is hidden — but for while the caret is in it.
+    public static let prismLabel = NSAttributedString.Key("PrismLabel")
     /// On a paragraph: the room above its first line.
     public static let prismSpaceBefore = NSAttributedString.Key("PrismSpaceBefore")
     /// On the first hidden character of a shortened address's middle: an
@@ -307,7 +311,7 @@ public final class PhoneStyler: NSObject, NSTextStorageDelegate {
 
     /// A row not shown: its characters nothing, its line no height.
     private func collapse(_ storage: NSTextStorage, _ paragraph: NSRange) {
-        for key: NSAttributedString.Key in [.prismImage, .prismIcon, .prismEllipsis, .prismBreak, .prismPill, .prismSpaceBefore] {
+        for key: NSAttributedString.Key in [.prismImage, .prismIcon, .prismEllipsis, .prismLabel, .prismBreak, .prismPill, .prismSpaceBefore] {
             storage.removeAttribute(key, range: paragraph)
         }
         // The line break kept: a row's end, though not seen.
@@ -483,6 +487,15 @@ public final class PhoneStyler: NSObject, NSTextStorageDelegate {
                     storage.addAttributes([.underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: Ink.faint], range: content)
                 } else if !inHeading {
                     storage.addAttribute(.prismPill, value: true, range: span.range)
+                }
+                // To an untitled note, by its made-up name: what the note
+                // begins with shown instead, as the Mac shows it — but while
+                // the caret is in it.
+                if !revealed, content.length > 1, Untitled.isName(text.substring(with: content)),
+                   let label = MainActor.assumeIsolated({ PhoneLayoutManager.untitledName(text.substring(with: content)) }) {
+                    let shown = label.count > 48 ? String(label.prefix(47)) + "…" : label
+                    storage.addAttribute(.prismLabel, value: shown, range: NSRange(location: content.location, length: 1))
+                    storage.addAttribute(.prismHidden, value: true, range: NSRange(location: content.location + 1, length: content.length - 1))
                 }
             case .tag:
                 storage.addAttribute(.foregroundColor, value: flat ? Ink.secondary : Ink.accent, range: span.range)
@@ -661,6 +674,24 @@ public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate 
             let text = NSAttributedString(string: "…", attributes: [.font: font, .foregroundColor: Card.flat ? Ink.text : Ink.accent])
             text.draw(at: CGPoint(x: origin.x + fragment.minX + place.x, y: origin.y + fragment.minY + place.y - font.ascender))
         }
+        // An untitled note's link: what it begins with, in the room its first character was given.
+        storage.enumerateAttribute(.prismLabel, in: characters) { value, range, _ in
+            guard let label = value as? String else { return }
+            let glyph = glyphIndexForCharacter(at: range.location)
+            guard glyph < numberOfGlyphs else { return }
+            let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? UIFont ?? metrics.body
+            let color = storage.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? UIColor ?? Ink.accent
+            let fragment = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            let place = location(forGlyphAt: glyph)
+            // In the room it was given: cut short with an ellipsis where that is narrower than its words.
+            let room = labelWidths[range.location] ?? (label as NSString).size(withAttributes: [.font: font]).width
+            let style = NSMutableParagraphStyle()
+            style.lineBreakMode = .byTruncatingTail
+            let text = NSAttributedString(string: label, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: style])
+            text.draw(with: CGRect(x: origin.x + fragment.minX + place.x, y: origin.y + fragment.minY + place.y - font.ascender,
+                                   width: max(room, 1), height: ceil(font.lineHeight)),
+                      options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], context: nil)
+        }
         storage.enumerateAttribute(.prismIcon, in: characters) { value, range, _ in
             guard let symbol = value as? String else { return }
             let glyph = glyphIndexForCharacter(at: range.location)
@@ -686,6 +717,14 @@ public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate 
     /// A link's target's own icon — a page's, a saved river's — by its name,
     /// shown in its pill instead of its kind's. Told by the app.
     @MainActor public static var targetIcon: (String) -> String? = { _ in nil }
+
+    /// How wide each untitled note's name was laid out, by its character:
+    /// what it is drawn in, cut short to fit.
+    private var labelWidths: [Int: CGFloat] = [:]
+
+    /// What an untitled note is shown as — what it begins with — by its
+    /// made-up name; nil for none known. Told by the app.
+    @MainActor public static var untitledName: (String) -> String? = { _ in nil }
 
     public func layoutManager(_ layoutManager: NSLayoutManager, shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>,
                        properties: UnsafePointer<NSLayoutManager.GlyphProperty>, characterIndexes: UnsafePointer<Int>,
@@ -727,7 +766,8 @@ public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate 
             if storage.attribute(.prismImage, at: index, effectiveRange: nil) != nil
                 || storage.attribute(.prismBreak, at: index, effectiveRange: nil) != nil
                 || storage.attribute(.prismIcon, at: index, effectiveRange: nil) != nil
-                || storage.attribute(.prismEllipsis, at: index, effectiveRange: nil) != nil {
+                || storage.attribute(.prismEllipsis, at: index, effectiveRange: nil) != nil
+                || storage.attribute(.prismLabel, at: index, effectiveRange: nil) != nil {
                 property = .controlCharacter
             } else if storage.attribute(.prismHidden, at: index, effectiveRange: nil) != nil {
                 // A row's first character hidden — a link's `[` — nothing, but
@@ -758,7 +798,8 @@ public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate 
         guard storage.attribute(.prismImage, at: charIndex, effectiveRange: nil) != nil
               || storage.attribute(.prismBreak, at: charIndex, effectiveRange: nil) != nil
               || storage.attribute(.prismIcon, at: charIndex, effectiveRange: nil) != nil
-              || storage.attribute(.prismEllipsis, at: charIndex, effectiveRange: nil) != nil else { return action }
+              || storage.attribute(.prismEllipsis, at: charIndex, effectiveRange: nil) != nil
+              || storage.attribute(.prismLabel, at: charIndex, effectiveRange: nil) != nil else { return action }
         return .whitespace
     }
 
@@ -786,6 +827,18 @@ public final class PhoneLayoutManager: NSLayoutManager, NSLayoutManagerDelegate 
         if storage.attribute(.prismEllipsis, at: charIndex, effectiveRange: nil) != nil {
             let font = storage.attribute(.font, at: charIndex, effectiveRange: nil) as? UIFont ?? metrics.body
             return CGRect(x: 0, y: 0, width: ceil(("…" as NSString).size(withAttributes: [.font: font]).width), height: 1)
+        }
+        // An untitled note's name, as wide as its words — but no wider
+        // than a line: a drawn name doesn't wrap, and is cut short instead.
+        // Too long for what is left of its line, it takes the rest, cut
+        // short — unless that is only a word's room: then a line of its own.
+        if let label = storage.attribute(.prismLabel, at: charIndex, effectiveRange: nil) as? String {
+            let font = storage.attribute(.font, at: charIndex, effectiveRange: nil) as? UIFont ?? metrics.body
+            let wide = ceil((label as NSString).size(withAttributes: [.font: font]).width)
+            let left = floor(proposedRect.maxX - glyphPosition.x - 2 * textContainer.lineFragmentPadding - 4)
+            let width = wide <= left ? wide : left >= min(wide, ceil(font.pointSize * 6)) ? left : min(wide, lineWidth(at: charIndex, in: textContainer))
+            labelWidths[charIndex] = width
+            return CGRect(x: 0, y: 0, width: width, height: 1)
         }
         // A picture's `!` fills the rest of a line it follows text on: the
         // text stays there, and the picture, too wide for what is left,
@@ -2125,12 +2178,30 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
         StallWatch.mark("editing begun")
         onFocusChange?(true)
         showFoldState()
+        // Back where it was: the span it is in shows its marks again.
+        if styler.caret == nil, selectedRange.length == 0 { restyleCaret(selectedRange.location) }
     }
     public func textViewDidEndEditing(_ textView: UITextView) {
         // Typing over: listening too — what was heard kept.
         if cursorDictation != nil { toggleDictation() }
         endCompletion()
+        // Not typed in, no span is the caret's: the one it was in — a link's
+        // brackets, an untitled note's made-up name — hidden again.
+        restyleCaret(nil)
         onFocusChange?(false)
+    }
+
+    /// The caret the styler shows marks around set, and the rows it was in
+    /// and is in now restyled.
+    private func restyleCaret(_ caret: Int?) {
+        let old = styler.caret
+        styler.caret = caret
+        guard old != caret, textStorage.length > 0 else { return }
+        let last = textStorage.length - 1
+        let rows = [old, caret].compactMap { $0.map { min($0, last) } }
+        locally(at: rows) {
+            for location in rows { styler.restyle(textStorage, around: location) }
+        }
     }
 
     /// What an edit can leave wrong put right: the text ends in a line
