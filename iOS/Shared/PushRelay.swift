@@ -33,7 +33,7 @@ final class PushRelay {
         Task {
             do {
                 try await SyncRelay.register(deviceToken: deviceToken, repository: repository,
-                                             topic: Bundle.main.bundleIdentifier ?? "com.mariusae.Prism",
+                                             topic: Bundle.main.bundleIdentifier ?? "org.mutable.prism",
                                              sandbox: SyncRelay.isSandbox, accessToken: try await account.validAccessToken())
             } catch {
                 registered = nil
