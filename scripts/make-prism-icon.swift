@@ -276,6 +276,19 @@ let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { _
     return true
 }
 
-guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
-      let png = rep.representation(using: .png, properties: [:]) else { fatalError("could not draw the icon") }
+guard let tiff = image.tiffRepresentation, var rep = NSBitmapImageRep(data: tiff) else { fatalError("could not draw the icon") }
+// The whole square, for iOS: without an alpha channel, which the App Store
+// refuses in an app's icon even when every pixel is opaque.
+if full, let opaque = opaqueCopy(of: rep) { rep = opaque }
+guard let png = rep.representation(using: .png, properties: [:]) else { fatalError("could not draw the icon") }
 try png.write(to: URL(fileURLWithPath: output))
+
+/// `rep` drawn into pixels with no alpha.
+func opaqueCopy(of rep: NSBitmapImageRep) -> NSBitmapImageRep? {
+    guard let source = rep.cgImage,
+          let context = CGContext(data: nil, width: source.width, height: source.height, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+    context.draw(source, in: CGRect(x: 0, y: 0, width: source.width, height: source.height))
+    return context.makeImage().map(NSBitmapImageRep.init(cgImage:))
+}

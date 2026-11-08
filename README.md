@@ -223,6 +223,12 @@ swift test                  # REFLECT_GRAPH=~/reflect also round-trips a graph
 The graph is chosen on first launch (File ▸ Open Graph…, ⌘O, to change it),
 or given with `-GraphPath <folder>`.
 
+`scripts/testflight-prism.sh` archives Prism for the iPhone and iPad, its
+share extension in it, and uploads it to App Store Connect for TestFlight,
+signed by the account Xcode is signed in to or an App Store Connect API key;
+`--export` makes the .ipa instead. The owner's Hoefler fonts go in;
+`OWNER_FONTS=NO` leaves them out. Each build is numbered by when it was made.
+
 ## Code
 
 - `Sources/ReflectCore` — no AppKit. `OutlineMarkdown` reads and writes a note
