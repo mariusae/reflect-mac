@@ -18,7 +18,7 @@ new_sqlite_classes = ["RepoHub"]
 [vars]
 # The apps an iPhone may register for: their bundle identifiers, the topics
 # APNs pushes to.
-APNS_TOPICS = "com.mariusae.Prism,com.mariusae.Reflect"
+APNS_TOPICS = "com.mariusae.Prism,com.mariusae.Reflect,com.mariusae.weft"
 # The GitHub logins that may dictate through the relay's ElevenLabs key.
 SCRIBE_USERS = "mariusae"
 
