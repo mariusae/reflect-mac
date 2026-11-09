@@ -20,6 +20,11 @@ package final class ImageStore: @unchecked Sendable {
     /// Each source's size in points, or nil for one that is not a picture.
     private var sizes: [String: CGSize?] = [:]
     private let images = NSCache<NSString, NSImage>()
+    /// The pictures as drawn: each at the size it is shown, in the screen's
+    /// pixels and colours, decoded once. Drawn from the file itself, a
+    /// picture is scaled and matched again each time a page scrolled past
+    /// it is drawn — most of a scroll's time, on a page of screenshots.
+    private let drawables = NSCache<NSString, CGImage>()
     private var fetching: Set<String> = []
     /// Posts, by the source that links them; nil for one that is gone.
     private var tweets: [String: Tweet?] = [:]
@@ -40,6 +45,101 @@ package final class ImageStore: @unchecked Sendable {
     package init(root: URL) {
         self.root = root
         images.countLimit = 200
+        drawables.totalCostLimit = 256 << 20
+    }
+
+    /// Draws a picture fitted to the rectangle, as a copy of one made ready
+    /// for it. False, when the picture is not here.
+    @discardableResult
+    package func draw(_ source: String, in rect: NSRect, scale: CGFloat = NSScreen.main?.backingScaleFactor ?? 2,
+                      colorSpace: NSColorSpace? = NSScreen.main?.colorSpace) -> Bool {
+        guard let ready = drawable(source, size: rect.size, scale: scale, colorSpace: colorSpace) else { return false }
+        NSImage(cgImage: ready, size: rect.size).draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true,
+                                                      hints: [.interpolation: NSImageInterpolation.none.rawValue])
+        return true
+    }
+
+    /// A picture at a size in points, made for showing: its pixels those of
+    /// the screen at that size, in the screen's colours. Nil, when the
+    /// picture is not here.
+    package func drawable(_ source: String, size: CGSize, scale: CGFloat, colorSpace: NSColorSpace?) -> CGImage? {
+        guard let (key, width, height) = Self.drawableKey(source, size: size, scale: scale) else { return nil }
+        if let ready = drawables.object(forKey: key) { return ready }
+        guard naturalSize(source) != nil, let file = file(of: source),
+              let ready = Self.render(file, width: width, height: height, space: Self.space(colorSpace)) else { return nil }
+        drawables.setObject(ready, forKey: key, cost: width * height * 4)
+        return ready
+    }
+
+    /// The picture made for showing, if it is ready; if not, made in the
+    /// background — read from its file, scaled, matched — and `ready` told
+    /// once it is, on the main thread. Nil, too, when it is not a picture here.
+    package func drawableLater(_ source: String, size: CGSize, scale: CGFloat, colorSpace: NSColorSpace?,
+                               for owner: AnyObject, ready: @escaping @MainActor () -> Void) -> CGImage? {
+        guard let (key, width, height) = Self.drawableKey(source, size: size, scale: scale) else { return nil }
+        if let made = drawables.object(forKey: key) { return made }
+        // Asked again while it is being made: told once, whoever asks.
+        if making[key as String] != nil { making[key as String]?[ObjectIdentifier(owner)] = ready; return nil }
+        guard naturalSize(source) != nil, let file = file(of: source) else { return nil }
+        making[key as String] = [ObjectIdentifier(owner): ready]
+        let space = Self.space(colorSpace)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let made = Self.render(file, width: width, height: height, space: space)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let waiting = self.making.removeValue(forKey: key as String) ?? [:]
+                    guard let made else { return }
+                    self.drawables.setObject(made, forKey: key, cost: width * height * 4)
+                    waiting.values.forEach { $0() }
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Those waiting for each picture being made, by its key.
+    private var making: [String: [ObjectIdentifier: @MainActor () -> Void]] = [:]
+
+    private static func drawableKey(_ source: String, size: CGSize, scale: CGFloat) -> (NSString, Int, Int)? {
+        let width = Int((size.width * scale).rounded()), height = Int((size.height * scale).rounded())
+        guard width > 0, height > 0 else { return nil }
+        return ("\(width)x\(height) \(source)" as NSString, width, height)
+    }
+
+    /// The file a picture is read from: in the graph, or fetched and kept.
+    private func file(of source: String) -> URL? {
+        let file = assetURL(source) ?? Self.cacheURL(for: source)
+        return FileManager.default.fileExists(atPath: file.path) ? file : nil
+    }
+
+    private static func space(_ colorSpace: NSColorSpace?) -> CGColorSpace {
+        colorSpace?.cgColorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpace(name: CGColorSpace.sRGB)!
+    }
+
+    /// A picture's file read at about the size it is shown — a large one not
+    /// decoded whole — then drawn at it exactly, in the colours given.
+    private static func render(_ file: URL, width: Int, height: Int, space: CGColorSpace) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(file as CFURL, nil), CGImageSourceGetCount(source) > 0 else { return nil }
+        let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                        kCGImageSourceCreateThumbnailWithTransform: true,
+                                        kCGImageSourceShouldCacheImmediately: true,
+                                        kCGImageSourceThumbnailMaxPixelSize: max(width, height)]
+        guard let picture = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+                ?? CGImageSourceCreateImageAtIndex(source, 0, nil),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return nil }
+        context.interpolationQuality = .high
+        context.draw(picture, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
+    }
+
+    /// Whether a box is a picture and only that — not a PDF, a carousel, a
+    /// post, a video, a link's card or a block: what a layer can show.
+    package func isPlainPicture(_ box: ImageBox) -> Bool {
+        !box.isPDF && box.block == nil && box.carousel == nil && tweet(box.source) == nil && video(box.source) == nil
+            && !(box.isCard && richFace(box.source) != nil)
     }
 
     /// The spans with images that cannot be shown turned back into text.
@@ -321,7 +421,10 @@ package final class ImageStore: @unchecked Sendable {
     /// The picture itself, once it is known to be one.
     /// Lets go of the pictures read, as the system does of an app in the
     /// background. For scripts.
-    package func forgetPictures() { images.removeAllObjects() }
+    package func forgetPictures() {
+        images.removeAllObjects()
+        drawables.removeAllObjects()
+    }
 
     package func image(_ source: String) -> NSImage? {
         if let image = images.object(forKey: source as NSString) { return image }

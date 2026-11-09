@@ -106,9 +106,9 @@ package enum RichCard {
         // The picture: a page's at the right, a cover at the left.
         switch face.picture {
         case .thumbnail(let url):
-            drawPicture(images.image(url), in: NSRect(x: width - padding - thumbnail, y: padding, width: thumbnail, height: thumbnail), corner: corner)
+            drawPicture(url, images: images, in: NSRect(x: width - padding - thumbnail, y: padding, width: thumbnail, height: thumbnail), corner: corner)
         case .artwork(let url):
-            drawPicture(images.image(url), in: NSRect(x: padding, y: padding, width: thumbnail, height: thumbnail), corner: corner)
+            drawPicture(url, images: images, in: NSRect(x: padding, y: padding, width: thumbnail, height: thumbnail), corner: corner)
         case .none:
             break
         }
@@ -128,9 +128,7 @@ package enum RichCard {
             label[.paragraphStyle] = truncating
             NSAttributedString(string: face.service.uppercased(), attributes: label)
                 .draw(with: NSRect(x: x, y: y, width: textWidth, height: 16), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-        } else if let icon = face.icon.flatMap({ images.image($0) }) {
-            icon.draw(in: NSRect(x: x, y: y + 1, width: 14, height: 14), from: .zero, operation: .sourceOver, fraction: 1,
-                      respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high.rawValue])
+        } else if let icon = face.icon, images.draw(icon, in: NSRect(x: x, y: y + 1, width: 14, height: 14)) {
             x += 19
         } else if let symbol = NSImage(systemSymbolName: face.symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 11.5, weight: .semibold).applying(.init(paletteColors: [tint]))) {
@@ -171,14 +169,13 @@ package enum RichCard {
         NSGraphicsContext.restoreGraphicsState()
     }
 
-    private static func drawPicture(_ image: NSImage?, in frame: NSRect, corner: CGFloat) {
+    private static func drawPicture(_ source: String, images: ImageStore, in frame: NSRect, corner: CGFloat) {
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(roundedRect: frame, xRadius: corner, yRadius: corner).addClip()
-        if let image, image.size.width > 0, image.size.height > 0 {
+        if let image = images.image(source), image.size.width > 0, image.size.height > 0 {
             let scale = max(frame.width / image.size.width, frame.height / image.size.height)
             let drawn = NSSize(width: image.size.width * scale, height: image.size.height * scale)
-            image.draw(in: NSRect(x: frame.midX - drawn.width / 2, y: frame.midY - drawn.height / 2, width: drawn.width, height: drawn.height),
-                       from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high.rawValue])
+            images.draw(source, in: NSRect(x: frame.midX - drawn.width / 2, y: frame.midY - drawn.height / 2, width: drawn.width, height: drawn.height))
         } else {
             NSColor.quaternaryLabelColor.withAlphaComponent(0.2).setFill()
             frame.fill()

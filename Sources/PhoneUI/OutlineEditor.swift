@@ -1365,6 +1365,9 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
     public var onFocusChange: ((Bool) -> Void)?
     /// Told when the caret moved, or what is around it did: to keep it in sight.
     public var onCaretMove: (() -> Void)?
+    /// Told on Delete in an outline of one empty bullet, with nothing to
+    /// delete: as its host has it — a card written as text instead, say.
+    public var onDeleteInEmpty: (() -> Void)?
 
     // MARK: Titling
 
@@ -1377,8 +1380,9 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
     /// says so: a note made a moment ago, say.
     public var offersTitleChip = false
     public var offersTitle: () -> Bool = { true }
-    /// A first row typed as a heading — `# ` — then Return: that row made
-    /// the title, while Title would be offered.
+    /// A first row made a heading — `# ` — of an untitled note: Title
+    /// offered at its end, whenever it is; and Return there, that row made
+    /// the title.
     public var titlesByHeading = false
     /// The chip, once there has been reason to show it.
     var madeTitleChip: UIButton?
@@ -1964,6 +1968,17 @@ public final class OutlineEditor: UITextView, UITextViewDelegate, UIGestureRecog
     }
 
     // MARK: Typing
+
+    /// Delete with nothing before the caret — which the text view would
+    /// let be — in an outline of one empty bullet: its host's, if it would.
+    public override func deleteBackward() {
+        if let onDeleteInEmpty, selectedRange == NSRange(location: 0, length: 0), rows.count <= 1,
+           rows.allSatisfy(\.isEmptyBullet) {
+            onDeleteInEmpty()
+            return
+        }
+        super.deleteBackward()
+    }
 
     public func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
         guard !adjusting else { return true }

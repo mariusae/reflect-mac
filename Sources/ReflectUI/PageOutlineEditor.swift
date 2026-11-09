@@ -64,8 +64,9 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     }
     /// Whether Title may be offered now: a page made a moment ago, say.
     public var offersTitle: () -> Bool = { true }
-    /// A first row typed as a heading — `# ` — then Return: that row made
-    /// the title, while Title would be offered.
+    /// A first row made a heading — `# ` — of an untitled page: Title
+    /// offered at its end, whenever it is; and Return there, that row made
+    /// the title.
     public var titlesByHeading = false
     /// What the editor does not show — a body's trailing gap — kept as it was.
     private var shell = Outline(rows: [])
@@ -93,6 +94,9 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     /// The colour a row's open checkbox is drawn in: for marks drawn
     /// beside the editor to be the same.
     public static var markColor: NSColor { OutlineMetrics(fontSize: 15).typography.ink.secondary }
+    /// What a task done is ticked in: the system's accent, unless the app
+    /// that shows the outline has its own — what its other checkboxes are in.
+    nonisolated(unsafe) public static var accent: NSColor = .controlAccentColor
 
     /// Whether nothing is written in it, as it is now — not as last told.
     public var isEmpty: Bool { (editor.textStorage?.length ?? 0) == 0 }
@@ -125,6 +129,13 @@ public final class PageOutlineEditor: NSView, NSTextViewDelegate, OutlineTextVie
     public var onEscapeFromRows: (() -> Void)? {
         get { editor.onEscapeFromRows }
         set { editor.onEscapeFromRows = newValue }
+    }
+
+    /// Told on Delete in an outline of one empty bullet, with nothing to
+    /// delete: as its host has it — a card written as text instead, say.
+    public var onDeleteInEmpty: (() -> Void)? {
+        get { editor.onDeleteInEmpty }
+        set { editor.onDeleteInEmpty = newValue }
     }
 
     /// Whether its first row's gutter is the host's — a card's handle in

@@ -71,9 +71,7 @@ package enum TweetCard {
         let avatar = NSRect(x: padding, y: padding, width: avatarSize, height: avatarSize)
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(ovalIn: avatar).addClip()
-        if let url = tweet.user.avatar, let image = images.image(url) {
-            image.draw(in: avatar, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-        } else {
+        if !(tweet.user.avatar.map { images.draw($0, in: avatar) } ?? false) {
             NSColor.quaternaryLabelColor.setFill()
             avatar.fill()
         }
@@ -107,9 +105,8 @@ package enum TweetCard {
                 let size = image.size
                 let scale = max(frame.width / size.width, frame.height / size.height)
                 let drawn = NSSize(width: size.width * scale, height: size.height * scale)
-                image.draw(in: NSRect(x: frame.midX - drawn.width / 2, y: frame.midY - drawn.height / 2,
-                                      width: drawn.width, height: drawn.height),
-                           from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                images.draw(media.url, in: NSRect(x: frame.midX - drawn.width / 2, y: frame.midY - drawn.height / 2,
+                                                  width: drawn.width, height: drawn.height))
             } else {
                 NSColor.quaternaryLabelColor.withAlphaComponent(0.2).setFill()
                 frame.fill()

@@ -36,12 +36,14 @@ extension OutlineEditor {
     }
 
     /// Title at the end of the first row: while the caret is below it, in
-    /// a note that has no title and is offered one.
+    /// a note that has no title and is offered one — or, titled by
+    /// heading, whenever that row is a heading.
     func placeTitleChip() {
         guard offersTitleChip, isFirstResponder, isUntitled(), let words = firstRowWords, words.length > 0,
-              case let text = textStorage.string as NSString, NSMaxRange(words) < text.length,
-              selectedRange.location > NSMaxRange(words),
-              !Untitled.title(from: text.substring(with: words)).isEmpty, offersTitle() else {
+              case let text = textStorage.string as NSString,
+              !Untitled.title(from: text.substring(with: words)).isEmpty,
+              firstRowIsTitleHeading(words: words, in: text)
+                || (NSMaxRange(words) < text.length && selectedRange.location > NSMaxRange(words) && offersTitle()) else {
             if madeTitleChip?.isHidden == false { madeTitleChip?.isHidden = true }
             return
         }
@@ -64,12 +66,19 @@ extension OutlineEditor {
         }
     }
 
-    /// Return at the end of the first row, written as a heading, of a note
-    /// Title would be offered for: that row made the title.
+    /// Return at the end of the first row, written as a heading, of an
+    /// untitled note: that row made the title, whenever it is made one.
     func titleByHeading(at location: Int) -> Bool {
-        guard titlesByHeading, offersTitleChip, isUntitled(), offersTitle(), let words = firstRowWords,
-              location == NSMaxRange(words), let first = rows.first, Self.isTitleHeading(first) else { return false }
+        guard offersTitleChip, isUntitled(), let words = firstRowWords, location == NSMaxRange(words),
+              firstRowIsTitleHeading(words: words, in: textStorage.string as NSString) else { return false }
         return titleByFirstRow()
+    }
+
+    /// Whether the first row is a top heading the note is titled by.
+    private func firstRowIsTitleHeading(words: NSRange, in text: NSString) -> Bool {
+        // Its kind, or — what was typed may not be in its rows yet — its words.
+        titlesByHeading && (rows.first.map(Self.isTitleHeading) == true
+            || Self.isTitleHeading(Row(kind: .bullet, text: text.substring(with: words))))
     }
 
     /// A row written as a top heading: made one, or `# ` typed at its start.

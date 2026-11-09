@@ -545,10 +545,17 @@ package final class OutlineTextView: NSTextView {
     /// The PDFs shown in the text, as live views: by source, and which
     /// time the note shows that source, so a view outlives restyling.
     package private(set) var pdfPreviews: [String: PDFPreview] = [:]
+    /// The pictures shown in the text, as layers: by source and which time
+    /// the note shows it. See `placePictures`.
+    var pictureLayers: [String: CALayer] = [:]
+    /// Pictures whose layers are stretched to a new size, to be made again at it.
+    var picturesToRedo = false
     private var pdfPlacementPending = false
 
-    /// Moves the PDFs' views to their room, once the text has settled.
+    /// Moves the PDFs' views to their room, once the text has settled; the
+    /// pictures' layers, before the text is next drawn.
     package func schedulePDFPlacement() {
+        needsLayout = true
         guard !pdfPlacementPending else { return }
         pdfPlacementPending = true
         DispatchQueue.main.async { [weak self] in
@@ -694,6 +701,21 @@ package final class OutlineTextView: NSTextView {
         return storage.attribute(.font, at: min(location, storage.length - 1), effectiveRange: nil) as? NSFont ?? metrics.body
     }
 
+    package override func layout() {
+        super.layout()
+        placePictures()
+    }
+
+    package override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        placePictures()
+    }
+
+    package override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        placePictures()
+    }
+
     package override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil { rowButtons?.removeFromSuperview() }
@@ -805,7 +827,9 @@ package final class OutlineTextView: NSTextView {
     /// The row under the pointer.
     package private(set) var hoveredRow: Int?
     /// The picture under the pointer, whose grip shows.
-    package var hoveredPictureFrame: NSRect?
+    package var hoveredPictureFrame: NSRect? {
+        didSet { if hoveredPictureFrame != oldValue { showPictureGrips() } }
+    }
     /// The picture whose grip shows.
     package var hoveredPictureBox: ImageBox?
     /// An untitled page that is a thing to do: its ring — done or not —
@@ -1704,6 +1728,10 @@ package final class OutlineTextView: NSTextView {
     /// Told on Escape with rows selected, if set: out of the outline, as its
     /// host has it — else back to the row's text.
     package var onEscapeFromRows: (() -> Void)?
+    /// Told on Delete in an outline of one empty bullet, the caret in it:
+    /// nothing to delete, its host's to do with — a card written as text
+    /// instead, say.
+    package var onDeleteInEmpty: (() -> Void)?
     /// Asked first on Return with the caret in a row's text, by the row:
     /// true, when its host took the Return for something of its own.
     package var onReturnInRow: ((Int) -> Bool)?
@@ -1884,7 +1912,12 @@ package final class OutlineTextView: NSTextView {
                     setSelectedRange(NSRange(location: paragraphRanges[index].location, length: 0))
                     return
                 }
-                if index == 0 { return }
+                if index == 0 {
+                    // Nothing before it: an outline of one empty bullet,
+                    // its host's to do with, if it would.
+                    if paragraphRanges.count == 1, row.isEmptyBullet { onDeleteInEmpty?() }
+                    return
+                }
             }
         }
         if !deleteShown(forward: false) { super.deleteBackward(sender) }

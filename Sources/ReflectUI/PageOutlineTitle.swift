@@ -60,14 +60,16 @@ extension PageOutlineEditor {
     }
 
     /// The chip at the end of the first row while the caret is on it: an
-    /// untitled page's, with words to be titled by.
+    /// untitled page's, with words to be titled by. Titled by heading, it
+    /// is there whenever that row is a heading, wherever the caret is.
     func placeTitleChip() {
         guard offersTitleChip, let text = editor.textStorage?.string as NSString?, window?.firstResponder === editor, isUntitled(),
               let row = firstRow, case let words = words(of: row, in: text), words.length > 0,
               case let caret = editor.selectedRange(),
-              // Quiet: once the first row is written, the caret gone on below it.
-              quietTitleChip ? caret.location >= NSMaxRange(row) && NSMaxRange(row) < text.length && offersTitle()
-                             : caret.location >= row.location && NSMaxRange(caret) <= NSMaxRange(words),
+              firstRowIsTitleHeading(words: words, in: text)
+                // Quiet: once the first row is written, the caret gone on below it.
+                || (quietTitleChip ? caret.location >= NSMaxRange(row) && NSMaxRange(row) < text.length && offersTitle()
+                                   : caret.location >= row.location && NSMaxRange(caret) <= NSMaxRange(words)),
               !Untitled.title(from: text.substring(with: words)).isEmpty,
               let layout = editor.layoutManager, let container = editor.textContainer else {
             if madeChip?.isHidden == false { madeChip?.isHidden = true }
@@ -89,15 +91,19 @@ extension PageOutlineEditor {
     }
 
     /// Return at the end of the first row, written as a heading — `# ` —
-    /// of a page Title would be offered for: that row made the title.
+    /// of an untitled page: that row made the title, whenever it is made one.
     func titleByHeading(at index: Int) -> Bool {
-        guard titlesByHeading, index == 0, offersTitleChip, offersTitle(), isUntitled(),
+        guard index == 0, offersTitleChip, isUntitled(),
               let text = editor.textStorage?.string as NSString?, let row = firstRow, case let words = words(of: row, in: text),
-              editor.selectedRange().location == NSMaxRange(words),
-              // Its kind, or — what was typed may not be in its rows yet — its words.
-              Self.isTitleHeading(editor.row(at: 0)) || Self.isTitleHeading(Row(kind: .bullet, text: text.substring(with: words)))
+              editor.selectedRange().location == NSMaxRange(words), firstRowIsTitleHeading(words: words, in: text)
         else { return false }
         return titleByFirstRow()
+    }
+
+    /// Whether the first row is a top heading the page is titled by.
+    private func firstRowIsTitleHeading(words: NSRange, in text: NSString) -> Bool {
+        // Its kind, or — what was typed may not be in its rows yet — its words.
+        titlesByHeading && (Self.isTitleHeading(editor.row(at: 0)) || Self.isTitleHeading(Row(kind: .bullet, text: text.substring(with: words))))
     }
 
     /// A row written as a top heading: made one, or `# ` typed at its start.

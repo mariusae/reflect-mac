@@ -56,8 +56,7 @@ package enum VideoCard {
             let size = image.size
             let scale = max(poster.width / size.width, poster.height / size.height)
             let drawn = NSSize(width: size.width * scale, height: size.height * scale)
-            image.draw(in: NSRect(x: poster.midX - drawn.width / 2, y: poster.midY - drawn.height / 2, width: drawn.width, height: drawn.height),
-                       from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            images.draw(url, in: NSRect(x: poster.midX - drawn.width / 2, y: poster.midY - drawn.height / 2, width: drawn.width, height: drawn.height))
         } else {
             NSColor.black.withAlphaComponent(0.85).setFill()
             poster.fill()

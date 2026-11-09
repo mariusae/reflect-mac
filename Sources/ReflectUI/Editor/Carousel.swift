@@ -71,7 +71,8 @@ package enum Carousel {
 
     /// Draws the picture a carousel is at, fitted and centred, over a quiet
     /// ground; its buttons, its dots, and how many there are.
-    package static func draw(_ box: ImageBox, index: Int, in rect: NSRect, images: ImageStore) {
+    package static func draw(_ box: ImageBox, index: Int, in rect: NSRect, images: ImageStore,
+                             scale: CGFloat = 2, colorSpace: NSColorSpace? = nil) {
         guard let sources = box.carousel, !sources.isEmpty else { return }
         let index = min(max(index, 0), sources.count - 1)
         NSGraphicsContext.saveGraphicsState()
@@ -83,8 +84,7 @@ package enum Carousel {
             let scale = min(rect.width / image.size.width, rect.height / image.size.height, 1)
             let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
             let drawn = NSRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height)
-            image.draw(in: drawn, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true,
-                       hints: [.interpolation: NSImageInterpolation.high.rawValue])
+            images.draw(sources[index], in: drawn, scale: scale, colorSpace: colorSpace)
         }
         NSGraphicsContext.restoreGraphicsState()
 

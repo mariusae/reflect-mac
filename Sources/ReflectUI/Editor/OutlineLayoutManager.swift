@@ -239,7 +239,8 @@ package final class OutlineLayoutManager: NSLayoutManager {
                     continue
                 }
                 if box.carousel != nil, let view = outlineView {
-                    Carousel.draw(box, index: view.carouselIndex(box), in: rect, images: store)
+                    Carousel.draw(box, index: view.carouselIndex(box), in: rect, images: store,
+                                  scale: view.window?.backingScaleFactor ?? 2, colorSpace: view.window?.colorSpace)
                     if view.hoveredPictureFrame == rect { Self.drawPictureGrip(in: rect) }
                     continue
                 }
@@ -259,12 +260,12 @@ package final class OutlineLayoutManager: NSLayoutManager {
                     if hovered { Self.drawCardHide(in: rect) }
                     continue
                 }
+                // Shown by a layer of its own, there now: not drawn again.
+                if outlineView?.showsPictureLayer(box.source, at: rect) == true { continue }
                 NSGraphicsContext.saveGraphicsState()
                 NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).addClip()
-                if let image = store.image(box.source) {
-                    image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true,
-                               hints: [.interpolation: NSImageInterpolation.high.rawValue])
-                } else {
+                if !store.draw(box.source, in: rect, scale: outlineView?.window?.backingScaleFactor ?? 2,
+                               colorSpace: outlineView?.window?.colorSpace) {
                     NSColor.quaternaryLabelColor.withAlphaComponent(0.15).setFill()
                     rect.fill()
                 }
@@ -342,7 +343,7 @@ package final class OutlineLayoutManager: NSLayoutManager {
             let name = round ? (done ? "checkmark.circle.fill" : "circle") : (done ? "checkmark.square.fill" : "square")
             // Checked: a white tick on the accent colour — flat, the page's on the text's ink.
             let colors: [NSColor] = done ? (view.metrics.typography.flat ? [.textBackgroundColor, view.metrics.typography.ink.text]
-                                                                          : [.white, .controlAccentColor])
+                                                                          : [.white, PageOutlineEditor.accent])
                                          : [view.metrics.typography.ink.secondary]
             guard let image = SymbolImages.image(name, pointSize: font.pointSize * 0.95, weight: .regular, colors: colors,
                                                  description: done ? "Done" : "To do") else { return }

@@ -90,6 +90,13 @@ public struct Row: Equatable, Sendable {
     /// says, so a folded row writes out its children like any other.
     public var folded: [Row] = []
 
+    /// Whether it is a bullet with nothing in it, or under it: no words,
+    /// no checkbox, no rows folded in it — a plain line counted as one.
+    public var isEmptyBullet: Bool {
+        (kind == .bullet || kind == .paragraph) && task == nil && folded.isEmpty
+            && text.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     public init(kind: Kind, depth: Int = 0, text: String = "", task: Task? = nil, marker: Character = "-",
                 number: Int = 1, spacing: Int = 1, extraIndent: Int = 0, gap: [String] = []) {
         self.kind = kind
